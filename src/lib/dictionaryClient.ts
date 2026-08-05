@@ -31,6 +31,8 @@ export interface DictionaryLookupOptions {
   signal?: AbortSignal;
 }
 
+const DICTIONARY_LOOKUP_BATCH_SIZE = 50;
+
 function getErrorMessage(body: unknown, status: number): string {
   if (body && typeof body === 'object') {
     const error = (body as DictionaryLookupFailure).error;
@@ -48,19 +50,15 @@ function isSuccess(body: unknown): body is DictionaryLookupSuccess {
   );
 }
 
-/** Look up one word through the local ECDICT-backed API. */
-export async function lookupDictionaryWord(
-  word: string,
-  options: DictionaryLookupOptions = {},
-): Promise<DictionaryEntry | null> {
-  const query = word.trim();
-  if (!query) return null;
-
+async function fetchDictionaryWords(
+  words: string[],
+  options: DictionaryLookupOptions,
+): Promise<Array<DictionaryEntry | null>> {
   const fetcher = options.fetcher ?? fetch;
   const response = await fetcher('/api/dictionary/lookup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ words: [query] }),
+    body: JSON.stringify({ words }),
     signal: options.signal,
   });
 
@@ -75,7 +73,43 @@ export async function lookupDictionaryWord(
     throw new Error(getErrorMessage(body, response.status));
   }
 
-  return body.results[0] ?? null;
+  return body.results;
+}
+
+/** Look up one word through the local ECDICT-backed API. */
+export async function lookupDictionaryWord(
+  word: string,
+  options: DictionaryLookupOptions = {},
+): Promise<DictionaryEntry | null> {
+  const query = word.trim();
+  if (!query) return null;
+
+  return (await fetchDictionaryWords([query], options))[0] ?? null;
+}
+
+/** Look up multiple words in bounded batches while preserving input positions. */
+export async function lookupDictionaryWords(
+  words: string[],
+  options: DictionaryLookupOptions = {},
+): Promise<Array<DictionaryEntry | null>> {
+  const results: Array<DictionaryEntry | null> = words.map(() => null);
+  const nonEmptyIndexes = words.reduce<number[]>((indexes, word, index) => {
+    if (word.trim()) indexes.push(index);
+    return indexes;
+  }, []);
+
+  for (let start = 0; start < nonEmptyIndexes.length; start += DICTIONARY_LOOKUP_BATCH_SIZE) {
+    const indexes = nonEmptyIndexes.slice(start, start + DICTIONARY_LOOKUP_BATCH_SIZE);
+    const batch = await fetchDictionaryWords(
+      indexes.map((index) => words[index].trim()),
+      options,
+    );
+    indexes.forEach((index, batchIndex) => {
+      results[index] = batch[batchIndex] ?? null;
+    });
+  }
+
+  return results;
 }
 
 export function getDictionaryEnglishDefinition(entry: DictionaryEntry): string {

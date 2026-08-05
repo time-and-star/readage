@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { lookupDictionaryWord, type DictionaryEntry } from '../src/lib/dictionaryClient';
+import {
+  lookupDictionaryWord,
+  lookupDictionaryWords,
+  type DictionaryEntry,
+} from '../src/lib/dictionaryClient';
 
 const entry: DictionaryEntry = {
   query: 'running',
@@ -63,4 +67,40 @@ test('dictionary client rejects unsuccessful responses', async () => {
     }),
     /unavailable/,
   );
+});
+
+test('dictionary client batches lookups and preserves empty or missing positions', async () => {
+  const words = [
+    ' running ',
+    '',
+    'missing',
+    ...Array.from({ length: 49 }, (_, index) => `word-${index}`),
+  ];
+  const requests: string[][] = [];
+
+  const results = await lookupDictionaryWords(words, {
+    fetcher: (async (_input, init) => {
+      const requestWords = JSON.parse(String(init?.body)).words as string[];
+      requests.push(requestWords);
+      return new Response(JSON.stringify({
+        ok: true,
+        results: requestWords.map((word) => word === 'missing'
+          ? null
+          : { ...entry, query: word, lemma: word }),
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch,
+  });
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].length, 50);
+  assert.deepEqual(requests[0].slice(0, 3), ['running', 'missing', 'word-0']);
+  assert.deepEqual(requests[1], ['word-48']);
+  assert.equal(results.length, words.length);
+  assert.equal(results[0]?.query, 'running');
+  assert.equal(results[1], null);
+  assert.equal(results[2], null);
+  assert.equal(results.at(-1)?.query, 'word-48');
 });

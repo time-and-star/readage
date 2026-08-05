@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildVocabularyCsv,
+  buildVocabularyExportRows,
   formatVocabularyProficiency,
 } from '../src/lib/vocabularyExport';
 
@@ -36,4 +37,49 @@ test('builds an Excel-friendly UTF-8 CSV and escapes cells', () => {
 
 test('exports the header when there are no vocabulary rows', () => {
   assert.equal(buildVocabularyCsv([]), '\uFEFF词汇,英标,翻译,熟练度\r\n');
+});
+
+test('keeps proficiency rows when dictionary details are missing', () => {
+  const rows = buildVocabularyExportRows(
+    [
+      { wordId: 'run', level: 4, memoryScore: 99.6 },
+      { wordId: 'unknown', level: 1, memoryScore: 34.5 },
+    ],
+    [
+      {
+        phonetic: '/rʌn/',
+        basicMeaningsZh: ['跑', '运行', '多余释义'],
+      },
+      null,
+    ],
+  );
+
+  assert.deepEqual(rows, [
+    {
+      word: 'run',
+      phonetic: '/rʌn/',
+      translation: '跑；运行',
+      proficiency: 'L4（100分）',
+    },
+    {
+      word: 'unknown',
+      phonetic: '',
+      translation: '',
+      proficiency: 'L1（35分）',
+    },
+  ]);
+});
+
+test('neutralizes spreadsheet formula-like values before export', () => {
+  const csv = buildVocabularyCsv([
+    {
+      word: '=SUM(1,1)',
+      phonetic: '',
+      translation: '@mention',
+      proficiency: 'L0（0分）',
+    },
+  ]);
+
+  assert.match(csv, /"'=SUM\(1,1\)"/);
+  assert.match(csv, /,'@mention,L0/);
 });

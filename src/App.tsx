@@ -1564,6 +1564,8 @@ export default function App() {
             streakDaysCount={streakDays}
             recentEventCount={recentEventCount}
             dueWordCount={dueLemmas.length}
+            proficiencies={proficiencies}
+            proficienciesLoading={proficienciesLoading}
             weakPointMetrics={weakPointMetrics}
             isTargetedReviewLoading={isRecommending}
             articleProgress={articleProgress}

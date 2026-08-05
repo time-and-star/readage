@@ -9,8 +9,15 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { ArticleProgressRow, WeakPointMetric } from '../types';
+import type { WordProficiencyView } from '../lib/memoryV2';
 import { AppPageHeader } from './AppPageHeader';
 import { ReadingDataNotice } from './ReadingDataNotice';
+import { lookupDictionaryWords } from '../lib/dictionaryClient';
+import {
+  buildVocabularyCsv,
+  buildVocabularyExportRows,
+  downloadVocabularyCsv,
+} from '../lib/vocabularyExport';
 import {
   downloadLocalDataBackup,
   exportLocalDataBackup,
@@ -33,6 +40,8 @@ interface MyLearningScreenProps {
   streakDaysCount: number;
   recentEventCount: number;
   dueWordCount: number;
+  proficiencies: WordProficiencyView[];
+  proficienciesLoading: boolean;
   weakPointMetrics: WeakPointMetric[];
   isTargetedReviewLoading: boolean;
   articleProgress: ArticleProgressRow[];
@@ -53,6 +62,8 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   streakDaysCount,
   recentEventCount,
   dueWordCount,
+  proficiencies,
+  proficienciesLoading,
   weakPointMetrics,
   isTargetedReviewLoading,
   articleProgress,
@@ -66,6 +77,44 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   const [backupBusy, setBackupBusy] = useState<'export' | 'import' | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
+  const [vocabularyExportBusy, setVocabularyExportBusy] = useState(false);
+  const [vocabularyExportMessage, setVocabularyExportMessage] = useState<string | null>(null);
+  const [vocabularyExportError, setVocabularyExportError] = useState<string | null>(null);
+
+  const handleExportVocabulary = async () => {
+    setVocabularyExportBusy(true);
+    setVocabularyExportMessage(null);
+    setVocabularyExportError(null);
+    try {
+      const exportProficiencies = proficiencies.filter((item) => item.wordId.trim());
+      if (exportProficiencies.length === 0) {
+        setVocabularyExportMessage('暂无可导出的词汇。');
+        return;
+      }
+
+      let dictionaryEntries: Awaited<ReturnType<typeof lookupDictionaryWords>> = [];
+      let dictionaryUnavailable = false;
+      try {
+        dictionaryEntries = await lookupDictionaryWords(
+          exportProficiencies.map((item) => item.wordId),
+        );
+      } catch {
+        dictionaryUnavailable = true;
+      }
+
+      const rows = buildVocabularyExportRows(exportProficiencies, dictionaryEntries);
+      downloadVocabularyCsv(buildVocabularyCsv(rows));
+      setVocabularyExportMessage(
+        dictionaryUnavailable
+          ? `已导出 ${rows.length} 个词汇；词典暂不可用，部分音标和翻译为空。`
+          : `已导出 ${rows.length} 个词汇。`
+      );
+    } catch (error) {
+      setVocabularyExportError(error instanceof Error ? error.message : '词汇表导出失败');
+    } finally {
+      setVocabularyExportBusy(false);
+    }
+  };
 
   const handleExportBackup = async () => {
     setBackupBusy('export');
@@ -139,6 +188,45 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
           <MetricCard value={learningWordsCount} label="学习中 (L1–L3)" />
           <MetricCard value={streakDaysCount} label="连续学习天数" />
         </div>
+
+        <section
+          className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
+          aria-labelledby="vocabulary-export-heading"
+        >
+          <div>
+            <h2 id="vocabulary-export-heading" className="font-serif text-lg font-medium text-[#2A2621]">
+              词汇表
+            </h2>
+            <p className="mt-1 text-sm text-[#8C8478]">
+              导出词汇、英标、翻译和熟练度，CSV 文件可直接用 Excel 打开。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleExportVocabulary()}
+            disabled={vocabularyExportBusy || proficienciesLoading || proficiencies.length === 0}
+            aria-busy={vocabularyExportBusy || proficienciesLoading}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-[#C35E37] px-3 py-2 text-sm font-medium text-white hover:bg-[#A94E2B] disabled:cursor-not-allowed disabled:bg-[#CFA08E]"
+          >
+            <Download className="w-4 h-4" aria-hidden />
+            {proficienciesLoading ? '加载中…' : vocabularyExportBusy ? '导出中…' : '导出词汇表'}
+          </button>
+          {!proficienciesLoading && proficiencies.length === 0 && (
+            <p className="text-xs text-[#8C8478]" role="status">
+              阅读并产生词汇学习记录后，这里会出现可导出的词汇。
+            </p>
+          )}
+          {vocabularyExportMessage && (
+            <p className="text-xs text-[#2F6B3A]" role="status">
+              {vocabularyExportMessage}
+            </p>
+          )}
+          {vocabularyExportError && (
+            <p className="text-xs text-[#A94E2B]" role="alert">
+              {vocabularyExportError}
+            </p>
+          )}
+        </section>
 
         <section
           className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"

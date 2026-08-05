@@ -15,6 +15,8 @@ const baseProps = {
   streakDaysCount: 4,
   recentEventCount: 12,
   dueWordCount: 3,
+  proficiencies: [],
+  proficienciesLoading: false,
   weakPointMetrics: [],
   isTargetedReviewLoading: false,
   articleProgress: [],
@@ -35,6 +37,7 @@ test('My Learning renders real metric labels and honest empty states', () => {
   assert.match(html, /不使用这些功能时，不会为了统计阅读而上传整篇文章/);
   assert.match(html, /导出备份/);
   assert.match(html, /导入备份/);
+  assert.match(html, /导出词汇表/);
   assert.doesNotMatch(html, /演示固定值|中位示意/);
 });
 
