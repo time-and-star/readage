@@ -4,7 +4,13 @@
  */
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import type { WordProficiencyView } from './memorySystem';
+import {
+  DEFAULT_REVIEW_QUEUE_LIMIT,
+  type WordProficiencyStats,
+  type WordProficiencyView,
+} from './memorySystem';
+
+export { DEFAULT_REVIEW_QUEUE_LIMIT } from './memorySystem';
 import type { MemoryExposureSignals } from './types';
 import { useMemoryStore } from './MemoryProvider';
 import {
@@ -171,7 +177,7 @@ export function useAllWordProficiency() {
 /**
  * 获取到期单词的 Hook
  */
-export function useDueWords(limit?: number) {
+export function useDueWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT) {
   const store = useMemoryStore();
   const version = useStoreVersion(store);
   const ready = useStoreReady(store);
@@ -209,12 +215,7 @@ export function useProficiencyStats() {
   const store = useMemoryStore();
   const version = useStoreVersion(store);
   const ready = useStoreReady(store);
-  const [stats, setStats] = useState<{
-    total: number;
-    byLevel: Record<number, number>;
-    averageScore: number;
-    dueCount: number;
-  } | null>(null);
+  const [stats, setStats] = useState<WordProficiencyStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {

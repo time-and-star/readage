@@ -44,7 +44,21 @@ export interface WordProficiencyView {
   confidence?: number;
   opportunityScore?: number;
   memoryStage?: 0 | 1 | 2 | 3 | 4;
+  isIntroduced?: boolean;
+  status?: 'introduced' | 'learning' | 'mastered';
 }
+
+export interface WordProficiencyStats {
+  total: number;
+  byLevel: Record<number, number>;
+  averageScore: number;
+  introducedCount: number;
+  learningCount: number;
+  masteredCount: number;
+  dueCount: number;
+}
+
+export const DEFAULT_REVIEW_QUEUE_LIMIT = 5;
 
 function addRmeProjection(
   state: WordMemoryState,
@@ -256,6 +270,10 @@ export class MemorySystemV2 {
       difficulty: memoryState.difficulty,
       nextReview: memoryState.nextReview,
       lastReview: memoryState.lastReview,
+      isIntroduced: memoryState.fsrsReviews.length === 0,
+      status: memoryState.fsrsReviews.length === 0
+        ? 'introduced'
+        : level === 4 ? 'mastered' : 'learning',
     }, currentTime);
   }
 
@@ -288,6 +306,10 @@ export class MemorySystemV2 {
         difficulty: memoryState.difficulty,
         nextReview: memoryState.nextReview,
         lastReview: memoryState.lastReview,
+        isIntroduced: memoryState.fsrsReviews.length === 0,
+        status: memoryState.fsrsReviews.length === 0
+          ? 'introduced'
+          : level === 4 ? 'mastered' : 'learning',
       }, currentTime));
     }
 
@@ -316,6 +338,10 @@ export class MemorySystemV2 {
         difficulty: state.difficulty,
         nextReview: state.nextReview,
         lastReview: state.lastReview,
+        isIntroduced: state.fsrsReviews.length === 0,
+        status: state.fsrsReviews.length === 0
+          ? 'introduced'
+          : level === 4 ? 'mastered' : 'learning',
       }, currentTime);
     });
   }
@@ -333,12 +359,15 @@ export class MemorySystemV2 {
     // 筛选出到期的单词
     const dueWords = allProficiency.filter((p) => {
       const nextReviewTime = new Date(p.nextReview);
-      return nextReviewTime <= currentTime;
+      return p.isIntroduced !== true && nextReviewTime <= currentTime;
     });
 
     // 按到期时间排序（越早到期的越靠前）
     dueWords.sort((a, b) => {
-      return new Date(a.nextReview).getTime() - new Date(b.nextReview).getTime();
+      return (
+        new Date(a.nextReview).getTime() - new Date(b.nextReview).getTime()
+        || a.wordId.localeCompare(b.wordId)
+      );
     });
 
     if (limit !== undefined) {
@@ -351,24 +380,32 @@ export class MemorySystemV2 {
   /**
    * 获取熟练度统计
    */
-  async getProficiencyStats(userId: string): Promise<{
-    total: number;
-    byLevel: Record<number, number>;
-    averageScore: number;
-    dueCount: number;
-  }> {
-    const allProficiency = await this.getAllWordProficiency(userId);
-    const now = new Date();
+  async getProficiencyStats(
+    userId: string,
+    currentTime: Date = new Date(),
+  ): Promise<WordProficiencyStats> {
+    const allProficiency = await this.getAllWordProficiency(userId, currentTime);
+    const now = currentTime;
 
     const byLevel: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
     let totalScore = 0;
+    let introducedCount = 0;
+    let learningCount = 0;
+    let masteredCount = 0;
     let dueCount = 0;
 
     for (const p of allProficiency) {
       byLevel[p.level]++;
       totalScore += p.memoryScore;
+      if (p.isIntroduced) {
+        introducedCount++;
+      } else if (p.level === 4) {
+        masteredCount++;
+      } else {
+        learningCount++;
+      }
 
-      if (new Date(p.nextReview) <= now) {
+      if (!p.isIntroduced && new Date(p.nextReview) <= now) {
         dueCount++;
       }
     }
@@ -377,6 +414,9 @@ export class MemorySystemV2 {
       total: allProficiency.length,
       byLevel,
       averageScore: allProficiency.length > 0 ? totalScore / allProficiency.length : 0,
+      introducedCount,
+      learningCount,
+      masteredCount,
       dueCount,
     };
   }

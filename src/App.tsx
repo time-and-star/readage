@@ -87,6 +87,7 @@ import {
 } from './lib/appRoutes';
 import { BookOpen, BarChart3, History, Library } from 'lucide-react';
 import {
+  DEFAULT_REVIEW_QUEUE_LIMIT,
   useDueWords,
   useProficiencyStats,
   useAllWordProficiency,
@@ -181,7 +182,7 @@ export default function App() {
     normalizeArticleSessions
   );
   // Memory V2.2: 使用 Hooks 替代 proficiency 状态
-  const { dueWords, loading: dueWordsLoading } = useDueWords();
+  const { dueWords, loading: dueWordsLoading } = useDueWords(DEFAULT_REVIEW_QUEUE_LIMIT);
   const { stats, loading: statsLoading } = useProficiencyStats();
   const { proficiencies, loading: proficienciesLoading } = useAllWordProficiency();
   const memoryStorageError = useMemoryStorageError();
@@ -593,8 +594,10 @@ export default function App() {
 
   const bands = useMemo(
     () => ({
-      learning: (stats?.byLevel[1] || 0) + (stats?.byLevel[2] || 0) + (stats?.byLevel[3] || 0),
-      mastered: stats?.byLevel[4] || 0,
+      introduced: stats?.introducedCount || 0,
+      learning: stats?.learningCount || 0,
+      mastered: stats?.masteredCount || 0,
+      due: stats?.dueCount || 0,
     }),
     [stats]
   );
@@ -1559,11 +1562,12 @@ export default function App() {
             assessedBand={assessmentResult?.recommendedBand ?? null}
             assessmentCompletedAt={assessmentResult?.completedAt ?? null}
             articlesReadCount={completedArticleCount}
+            introducedWordsCount={bands.introduced}
             masteredWordsCount={bands.mastered}
             learningWordsCount={bands.learning}
             streakDaysCount={streakDays}
             recentEventCount={recentEventCount}
-            dueWordCount={dueLemmas.length}
+            dueWordCount={bands.due}
             proficiencies={proficiencies}
             proficienciesLoading={proficienciesLoading}
             weakPointMetrics={weakPointMetrics}

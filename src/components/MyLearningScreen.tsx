@@ -35,6 +35,7 @@ interface MyLearningScreenProps {
   assessedBand?: string | null;
   assessmentCompletedAt?: string | null;
   articlesReadCount: number;
+  introducedWordsCount: number;
   masteredWordsCount: number;
   learningWordsCount: number;
   streakDaysCount: number;
@@ -57,6 +58,7 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   assessedBand,
   assessmentCompletedAt,
   articlesReadCount,
+  introducedWordsCount,
   masteredWordsCount,
   learningWordsCount,
   streakDaysCount,
@@ -184,6 +186,7 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
 
         <div className="grid grid-cols-2 gap-3 sm:gap-4">
           <MetricCard value={articlesReadCount} label="已完成文章" />
+          <MetricCard value={introducedWordsCount} label="新引入词" />
           <MetricCard value={masteredWordsCount} label="掌握词 (L4)" />
           <MetricCard value={learningWordsCount} label="学习中 (L1–L3)" />
           <MetricCard value={streakDaysCount} label="连续学习天数" />
@@ -279,7 +282,7 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
 
         <div className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 text-sm text-[#524B43] flex flex-wrap gap-x-5 gap-y-2">
           <span>
-            到期复习：<strong className="text-[#C35E37]">{dueWordCount}</strong> 词
+            正式到期复习：<strong className="text-[#C35E37]">{dueWordCount}</strong> 词
           </span>
           <span>
             近 7 天学习事件：<strong>{recentEventCount}</strong>
