@@ -58,6 +58,8 @@ test('rating failure preserves the article source level', async () => {
 
   assert.equal(result.level, 'C1');
   assert.equal(result.levelRating.level, 'C1');
+  assert.match(result.levelRating.summary, /C1/);
+  assert.doesNotMatch(result.levelRating.summary, /默认 B1/);
 });
 
 test('recommendation scoring falls back to actual body word count', () => {

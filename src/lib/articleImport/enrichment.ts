@@ -636,7 +636,7 @@ export async function enrichArticleOnImport(
         levelRating: {
           level: article.level?.trim() || 'B1',
           difficultyScore: 50,
-          summary: '未能完成 AI 评级，暂用默认 B1。',
+          summary: `未能完成 AI 评级，暂保留原始等级 ${article.level?.trim() || 'B1'}。`,
         } satisfies ArticleLevelRating,
         ratingTruncated: false,
       });
