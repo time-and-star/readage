@@ -104,13 +104,14 @@ export function endRecommendationFeed(
 export function selectLibraryFallback(
   library: Article[],
   history: Article[],
-  excludedArticleIds: ReadonlySet<string>
+  excludedArticleIds: ReadonlySet<string>,
+  isEligible: (article: Article) => boolean = () => true,
 ): Article | null {
   const storedById = new Map(history.map((article) => [article.id, article]));
   return library.find((candidate) => {
     if (excludedArticleIds.has(candidate.id)) return false;
     const stored = storedById.get(candidate.id);
-    return (stored?.status ?? candidate.status) !== 'Completed';
+    return (stored?.status ?? candidate.status) !== 'Completed' && isEligible(candidate);
   }) ?? null;
 }
 

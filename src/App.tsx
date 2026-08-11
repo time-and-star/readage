@@ -42,8 +42,11 @@ import {
   resolveRecommendationArticle,
   type RecommendationSource,
 } from './lib/resolveRecommendation';
+import { isRecommendationArticleWithinBounds } from './lib/memoryV2/recommendation';
 import { startRecSession } from './lib/recommendationTelemetry';
-import { getRecommendationEntryAction } from './lib/recommendationEntry';
+import {
+  getArticleOnlyRecommendationDefaults,
+} from './lib/recommendationEntry';
 import type { RecommendedArticleCandidate } from './lib/articleValidation';
 import {
   buildRecommendationArticlePool,
@@ -71,10 +74,8 @@ import {
   type ReadingAssessmentResult,
 } from './components/ReadingAssessmentScreen';
 import {
-  buildCefrRecommendationProfile,
   suggestedWordCountRange,
   normalizeUserReadingAssessment,
-  resolveUserCefrLevel,
 } from './lib/userReadingProfile';
 import { buildDefaultV5Profile } from './lib/recommendationV5';
 import {
@@ -199,14 +200,12 @@ export default function App() {
     null,
     normalizeUserReadingAssessment
   );
-  const userCefrLevel = useMemo(
-    () => resolveUserCefrLevel(assessmentResult),
-    [assessmentResult]
+  const articleOnlyRecommendationDefaults = useMemo(
+    getArticleOnlyRecommendationDefaults,
+    [],
   );
-  const cefrRecommendationProfile = useMemo(
-    () => buildCefrRecommendationProfile(assessmentResult),
-    [assessmentResult]
-  );
+  const userCefrLevel = articleOnlyRecommendationDefaults.userLevel;
+  const cefrRecommendationProfile = articleOnlyRecommendationDefaults.cefrProfile;
   const [isRecommending, setIsRecommending] = useState(false);
   const [recommendPhase, setRecommendPhase] = useState<'local' | 'ai' | null>(null);
   const [isRewriting, setIsRewriting] = useState(false);
@@ -228,6 +227,22 @@ export default function App() {
   const [lastReadingArticleId, setLastReadingArticleId] = useState<string | null>(null);
   const [showEnterArticle, setShowEnterArticle] = useState(false);
   const importQueueSnapshot = useArticleImportQueue();
+
+  const selectBoundedRecommendationFallback = (
+    library: Article[],
+    historyRows: Article[],
+    excludedArticleIds: ReadonlySet<string>,
+    reviewWords: readonly string[] = recommendationContextRef.current?.reviewWords ?? [],
+  ) => selectLibraryFallback(
+    library,
+    historyRows,
+    excludedArticleIds,
+    (article) => isRecommendationArticleWithinBounds(
+      article,
+      cefrRecommendationProfile,
+      { mode: reviewWords.length > 0 ? 'review' : 'normal', checkCefr: true },
+    ),
+  );
 
   const navigate = (nextRoute: AppRoute, options: NavigationOptions = {}) => {
     const nextPath = buildAppPath(nextRoute);
@@ -997,10 +1012,11 @@ export default function App() {
     } catch (error) {
       if (requestId !== recommendationRequestIdRef.current || controller.signal.aborted) return;
       console.warn('Recommendation prefetch failed; using the local library.', error);
-      const fallback = selectLibraryFallback(
+      const fallback = selectBoundedRecommendationFallback(
         recommendationLibraryRef.current,
         history,
-        new Set(loading.seenArticleIds)
+        new Set(loading.seenArticleIds),
+        context.reviewWords,
       );
       updateRecommendationFeed((latest) => fallback
         ? finishRecommendationPrefetch(latest, fallback)
@@ -1044,10 +1060,11 @@ export default function App() {
       } catch (error) {
         if (requestId !== recommendationRequestIdRef.current || controller.signal.aborted) return;
         console.warn('Recommendation failed; using the local library.', error);
-        article = selectLibraryFallback(
+        article = selectBoundedRecommendationFallback(
           recommendationLibraryRef.current,
           history,
-          new Set()
+          new Set(),
+          reviewWords,
         );
         if (article) logRecommendationSource('timeout_fallback', article.title);
       }
@@ -1093,10 +1110,6 @@ export default function App() {
 
   const startRecommendationFromEntry = () => {
     if (isRecommending) return;
-    if (getRecommendationEntryAction(Boolean(assessmentResult)) === 'assessment') {
-      navigate({ kind: 'assessment' }, { replace: true });
-      return;
-    }
     // Keep /recommend as a loading/empty shell for cold-start recommendation.
     if (route.kind !== 'recommendation' && route.kind !== 'reading') {
       navigate({ kind: 'recommendation' });
@@ -1127,10 +1140,11 @@ export default function App() {
     let nextArticle = consumed.article;
 
     if (!nextArticle) {
-      nextArticle = selectLibraryFallback(
+      nextArticle = selectBoundedRecommendationFallback(
         recommendationLibraryRef.current,
         history,
-        new Set(nextState.seenArticleIds)
+        new Set(nextState.seenArticleIds),
+        recommendationContextRef.current?.reviewWords ?? [],
       );
       if (nextArticle) {
         nextState = markRecommendationArticleSeen(nextState, nextArticle.id);
@@ -1343,7 +1357,7 @@ export default function App() {
   if (route.kind === 'landing') {
     return (
       <LandingPage
-        onStartAssessment={() => navigate({ kind: 'assessment' })}
+        onStartReading={startRecommendationFromEntry}
       />
     );
   }
@@ -1379,7 +1393,7 @@ export default function App() {
         </div>
       )}
 
-      {importQueueSnapshot.bannerMessage && (
+      {importQueueSnapshot.bannerMessage && route.kind !== 'reading' && (
         <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] text-center text-xs text-[#075985] py-2 font-medium px-3 flex items-center justify-center gap-3 flex-wrap">
           <span>{importQueueSnapshot.bannerMessage}</span>
           <button
@@ -1418,10 +1432,6 @@ export default function App() {
               resetRecommendationFeed();
               navigate({ kind: 'library' });
             }}
-            onStartAssessment={() => {
-              resetRecommendationFeed();
-              navigate({ kind: 'assessment' });
-            }}
             onBack={goBackOrLibrary}
             navigation={appNavigation}
           />
@@ -1437,12 +1447,6 @@ export default function App() {
                 detail: `cefr_assessment:${result.recommendedBand}`,
               });
             }}
-            onStartRecommendedReading={(band) => {
-              void startRecommendationReading(
-                `CEFR ${band} reading practice`,
-                dueLemmas.slice(0, 5)
-              );
-            }}
           />
         )}
 
@@ -1450,7 +1454,6 @@ export default function App() {
           <LibraryScreen
             userArticles={userArticles}
             userCefrLevel={userCefrLevel}
-            hasAssessment={Boolean(assessmentResult)}
             onSelectArticle={(article) =>
               beginReadingSession(article, {
                 source: article.source === 'magazine' ? 'magazine' : 'history',
@@ -1513,7 +1516,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={returnHome}
-                className="mt-6 rounded-xl bg-[#C35E37] px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#A94E2D]"
+                className="app-primary-action mt-6 rounded-xl px-5 py-2.5 text-sm font-medium transition-colors"
               >
                 返回上一页
               </button>
@@ -1533,7 +1536,7 @@ export default function App() {
                 type="button"
                 onClick={startRecommendationFromEntry}
                 disabled={isRecommending}
-                className="px-4 py-2 bg-[#C35E37] text-white rounded-xl text-sm disabled:opacity-60"
+                className="app-primary-action px-4 py-2 rounded-xl text-sm disabled:opacity-60"
               >
                 开始推荐阅读
               </button>
