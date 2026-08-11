@@ -17,6 +17,17 @@ import {
   reviewFsrsMemory,
 } from './fsrs';
 
+/**
+ * Keep the inflection aliases intentionally small until a dictionary-backed
+ * lemmatizer is available. This covers the observed chase/chasing mismatch
+ * without stemming proper names, phrases, or arbitrary hyphenated terms.
+ */
+const CONSERVATIVE_INFLECTIONS: Readonly<Record<string, string>> = {
+  chasing: 'chase',
+  chased: 'chase',
+  chases: 'chase',
+};
+
 /** Normalize a word or phrase while preserving phrase boundaries. */
 export function toLemma(word: string): string {
   return word
@@ -27,6 +38,7 @@ export function toLemma(word: string): string {
     .trim()
     .split(' ')
     .map((token) => token.replace(/^'+|'+$/g, ''))
+    .map((token) => CONSERVATIVE_INFLECTIONS[token] ?? token)
     .filter(Boolean)
     .join(' ');
 }

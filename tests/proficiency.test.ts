@@ -162,6 +162,14 @@ test('normalizes typographic apostrophes and does not match phrases across punct
   assert.equal(textContainsLemma('Take a break \u2014 a leg stretch.', 'break a leg'), false);
 });
 
+test('canonicalizes a conservative inflected form without changing phrase boundaries', () => {
+  assert.equal(toLemma('chasing'), 'chase');
+  assert.equal(toLemma('Chased'), 'chase');
+  assert.equal(toLemma('chases'), 'chase');
+  assert.equal(toLemma('break a leg'), 'break a leg');
+  assert.equal(toLemma('well-being'), 'well being');
+});
+
 test('manual mastery uses Easy and later becomes due under FSRS', () => {
   const map = seedFromReviewWords([reviewWord('durable')], start);
   const mastered = applyMastered(map, 'durable', start).durable;

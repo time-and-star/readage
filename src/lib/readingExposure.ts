@@ -11,6 +11,19 @@ export interface ReadingLearningUnit {
   tokenLength: number;
 }
 
+export const MAX_CONCURRENT_EXPOSURE_CANDIDATES = 2;
+
+/** Keep several visible desktop paragraphs from starting exposure timers together. */
+export function limitConcurrentExposureCandidates<T>(
+  candidates: readonly T[],
+  activeCount: number,
+  maximum = MAX_CONCURRENT_EXPOSURE_CANDIDATES,
+): T[] {
+  const active = Number.isFinite(activeCount) ? Math.max(0, Math.floor(activeCount)) : 0;
+  const limit = Number.isFinite(maximum) ? Math.max(0, Math.floor(maximum)) : 0;
+  return candidates.slice(0, Math.max(0, limit - active));
+}
+
 function tokenizeParagraph(paragraphText: string): string[] {
   const trimmed = paragraphText.trim();
   return trimmed ? trimmed.split(/\s+/) : [];
@@ -110,4 +123,26 @@ export function hasSufficientExposureVisibility(
   if (visibleHeight <= 0 || paragraphHeight <= 0 || viewportHeight <= 0) return false;
   const requiredHeight = Math.min(paragraphHeight * 0.6, viewportHeight * 0.6);
   return visibleHeight >= requiredHeight;
+}
+
+export function shouldAdvanceRecommendationAtScrollEnd(
+  lastParagraphBottom: number,
+  scrollTop: number,
+  viewportHeight: number,
+  documentHeight: number,
+  viewportTop = 0,
+): boolean {
+  if (![lastParagraphBottom, scrollTop, viewportHeight, documentHeight, viewportTop]
+    .every(Number.isFinite)) return false;
+  if (documentHeight <= viewportHeight || viewportHeight <= 0) return false;
+
+  const paragraphExited = lastParagraphBottom <= viewportTop;
+  const documentEnded = scrollTop + viewportHeight >= documentHeight - 2;
+  return paragraphExited || documentEnded;
+}
+
+/** Continuous visible time required before a paragraph can produce exposure evidence. */
+export function getMinimumExposureDwellMs(paragraphText: string): number {
+  const wordCount = paragraphText.trim().split(/\s+/).filter(Boolean).length;
+  return Math.min(6_000, Math.max(1_200, wordCount * 150));
 }

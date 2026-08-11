@@ -26,7 +26,10 @@ import {
 import {
   extractLearningUnits,
   findLearningUnitAtTokenIndex,
+  getMinimumExposureDwellMs,
   hasSufficientExposureVisibility,
+  limitConcurrentExposureCandidates,
+  shouldAdvanceRecommendationAtScrollEnd,
 } from '../lib/readingExposure';
 import { getPhraseHighlightMatches } from '../lib/textHighlight';
 import { postTutor } from '../lib/tutorClient';
@@ -43,6 +46,7 @@ import { useMemoryV2Integration } from '../lib/memoryV2Integration';
 import { createWordCardRequest, fetchWordCard } from '../lib/wordCard';
 import { formatSelectionQuote } from '../lib/readingSelection';
 import { WordCardPanel } from './WordCardPanel';
+import { ReadAgeBrand } from './ReadAgeBrand';
 import {
   emitVocabArticleComplete,
   startVocabSession,
@@ -291,6 +295,90 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       onReadingCompleteRef.current?.();
     };
 
+    let scheduleVisibleExposureTimers: () => void = () => {};
+
+    const scheduleExposureTimer = (paragraph: Element) => {
+      if (
+        !isActive
+        || !visibleParagraphs.has(paragraph)
+        || completedParagraphs.has(paragraph)
+        || exposureTimers.has(paragraph)
+      ) return;
+
+      const minimumDwellTimeMs = getMinimumExposureDwellMs(paragraph.textContent ?? '');
+      const timerId = window.setTimeout(() => {
+        exposureTimers.delete(paragraph);
+        if (
+          !isActive
+          || document.visibilityState !== 'visible'
+          || !visibleParagraphs.has(paragraph)
+        ) {
+          scheduleVisibleExposureTimers();
+          return;
+        }
+
+        const primary = primaryArticleRef.current;
+        const paragraphElement = paragraph as HTMLElement;
+        const paragraphIndex = Number(paragraphElement.dataset.readingParagraph);
+        const paragraphArticleId = paragraphElement.dataset.readingArticleId || primary.id;
+        const paragraphArticle = paragraphArticleId === primary.id
+          ? primary
+          : continuousArticlesRef.current?.find((candidate) => candidate.id === paragraphArticleId);
+        const paragraphText = paragraphArticle?.content[paragraphIndex]
+          ?? paragraphElement.textContent
+          ?? '';
+        const articleHighlightTerms = getArticleHighlightTerms(paragraphArticle);
+        const learningUnits = extractLearningUnits(paragraphText, articleHighlightTerms);
+        const staged = stagedExposuresFor(paragraphArticleId);
+        const newWordIds = [...new Set(
+          learningUnits.map((unit) => unit.wordId),
+        )].filter((wordId) => !staged.has(wordId));
+
+        newWordIds.forEach((wordId) => staged.add(wordId));
+        completedParagraphs.add(paragraph);
+        observer.unobserve(paragraph);
+        visibleParagraphs.delete(paragraph);
+        scheduleVisibleExposureTimers();
+
+        // Memory V2.2: record for every article in the continuous stream
+        if (learningUnits.length > 0) {
+          const wordCount = paragraphText.trim().split(/\s+/).filter(Boolean).length;
+          recordParagraphExposure(paragraphIndex, learningUnits, paragraphArticleId, {
+            contextText: paragraphText.slice(0, 2_000),
+            dwellTimeMs: minimumDwellTimeMs,
+            expectedDwellTimeMs: Math.max(300, wordCount * 300),
+          }).catch(err =>
+            console.error('Memory V2.2 exposure recording failed:', err)
+          );
+        }
+
+        if (newWordIds.length > 0 && mode === 'single') {
+          onExposuresRef.current?.(newWordIds);
+        }
+        if (mode === 'single') {
+          const paragraphCount = container.querySelectorAll('[data-reading-paragraph]').length;
+          if (paragraphCount > 0 && completedParagraphs.size === paragraphCount) {
+            finishSingleReading();
+          }
+        }
+      }, minimumDwellTimeMs);
+
+      exposureTimers.set(paragraph, timerId);
+    };
+
+    scheduleVisibleExposureTimers = () => {
+      const candidates: Element[] = [];
+      container.querySelectorAll('[data-reading-paragraph]').forEach((paragraph) => {
+        const element = paragraph as Element;
+        if (visibleParagraphs.has(element) && !completedParagraphs.has(element)) {
+          candidates.push(element);
+        }
+      });
+
+      limitConcurrentExposureCandidates(candidates, exposureTimers.size)
+        .forEach(scheduleExposureTimer);
+    };
+
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -309,63 +397,12 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           if (!isSufficientlyVisible) {
             visibleParagraphs.delete(paragraph);
             clearExposureTimer(paragraph);
+            scheduleVisibleExposureTimers();
             return;
           }
 
           visibleParagraphs.add(paragraph);
-          if (exposureTimers.has(paragraph)) return;
-
-          const timerId = window.setTimeout(() => {
-            exposureTimers.delete(paragraph);
-            if (
-              !isActive
-              || document.visibilityState !== 'visible'
-              || !visibleParagraphs.has(paragraph)
-            ) return;
-
-            const primary = primaryArticleRef.current;
-            const paragraphIndex = Number(paragraph.dataset.readingParagraph);
-            const paragraphArticleId = paragraph.dataset.readingArticleId || primary.id;
-            const paragraphArticle = paragraphArticleId === primary.id
-              ? primary
-              : continuousArticlesRef.current?.find((candidate) => candidate.id === paragraphArticleId);
-            const paragraphText = paragraphArticle?.content[paragraphIndex] ?? paragraph.textContent ?? '';
-            const articleHighlightTerms = getArticleHighlightTerms(paragraphArticle);
-            const learningUnits = extractLearningUnits(paragraphText, articleHighlightTerms);
-            const staged = stagedExposuresFor(paragraphArticleId);
-            const newWordIds = [...new Set(
-              learningUnits.map((unit) => unit.wordId),
-            )].filter((wordId) => !staged.has(wordId));
-
-            newWordIds.forEach((wordId) => staged.add(wordId));
-            completedParagraphs.add(paragraph);
-            observer.unobserve(paragraph);
-            visibleParagraphs.delete(paragraph);
-
-            // Memory V2.2: record for every article in the continuous stream
-            if (learningUnits.length > 0) {
-              const wordCount = paragraphText.trim().split(/\s+/).filter(Boolean).length;
-              recordParagraphExposure(paragraphIndex, learningUnits, paragraphArticleId, {
-                contextText: paragraphText.slice(0, 2_000),
-                dwellTimeMs: 800,
-                expectedDwellTimeMs: Math.max(300, wordCount * 300),
-              }).catch(err =>
-                console.error('Memory V2.2 exposure recording failed:', err)
-              );
-            }
-
-            if (newWordIds.length > 0 && mode === 'single') {
-              onExposuresRef.current?.(newWordIds);
-            }
-            if (mode === 'single') {
-              const paragraphCount = container.querySelectorAll('[data-reading-paragraph]').length;
-              if (paragraphCount > 0 && completedParagraphs.size === paragraphCount) {
-                finishSingleReading();
-              }
-            }
-          }, 800);
-
-          exposureTimers.set(paragraph, timerId);
+          scheduleVisibleExposureTimers();
         });
       },
       { threshold: Array.from({ length: 101 }, (_, index) => index / 100) },
@@ -459,7 +496,21 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         const articleId = section.dataset.readingArticleId;
         if (!articleId || completedContinuousArticleIdsRef.current.has(articleId)) return;
         const lastParagraph = section.querySelector('[data-reading-last-paragraph="true"]') as HTMLElement | null;
-        if (!lastParagraph || !hasArticleExitedViewport(lastParagraph.getBoundingClientRect().bottom)) return;
+        if (!lastParagraph) return;
+        const documentHeight = Math.max(
+          document.documentElement.scrollHeight,
+          document.body?.scrollHeight ?? 0,
+        );
+        const lastParagraphBottom = lastParagraph.getBoundingClientRect().bottom;
+        const canAdvance = window.innerWidth >= 768
+          ? shouldAdvanceRecommendationAtScrollEnd(
+            lastParagraphBottom,
+            window.scrollY,
+            window.innerHeight,
+            documentHeight,
+          )
+          : hasArticleExitedViewport(lastParagraphBottom);
+        if (!canAdvance) return;
         completedContinuousArticleIdsRef.current.add(articleId);
         completedOne = true;
         const exposed = exposedLemmasByArticleRef.current.get(articleId) ?? new Set<string>();
@@ -958,7 +1009,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
       <header className="sticky top-0 z-20 bg-[#F8F6F0]/90 px-4 backdrop-blur-md safe-pt sm:px-6">
         <div className="mx-auto grid h-16 w-full max-w-[1040px] grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-[#E7E2D5] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-          <div className="flex min-w-11 items-center">
+          <div className="flex min-w-11 items-center gap-3">
           <button
             type="button"
             onClick={onBack}
@@ -968,6 +1019,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
+          <ReadAgeBrand
+            className="app-desktop-brand"
+            logoClassName="h-7 w-7"
+            nameClassName="text-base"
+          />
           </div>
 
           <div className="text-center min-w-0 px-1 sm:px-2 flex justify-center">
@@ -1093,9 +1149,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                             }}
                             className={`min-h-10 sm:min-h-0 py-2 sm:py-1.5 rounded-lg text-center text-xs sm:text-[11px] font-semibold border transition-colors ${
                               isPreferred
-                                ? 'border-[#C35E37] bg-[#C35E37] text-white'
+                                ? 'border-[#A94E2B] bg-[#A94E2B] text-white'
                                 : isCurrent
-                                  ? 'border-[#C35E37] bg-[#C35E37]/10 text-[#C35E37]'
+                                  ? 'border-[#A94E2B] bg-[#A94E2B]/10 text-[#A94E2B]'
                                   : 'border-[#E0DBCF] bg-white hover:border-[#C35E37] text-[#3D372E]'
                             }`}
                             title={
@@ -1121,7 +1177,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         </div>
       </header>
 
-      <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6 sm:px-6 sm:py-12 pb-[max(7rem,calc(5.5rem+env(safe-area-inset-bottom,0px)))]">
+      <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6 sm:px-6 sm:py-12 pb-10 sm:pb-[max(7rem,calc(5.5rem+env(safe-area-inset-bottom,0px)))]">
         <header className="mb-6 sm:mb-8">
           <h2 className="font-serif text-[1.65rem] sm:text-3xl font-bold leading-tight text-[#2A2621] break-words">
             {article.title}
@@ -1446,6 +1502,24 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             </div>
           )}
         </div>
+
+        {!isComposerExpanded && (
+          <div className="mt-10 flex justify-center sm:hidden">
+            <button
+              type="button"
+              data-reading-interaction="true"
+              onClick={() => setIsComposerExpanded(true)}
+              className="app-primary-action inline-flex min-h-12 items-center gap-2 rounded-full border border-[#A94E2B] px-5 py-3 shadow-md transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#A94E2B] focus:ring-offset-2 sm:hidden"
+              aria-label="Open article discussion input"
+              aria-expanded={false}
+              aria-controls="reading-composer-input"
+              title="讨论：就文章提问"
+            >
+              <MessageCircle className="h-5 w-5 shrink-0" />
+              <span className="text-sm font-semibold tracking-wide">讨论本文</span>
+            </button>
+          </div>
+        )}
       </main>
 
       {copyHint && (
@@ -1552,7 +1626,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 key={msg.id ?? idx}
                 className={`p-3 rounded-xl max-w-[85%] break-words ${
                   msg.sender === 'user'
-                    ? 'bg-[#C35E37] text-white ml-auto'
+                    ? 'bg-[#A94E2B] text-white ml-auto'
                     : 'bg-[#EFECE3] text-[#2C2722] mr-auto border border-[#E2DDD0]'
                 }`}
               >
@@ -1603,7 +1677,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     key={msg.id ?? idx}
                     className={`max-w-[85%] rounded-xl p-3 break-words ${
                       msg.sender === 'user'
-                        ? 'ml-auto bg-[#C35E37] text-white'
+                        ? 'ml-auto bg-[#A94E2B] text-white'
                         : 'mr-auto border border-[#E2DDD0] bg-[#EFECE3] text-[#2C2722]'
                     }`}
                   >
@@ -1642,7 +1716,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 <button
                   type="submit"
                   disabled={!userInput.trim() || isSending}
-                  className="ml-2 tap-target inline-flex shrink-0 items-center justify-center rounded-full bg-[#C35E37] p-2.5 sm:p-1.5 text-white transition-colors hover:bg-[#A94E2B] disabled:opacity-40"
+                  className="ml-2 tap-target inline-flex shrink-0 items-center justify-center rounded-full bg-[#A94E2B] p-2.5 sm:p-1.5 text-white transition-colors hover:bg-[#8F3F22] disabled:opacity-40"
                   aria-label="Send question"
                 >
                   <Send className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
@@ -1670,7 +1744,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             type="button"
             data-reading-interaction="true"
             onClick={() => setIsComposerExpanded(true)}
-            className="fixed z-[70] inline-flex items-center gap-2 rounded-full border border-[#C35E37] bg-[#C35E37] px-4 py-3.5 sm:px-5 sm:py-3.5 text-white shadow-xl transition-all hover:scale-105 hover:bg-[#A94E2B] hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#C35E37] focus:ring-offset-2 right-[max(1rem,env(safe-area-inset-right,0px))] bottom-[max(1.25rem,calc(1rem+env(safe-area-inset-bottom,0px)))] sm:right-8"
+            className="hidden sm:inline-flex sm:fixed sm:z-[70] items-center gap-2 rounded-full border border-[#A94E2B] bg-[#A94E2B] px-4 py-3.5 sm:px-5 sm:py-3.5 text-white shadow-xl transition-all hover:scale-105 hover:bg-[#8F3F22] hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#A94E2B] focus:ring-offset-2 sm:right-8 sm:bottom-8"
             aria-label="Open article discussion input"
             aria-expanded={false}
             aria-controls="reading-composer-input"
