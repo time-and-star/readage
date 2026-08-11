@@ -46,6 +46,31 @@ test('classifies first, natural, scheduled, and forced exposures with the 24-hou
   );
 });
 
+test('does not treat the same article as a new successful reading context', () => {
+  assert.deepEqual(
+    classifyExposure({
+      now: NOW,
+      isRecommendation: true,
+      nextReview: new Date(NOW.getTime() - DAY).toISOString(),
+      lastEffectiveExposureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
+      articleId: 'article-a',
+      lastEffectiveArticleId: 'article-a',
+    }),
+    { kind: 'scheduled', isValid: false },
+  );
+  assert.deepEqual(
+    classifyExposure({
+      now: NOW,
+      isRecommendation: true,
+      nextReview: new Date(NOW.getTime() - DAY).toISOString(),
+      lastEffectiveExposureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
+      articleId: 'article-b',
+      lastEffectiveArticleId: 'article-a',
+    }),
+    { kind: 'scheduled', isValid: true },
+  );
+});
+
 test('maps exposure signals to bounded quality', () => {
   assert.equal(calculateExposureQuality({ clicked: true }), 0);
   assert.equal(calculateExposureQuality({ dwellTimeMs: 3_000, expectedDwellTimeMs: 1_000 }), 0.5);

@@ -23,10 +23,21 @@ export function aggregateArticleEvidence(
   if (events.length === 0) return null;
 
   // V4 first exposures and sub-24h natural repeats remain history only.
-  const exposureEvents = events.filter(
-    (e) => e.eventType === 'exposure' && e.rmeIsValid !== false,
+  const sortedEvents = [...events].sort(
+    (a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()
   );
-  const clickEvents = events.filter((e) => e.eventType === 'click');
+  const seenExposureOccurrences = new Set<string>();
+  const exposureEvents = sortedEvents.filter((event) => {
+    if (event.eventType !== 'exposure' || event.rmeIsValid === false) return false;
+    if (seenExposureOccurrences.has(event.occurrenceId)) return false;
+    seenExposureOccurrences.add(event.occurrenceId);
+    return true;
+  });
+  const clickedOccurrences = new Set(
+    sortedEvents
+      .filter((event) => event.eventType === 'click')
+      .map((event) => event.occurrenceId),
+  );
 
   // 统计有效曝光次数
   const validExposureCount = exposureEvents.length;
@@ -35,15 +46,9 @@ export function aggregateArticleEvidence(
     : undefined;
 
   // 统计被点击的 occurrence 数量（去重）
-  const clickedOccurrences = new Set(
-    clickEvents.map((e) => e.occurrenceId)
-  );
   const clickedOccurrenceCount = clickedOccurrences.size;
 
-  const first = events[0];
-  const sortedEvents = events.sort(
-    (a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()
-  );
+  const first = sortedEvents[0];
 
   return {
     userId: first.userId,
@@ -67,12 +72,12 @@ export function aggregateArticleEvidence(
  * - validExposureCount > 0 且 clickedOccurrenceCount = 0 → Good
  */
 export function getArticleGrade(evidence: ArticleWordEvidence): FsrsGrade | null {
-  if (evidence.validExposureCount === 0) {
-    return null; // 不提供证据
-  }
-
   if (evidence.clickedOccurrenceCount > 0) {
     return 'Again';
+  }
+
+  if (evidence.validExposureCount === 0) {
+    return null; // 不提供证据
   }
 
   return 'Good';
@@ -144,16 +149,17 @@ export function calculateDailyGrade(
 ): FsrsGrade | null {
   if (articleEvidences.length === 0) return null;
 
+  // A lookup is direct failure evidence even when the surrounding paragraph
+  // was not visible long enough to count as a successful passive exposure.
+  const hasClick = articleEvidences.some((e) => e.clickedOccurrenceCount > 0);
+  if (hasClick) {
+    return 'Again';
+  }
+
   // 检查是否有有效曝光
   const hasValidExposure = articleEvidences.some((e) => e.validExposureCount > 0);
   if (!hasValidExposure) {
     return null;
-  }
-
-  // 检查是否有任何点击
-  const hasClick = articleEvidences.some((e) => e.clickedOccurrenceCount > 0);
-  if (hasClick) {
-    return 'Again';
   }
 
   // 有曝光且无点击

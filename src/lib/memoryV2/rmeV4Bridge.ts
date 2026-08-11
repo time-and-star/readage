@@ -170,9 +170,12 @@ export function prepareRmeEvent(
     };
   }
 
+  const lastExposure = profile.exposureHistory[profile.exposureHistory.length - 1];
   const classification = classifyExposure({
     now: occurredAt,
     isRecommendation: event.isRecommendation === true,
+    articleId: event.articleId,
+    lastEffectiveArticleId: lastExposure?.articleId,
     forcedExposure: profile.forcedExposure,
     nextReview: state?.nextReview,
     lastExposureAt: profile.lastExposureAt,

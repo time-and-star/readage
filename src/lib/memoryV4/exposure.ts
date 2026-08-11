@@ -19,17 +19,21 @@ function elapsedMs(now: Date, timestamp: string | null | undefined): number | nu
 }
 
 export function classifyExposure(input: ExposureClassificationInput): ExposureClassification {
-  if (input.forcedExposure) return { kind: 'forced', isValid: true };
+  const isNewArticle = !input.articleId
+    || !input.lastEffectiveArticleId
+    || input.articleId !== input.lastEffectiveArticleId;
+
+  if (input.forcedExposure) return { kind: 'forced', isValid: isNewArticle };
   const hasSeen = Boolean(input.lastExposureAt || input.lastEffectiveExposureAt);
   if (!hasSeen) return { kind: 'new', isValid: false };
 
   const nextReviewAt = input.nextReview ? new Date(input.nextReview).getTime() : NaN;
   if (input.isRecommendation && Number.isFinite(nextReviewAt) && nextReviewAt <= input.now.getTime()) {
-    return { kind: 'scheduled', isValid: true };
+    return { kind: 'scheduled', isValid: isNewArticle };
   }
 
   const gap = elapsedMs(input.now, input.lastEffectiveExposureAt || input.lastExposureAt);
-  return { kind: 'natural', isValid: gap === null || gap >= RME_DAY_MS };
+  return { kind: 'natural', isValid: isNewArticle && (gap === null || gap >= RME_DAY_MS) };
 }
 
 export function calculateExposureQuality(signals: ExposureQualitySignals = {}): number {

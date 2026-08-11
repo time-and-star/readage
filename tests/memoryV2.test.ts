@@ -26,12 +26,14 @@ import {
   scoreToLevel,
 } from '../src/lib/memoryV2/memoryScore';
 import {
+  finalizeDailyEvidence,
   initializeWordMemory,
   submitFsrsReview,
 } from '../src/lib/memoryV2/fsrsIntegration';
 import { MemorySystemV2 } from '../src/lib/memoryV2/memorySystem';
 import type { MemoryStorage } from '../src/lib/memoryV2/storage';
-import { createEmptyRmeProfile } from '../src/lib/memoryV4';
+import { createEmptyRmeProfile, recordExposure } from '../src/lib/memoryV4';
+import { prepareRmeEvent } from '../src/lib/memoryV2/rmeV4Bridge';
 
 describe('Memory V2.2 - Evidence Aggregation', () => {
   it('场景 A: 同一文章多次未点击 → 只形成一条文章级 Good 候选', () => {
@@ -180,6 +182,55 @@ describe('Memory V2.2 - Evidence Aggregation', () => {
 
     const dailyEvidence = aggregateDailyEvidence([articleA]);
     assert.equal(dailyEvidence!.pendingGrade, null);
+  });
+
+  it('treats a lookup as Again even when the surrounding exposure was not valid', () => {
+    const article: ArticleWordEvidence = {
+      userId: 'user1',
+      wordId: 'constraint',
+      articleId: 'article-A',
+      localDate: '2026-07-24',
+      validExposureCount: 0,
+      clickedOccurrenceCount: 1,
+      firstSeenAt: '2026-07-24T10:00:00Z',
+      lastSeenAt: '2026-07-24T10:00:00Z',
+    };
+
+    assert.equal(getArticleGrade(article), 'Again');
+    assert.equal(aggregateDailyEvidence([article])!.pendingGrade, 'Again');
+  });
+
+  it('deduplicates repeated occurrence exposures while preserving a lookup as Again', () => {
+    const firstExposure: RawWordEvent = {
+      userId: 'user1',
+      wordId: 'constraint',
+      articleId: 'article-A',
+      occurrenceId: 'article-A:p0:w0:constraint',
+      eventType: 'exposure',
+      occurredAt: '2026-07-24T10:00:00Z',
+      localDate: '2026-07-24',
+      rmeIsValid: true,
+      rmeQuality: 1,
+    };
+    const articleEvidence = aggregateArticleEvidence([
+      firstExposure,
+      { ...firstExposure, occurredAt: '2026-07-24T10:00:02Z' },
+      {
+        ...firstExposure,
+        eventType: 'click',
+        occurredAt: '2026-07-24T10:00:03Z',
+      },
+      {
+        ...firstExposure,
+        eventType: 'click',
+        occurredAt: '2026-07-24T10:00:04Z',
+      },
+    ]);
+
+    assert.equal(articleEvidence?.validExposureCount, 1);
+    assert.equal(articleEvidence?.clickedOccurrenceCount, 1);
+    assert.equal(getArticleGrade(articleEvidence!), 'Again');
+    assert.equal(aggregateDailyEvidence([articleEvidence!])?.pendingGrade, 'Again');
   });
 
   it('reopens a finalized day when late evidence arrives', () => {
@@ -336,6 +387,65 @@ describe('Memory V2.2 - FSRS Integration', () => {
     assert.equal(updatedState.lastReview, '2026-07-24T00:00:00.000Z');
     assert.equal(updatedState.fsrsReviews.length, 1);
     assert.equal(updatedState.fsrsReviews[0].rating, 1); // Again = 1
+  });
+
+  it('waits for passive success across different articles and dates before Good', () => {
+    const exposure = (
+      state: WordMemoryState,
+      articleId: string,
+      localDate: string,
+      occurredAt: string,
+    ): WordMemoryState => ({
+      ...state,
+      rme: recordExposure(state.rme ?? createEmptyRmeProfile(), {
+        articleId,
+        occurrenceId: `${articleId}:${occurredAt}`,
+        now: new Date(occurredAt),
+        localDate,
+        kind: 'natural',
+        quality: 1,
+        isValid: true,
+      }),
+    });
+    const daily = (articleId: string, localDate: string): DailyWordEvidence => {
+      const occurredAt = `${localDate}T14:00:00Z`;
+      return {
+        userId: 'user1',
+        wordId: 'word1',
+        localDate,
+        articleEvidence: [{
+          userId: 'user1',
+          wordId: 'word1',
+          articleId,
+          localDate,
+          validExposureCount: 1,
+          clickedOccurrenceCount: 0,
+          firstSeenAt: occurredAt,
+          lastSeenAt: occurredAt,
+          averageRmeQuality: 1,
+        }],
+        articleCount: 1,
+        validExposureCount: 1,
+        clickedOccurrenceCount: 0,
+        pendingGrade: 'Good',
+        averageRmeQuality: 1,
+        finalizedAt: null,
+      };
+    };
+
+    let state = initializeWordMemory('user1', 'word1');
+    state = exposure(state, 'article-a', '2026-07-24', '2026-07-24T10:00:00Z');
+    state = finalizeDailyEvidence(state, daily('article-a', '2026-07-24'), 'user1', 'UTC')!;
+    assert.equal(state.fsrsReviews.length, 0, 'one passive context is only weak evidence');
+
+    state = exposure(state, 'article-b', '2026-07-24', '2026-07-24T14:00:00Z');
+    state = finalizeDailyEvidence(state, daily('article-b', '2026-07-24'), 'user1', 'UTC')!;
+    assert.equal(state.fsrsReviews.length, 0, 'a second article on the same day is still weak');
+
+    state = exposure(state, 'article-b', '2026-07-25', '2026-07-25T14:00:00Z');
+    state = finalizeDailyEvidence(state, daily('article-b', '2026-07-25'), 'user1', 'UTC')!;
+    assert.equal(state.fsrsReviews.length, 1);
+    assert.equal(state.fsrsReviews[0].rating, 3);
   });
 
   it('场景 E: 跨天两个 Good → 分别形成两次 FSRS review', () => {
@@ -672,5 +782,33 @@ describe('RME-V4 - storage bridge', () => {
 
     const state = await storage.getMemoryState('user1', 'constraint');
     assert.equal(state?.rme?.exposureHistory[0]?.quality, 0);
+  });
+
+  it('does not turn a repeated article into a scheduled valid exposure after an invalid first view', () => {
+    const firstEvent = exposureEvent({
+      articleId: 'article-A',
+      occurrenceId: 'article-A:p0:w0:constraint',
+      occurredAt: '2026-07-24T10:00:00Z',
+    });
+    const first = prepareRmeEvent(null, {
+      ...firstEvent,
+      isRecommendation: true,
+    });
+
+    assert.equal(first.event.rmeExposureKind, 'new');
+    assert.equal(first.event.rmeIsValid, false);
+    assert.ok(first.state);
+
+    const repeated = prepareRmeEvent(first.state, {
+      ...firstEvent,
+      occurrenceId: 'article-A:p1:w0:constraint',
+      occurredAt: '2026-07-26T10:00:00Z',
+      isRecommendation: true,
+    });
+
+    assert.equal(repeated.event.rmeExposureKind, 'scheduled');
+    assert.equal(repeated.event.rmeIsValid, false);
+    assert.equal(repeated.state?.rme?.exposureHistory.length, 2);
+    assert.equal(repeated.state?.rme?.successfulExposureCount, 0);
   });
 });
