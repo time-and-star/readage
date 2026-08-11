@@ -306,4 +306,56 @@ describe('resolveRecommendationArticle chain', () => {
     assert.equal(hydrateCalls, 1);
     assert.equal(aiCalls, 0);
   });
+
+  it('falls back when the catalog winner is outside recommendation bounds', async () => {
+    const fallback = article('safe-fallback', 'In Progress');
+    let hydrateCalls = 0;
+
+    const resolved = await resolveRecommendationArticle(
+      { topic: 'Current Affairs', reviewWords: ['target'], excludeArticleIds: [] },
+      {
+        library: [],
+        history: [],
+        userLevel: 'B1',
+        useFullCatalog: true,
+        loadLemmaIndex: async () => ({
+          version: 1 as const,
+          fingerprint: 'long-article-test',
+          builtAt: new Date().toISOString(),
+          articleCount: 1,
+          vocab: ['target'],
+          articles: [{
+            id: 'catalog-long-c1',
+            title: 'Long C1',
+            level: 'C1',
+            wordCount: 10_196,
+            lemmaIndices: [0],
+          }],
+        }),
+        rankCatalog: async (candidates) => [{
+          articleId: candidates[0]!.article.id,
+          score: 10_000,
+          dueWordsCount: 1,
+          learningZoneCount: 0,
+          consolidationZoneCount: 0,
+          unknownWordsCount: 0,
+          averageMemoryScore: 0,
+          reason: 'review hit',
+        }],
+        loadArticleById: async () => {
+          hydrateCalls += 1;
+          return { ...fallback, id: 'catalog-long-c1', level: 'C1', content: ['target'] };
+        },
+        localProvider: async () => null,
+        libraryFallback: () => fallback,
+        aiPost: async () => {
+          throw new Error('AI should not run when fallback is available');
+        },
+      }
+    );
+
+    assert.equal(resolved?.source, 'library_fallback');
+    assert.equal(resolved?.article.id, 'safe-fallback');
+    assert.equal(hydrateCalls, 0);
+  });
 });

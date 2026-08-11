@@ -30,7 +30,12 @@ import {
   seededShuffle,
 } from './recommendationPoolRotation';
 import { postTutor, type TutorPostOptions } from './tutorClient';
-import type { ArticleCandidate, RecommendationScore } from './memoryV2/recommendation';
+import {
+  getArticleWordCount,
+  isRecommendationArticleWithinBounds,
+  type ArticleCandidate,
+  type RecommendationScore,
+} from './memoryV2/recommendation';
 import type { V5RecommendationProfile } from './recommendationV5';
 import {
   emitRecCandidates,
@@ -235,20 +240,29 @@ async function resolveFromFullCatalog(
         level: article.level,
         levelRating: article.levelRating,
         rewriteTargetLevel: article.rewriteTargetLevel,
-        estimatedWordCount: article.levelRating?.estimatedWordCount,
+        estimatedWordCount: getArticleWordCount(article) ?? undefined,
         topic: article.topic,
       },
       lemmas: Array.from(lemmas),
     });
   }
 
-  const poolSize = candidates.length;
+  const reviewWords = normalizeReviewWords(request.reviewWords);
+  const recommendationMode = reviewWords.length > 0 ? 'review' : 'normal';
+  const boundedCandidates = candidates.filter((candidate) =>
+    isRecommendationArticleWithinBounds(candidate.article, profile, {
+      mode: recommendationMode,
+      checkCefr: true,
+    })
+  );
+  if (boundedCandidates.length === 0) return null;
+
+  const poolSize = boundedCandidates.length;
   const excludedCount = Math.max(0, catalogArticleCount - poolSize);
   emitRecPoolReady(poolSize, excludedCount);
 
-  const reviewWords = normalizeReviewWords(request.reviewWords);
   const rankStarted = Date.now();
-  const scores = await rankCatalog(candidates, {
+  const scores = await rankCatalog(boundedCandidates, {
     ...effectiveMemoryOptions,
     reviewWords,
     excludeArticleIds: expandedExcludeIds,
@@ -256,15 +270,15 @@ async function resolveFromFullCatalog(
     preferredTopics: request.topic ? [request.topic] : effectiveMemoryOptions.preferredTopics,
     recentArticleIds: expandedExcludeIds,
     limit: 48,
-    applyHardFilters: false,
+    applyHardFilters: true,
   });
   timing.rankMs = Date.now() - rankStarted;
 
   const titleById = new Map(
-    candidates.map((row) => [row.article.id, row.article.title || row.article.id] as const)
+    boundedCandidates.map((row) => [row.article.id, row.article.title || row.article.id] as const)
   );
   const lemmasById = new Map(
-    candidates.map((row) => [row.article.id, row.lemmas] as const)
+    boundedCandidates.map((row) => [row.article.id, row.lemmas] as const)
   );
   // Full pool scored in ranker; only head is returned for pick + visualizer.
   emitRecCandidates(scores, titleById, {
@@ -295,7 +309,10 @@ async function resolveFromFullCatalog(
   const localHit =
     library.find((article) => article.id === picked.articleId)
     || history.find((article) => article.id === picked.articleId);
-  if (localHit?.content?.length) {
+  if (
+    localHit?.content?.length
+    && isRecommendationArticleWithinBounds(localHit, profile, { mode: recommendationMode })
+  ) {
     return { article: localHit, source: 'full_catalog' };
   }
 
@@ -306,6 +323,12 @@ async function resolveFromFullCatalog(
   const article = await loader(picked.articleId);
   timing.hydrateMs = Date.now() - hydrateStarted;
   if (!article) return null;
+  if (!isRecommendationArticleWithinBounds(article, profile, {
+    mode: recommendationMode,
+    checkCefr: false,
+  })) {
+    return null;
+  }
   return { article, source: 'full_catalog' };
 }
 
@@ -353,6 +376,9 @@ export async function resolveRecommendationArticle(
     v5Profile: v5Profile ?? memoryOptions?.v5Profile,
   };
   const { topic, reviewWords, excludeArticleIds } = request;
+  const recommendationMode = reviewWords.length > 0 ? 'review' : 'normal';
+  const isUsableRecommendation = (article: Article): boolean =>
+    isRecommendationArticleWithinBounds(article, profile, { mode: recommendationMode });
   // Never re-recommend pieces the user already opened (history) or saw in this feed.
   const excluded = collectExcludedArticleIds(excludeArticleIds, history);
   const expandedExcludeIds = Array.from(excluded);
@@ -438,7 +464,7 @@ export async function resolveRecommendationArticle(
     }
   );
 
-  if (localArticle) {
+  if (localArticle && isUsableRecommendation(localArticle)) {
     const totalMs = Date.now() - started;
     onTiming?.({
       ...timing,
@@ -452,7 +478,7 @@ export async function resolveRecommendationArticle(
   onPhase?.('library');
   emitRecPhase('library');
   const libraryArticle = libraryFallback(library, history, excluded);
-  if (libraryArticle) {
+  if (libraryArticle && isUsableRecommendation(libraryArticle)) {
     const totalMs = Date.now() - started;
     onTiming?.({
       ...timing,
@@ -484,6 +510,9 @@ export async function resolveRecommendationArticle(
       source: 'ai',
     });
     const article = buildAiArticle(response.result, topic, reviewWords, profile.userLevel);
+    if (!isUsableRecommendation(article)) {
+      throw new Error('AI recommendation is outside the active CEFR or length bounds.');
+    }
     emitPicked(article, 'ai', totalMs);
     return {
       article,
@@ -495,7 +524,7 @@ export async function resolveRecommendationArticle(
     }
     // Last-ditch: re-check library in case history/status changed mid-flight.
     const finalFallback = libraryFallback(library, history, excluded);
-    if (finalFallback) {
+    if (finalFallback && isUsableRecommendation(finalFallback)) {
       const totalMs = Date.now() - started;
       onTiming?.({
         ...timing,

@@ -6,6 +6,7 @@
 import { WordProficiencyView } from './memorySystem';
 import {
   buildCefrRecommendationProfile,
+  CEFR_BAND_ORDER,
   getCefrRelation,
   projectBandsOntoCatalog,
   resolveUserCefrLevel,
@@ -21,7 +22,7 @@ export interface Article {
   title: string;
   content: string[];
   level?: string;
-  levelRating?: { level?: string };
+  levelRating?: { level?: string; estimatedWordCount?: number };
   rewriteTargetLevel?: string;
   topic?: string;
   estimatedWordCount?: number;
@@ -31,6 +32,61 @@ export interface ArticleCandidate {
   article: Article;
   /** 文章中的所有词形还原后的单词列�?*/
   lemmas: string[];
+}
+
+export type RecommendationMode = 'normal' | 'review';
+
+export const RECOMMENDATION_WORD_COUNT_LIMITS: Record<RecommendationMode, number> = {
+  normal: 600,
+  review: 800,
+};
+
+export function getArticleWordCount(
+  article: Pick<Article, 'content' | 'estimatedWordCount' | 'levelRating'>
+): number | null {
+  const estimated = article.estimatedWordCount ?? article.levelRating?.estimatedWordCount;
+  if (typeof estimated === 'number' && Number.isFinite(estimated) && estimated > 0) {
+    return estimated;
+  }
+
+  const actual = article.content
+    .join(' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .length;
+  return actual > 0 ? actual : null;
+}
+
+export function isRecommendationArticleWithinBounds(
+  article: Pick<Article, 'content' | 'estimatedWordCount' | 'levelRating' | 'level' | 'rewriteTargetLevel'>,
+  profile: CefrRecommendationProfile,
+  options: {
+    mode?: RecommendationMode;
+    checkCefr?: boolean;
+    allowedBands?: readonly CefrBand[];
+  } = {},
+): boolean {
+  const mode = options.mode ?? 'normal';
+  const wordCount = getArticleWordCount(article);
+  if (wordCount !== null && wordCount > RECOMMENDATION_WORD_COUNT_LIMITS[mode]) {
+    return false;
+  }
+
+  if (options.checkCefr === false) return true;
+  const level = normalizeCefrBand(
+    article.levelRating?.level || article.level || article.rewriteTargetLevel
+  );
+  if (!level) return true;
+  const allowed = options.allowedBands?.length
+    ? options.allowedBands
+    : profile.idealBands.length > 0
+      ? [
+          ...profile.idealBands,
+          CEFR_BAND_ORDER[Math.max(0, CEFR_BAND_ORDER.indexOf(profile.userLevel) - 1)],
+        ]
+      : [profile.userLevel];
+  return allowed.includes(level);
 }
 
 export interface RecommendationScore {
@@ -174,7 +230,7 @@ export class RecommendationEngine {
     this.params = { ...DEFAULT_RECOMMENDATION_PARAMS, ...params };
   }
 
-  private getCefrProfile(): CefrRecommendationProfile {
+  getCefrProfile(): CefrRecommendationProfile {
     const profile = this.params.cefrProfile
       ?? buildCefrRecommendationProfile(
         null,
@@ -380,12 +436,13 @@ export class RecommendationEngine {
     if (
       profile.preferShorter
       && isGlobalColdStart(proficiencyMap, params)
-      && typeof article.estimatedWordCount === 'number'
+      && getArticleWordCount(article) !== null
     ) {
       const range = suggestedWordCountRange(profile.userLevel);
-      if (article.estimatedWordCount <= range.max * 1.5) {
+      const wordCount = getArticleWordCount(article) ?? 0;
+      if (wordCount <= range.max * 1.5) {
         wordCountScore = 1;
-      } else if (article.estimatedWordCount > range.max * 3) {
+      } else if (wordCount > range.max * 3) {
         wordCountScore = -2;
       }
     }
@@ -462,6 +519,14 @@ export class RecommendationEngine {
     const params = this.params;
     const filtered = candidates.filter((candidate) => {
       if (candidate.lemmas.length === 0) return false;
+
+      if (!isRecommendationArticleWithinBounds(
+        candidate.article,
+        this.getCefrProfile(),
+        { checkCefr: false },
+      )) {
+        return false;
+      }
 
       // Global cold start, or this article has too little tracked coverage:
       // keep the candidate so the library is never emptied for new/low-sample users.
@@ -665,8 +730,15 @@ export function scoreArticlesForReview(
 
   const targetSet = new Set(targets);
   const scored: RecommendationScore[] = [];
+  const profile = engine.getCefrProfile();
+  const eligibleCandidates = candidates.filter((candidate) =>
+    isRecommendationArticleWithinBounds(candidate.article, profile, {
+      mode: 'review',
+      checkCefr: true,
+    })
+  );
 
-  for (const candidate of candidates) {
+  for (const candidate of eligibleCandidates) {
     const hits = countUniqueReviewHits(candidate.lemmas, targetSet);
     if (hits <= 0) continue;
 
