@@ -14,7 +14,9 @@ import {
 import {
   toLemma,
 } from './lib/proficiency';
-import { normalizeArticleSessions, STORAGE_KEYS, usePersistentState } from './lib/storage';
+import { normalizeArticleSessions, STORAGE_KEYS, usePersistentState, usePersistenceError, retryPersistentWrites, mergeChatMessages } from './lib/storage';
+import { readReadingBookmark } from './lib/readingBookmark';
+import { applyDifficultyFeedback, defaultReadingPreference, normalizeReadingPreference } from './lib/readingPreference';
 import {
   buildWeakPointMetrics,
   calculateLearningStreak,
@@ -70,12 +72,7 @@ import { HistoryScreen } from './components/HistoryScreen';
 import { LibraryScreen } from './components/LibraryScreen';
 import { EnterArticleModal } from './components/EnterArticleModal';
 import {
-  ReadingAssessmentScreen,
-  type ReadingAssessmentResult,
-} from './components/ReadingAssessmentScreen';
-import {
   suggestedWordCountRange,
-  normalizeUserReadingAssessment,
 } from './lib/userReadingProfile';
 import { buildDefaultV5Profile } from './lib/recommendationV5';
 import {
@@ -93,6 +90,7 @@ import {
   useProficiencyStats,
   useAllWordProficiency,
   useMemoryStorageError,
+  useExternalLearningActivity,
 } from './lib/memoryV2/hooks';
 
 function emptySession(articleId: string): ArticleSession {
@@ -134,7 +132,16 @@ type NavigationOptions = {
 
 function getInitialAppRoute(): AppRoute {
   if (typeof window === 'undefined') return { kind: 'landing' };
-  return resolveInitialAppRoute(window.location.pathname, false);
+  if (window.location.pathname === '/') {
+    const bookmark = readReadingBookmark();
+    try {
+      const articles = JSON.parse(window.localStorage.getItem(STORAGE_KEYS.history) || '[]') as Article[];
+      if (bookmark && Array.isArray(articles) && articles.some(article => article.id === bookmark.articleId)) {
+        return { kind: 'reading', articleId: bookmark.articleId };
+      }
+    } catch { /* The ordinary entry remains available if saved data cannot be read. */ }
+  }
+  return resolveInitialAppRoute(window.location.pathname);
 }
 
 function logRecommendationSource(
@@ -187,6 +194,8 @@ export default function App() {
   const { stats, loading: statsLoading } = useProficiencyStats();
   const { proficiencies, loading: proficienciesLoading } = useAllWordProficiency();
   const memoryStorageError = useMemoryStorageError();
+  const persistenceError = usePersistenceError();
+  const externalActivity = useExternalLearningActivity();
 
   const [events, setEvents] = usePersistentState<LearningEvent[]>(STORAGE_KEYS.events, []);
   const [weakPoints, setWeakPoints] = usePersistentState<string[]>(STORAGE_KEYS.weakPoints, []);
@@ -195,14 +204,10 @@ export default function App() {
     [],
     normalizeLearningDateKeys
   );
-  const [assessmentResult, setAssessmentResult] = usePersistentState<ReadingAssessmentResult | null>(
-    STORAGE_KEYS.readingAssessment,
-    null,
-    normalizeUserReadingAssessment
-  );
+  const [readingPreference, setReadingPreference] = usePersistentState(STORAGE_KEYS.readingPreference, defaultReadingPreference, normalizeReadingPreference);
   const articleOnlyRecommendationDefaults = useMemo(
-    getArticleOnlyRecommendationDefaults,
-    [],
+    () => getArticleOnlyRecommendationDefaults(readingPreference.level),
+    [readingPreference.level],
   );
   const userCefrLevel = articleOnlyRecommendationDefaults.userLevel;
   const cefrRecommendationProfile = articleOnlyRecommendationDefaults.cefrProfile;
@@ -224,7 +229,7 @@ export default function App() {
     new Set(history.filter((article) => article.status === 'Completed').map((article) => article.id))
   );
   /** Last article opened in the reading tab — survives nav switches away from /read/:id. */
-  const [lastReadingArticleId, setLastReadingArticleId] = useState<string | null>(null);
+  const [lastReadingArticleId, setLastReadingArticleId] = useState<string | null>(() => readReadingBookmark()?.articleId ?? null);
   const [showEnterArticle, setShowEnterArticle] = useState(false);
   const importQueueSnapshot = useArticleImportQueue();
 
@@ -261,7 +266,11 @@ export default function App() {
 
   useEffect(() => {
     const handlePopState = () => {
-      setRoute(parseAppPath(window.location.pathname));
+      const nextRoute = parseAppPath(window.location.pathname);
+      if (window.location.pathname.replace(/\/+$/, '') === '/assessment') {
+        window.history.replaceState(window.history.state, '', buildAppPath(nextRoute));
+      }
+      setRoute(nextRoute);
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
@@ -635,8 +644,8 @@ export default function App() {
   }), [history, sessions]);
 
   const activityDateKeys = useMemo(
-    () => getLearningActivityDateKeys(learningDays, events, sessions, history),
-    [learningDays, events, sessions, history]
+    () => getLearningActivityDateKeys(learningDays, [...events, ...externalActivity.events], sessions, history),
+    [learningDays, events, sessions, history, externalActivity.events]
   );
   const streakDays = useMemo(
     () => calculateLearningStreak(activityDateKeys, new Date(reviewClock)),
@@ -644,8 +653,8 @@ export default function App() {
   );
   const completedArticleCount = useMemo(() => countCompletedArticles(history), [history]);
   const recentEventCount = useMemo(
-    () => countRecentLearningEvents(events, new Date(reviewClock), 7),
-    [events, reviewClock]
+    () => countRecentLearningEvents([...events, ...externalActivity.events], new Date(reviewClock), 7),
+    [events, reviewClock, externalActivity.events]
   );
   const weakPointMetrics = useMemo(
     () => buildWeakPointMetrics(events, weakPoints),
@@ -1276,13 +1285,6 @@ export default function App() {
     fallback();
   };
   const goBackOrLibrary = () => goBackOrFallback(goToLibrary);
-  const goBackFromAssessment = () => goBackOrFallback(() => {
-    if (!assessmentResult) {
-      navigate({ kind: 'library' }, { replace: true });
-      return;
-    }
-    goToLibrary();
-  });
   const returnHome = goBackOrLibrary;
   const openReadingTab = () => {
     if (route.kind === 'reading' && activeArticle) return;
@@ -1308,6 +1310,22 @@ export default function App() {
     }
     startRecommendationFromEntry();
   };
+  const resumeFeedRef = useRef(route.kind === 'reading');
+  useEffect(() => {
+    if (resumeFeedRef.current && activeArticle) {
+      resumeFeedRef.current = false;
+      beginReadingSession(activeArticle);
+    }
+  }, [activeArticle?.id]);
+  const lastPreferenceRef = useRef(readingPreference.level);
+  useEffect(() => {
+    if (lastPreferenceRef.current === readingPreference.level) return;
+    lastPreferenceRef.current = readingPreference.level;
+    recommendationAbortControllerRef.current?.abort();
+    recommendationRequestIdRef.current += 1;
+    updateRecommendationFeed(latest => ({ ...latest, queuedArticle: null, isPrefetching: false }));
+    void prefetchNextRecommendationArticle();
+  }, [readingPreference.level]);
   const appNavigation = (
     <nav
       className="w-full max-w-full flex items-center justify-center text-xs font-medium text-[#5B544C]"
@@ -1386,6 +1404,12 @@ export default function App() {
           {memoryStorageError}
         </div>
       )}
+      {(persistenceError || externalActivity.error) && (
+        <div role="alert" className="bg-amber-50 border-b border-amber-200 p-3 text-sm text-amber-900">
+          {persistenceError || externalActivity.error}
+          {persistenceError && <button className="ml-3 underline" onClick={retryPersistentWrites}>重试保存</button>}
+        </div>
+      )}
 
       {isRewriting && (
         <div className="bg-[#FCE7F3] border-b border-[#FBCFE8] text-center text-xs text-[#9D174D] py-2 font-medium px-3">
@@ -1437,23 +1461,9 @@ export default function App() {
           />
         )}
 
-        {route.kind === 'assessment' && (
-          <ReadingAssessmentScreen
-            onBack={goBackFromAssessment}
-            previousResult={assessmentResult}
-            onComplete={(result) => {
-              setAssessmentResult(result);
-              pushEvent('review_start', {
-                detail: `cefr_assessment:${result.recommendedBand}`,
-              });
-            }}
-          />
-        )}
-
         {route.kind === 'library' && (
           <LibraryScreen
             userArticles={userArticles}
-            userCefrLevel={userCefrLevel}
             onSelectArticle={(article) =>
               beginReadingSession(article, {
                 source: article.source === 'magazine' ? 'magazine' : 'history',
@@ -1469,6 +1479,10 @@ export default function App() {
           <ReadingScreen
             key={isRecommendationReading ? 'recommendation-reading-stream' : activeArticle.id}
             article={activeArticle}
+            difficultyFeedback={readingPreference.feedback[activeArticle.id]}
+            onDifficultyFeedback={rating => setReadingPreference(previous => applyDifficultyFeedback(previous,
+              activeArticle.id, activeArticle.levelRating?.level || activeArticle.level, rating))}
+            onNextArticle={startRecommendationFromEntry}
             navigation={appNavigation}
             continuousArticles={continuousReadingArticles}
             importJob={importQueueSnapshot.jobs.find((j) => j.articleId === activeArticle.id) ?? null}
@@ -1496,7 +1510,7 @@ export default function App() {
             onChatMessagesChange={(messages) => {
               touchSession(activeArticle.id, (s) => ({
                 ...s,
-                chatMessages: messages,
+                chatMessages: mergeChatMessages(s.chatMessages, messages),
                 lastOpenedAt: new Date().toISOString(),
               }));
             }}
@@ -1560,10 +1574,6 @@ export default function App() {
               const art = history.find((a) => a.id === id);
               if (art) beginReadingSession(art, { source: 'history' });
             }}
-            onStartEnglishTest={() => navigate({ kind: 'assessment' })}
-            onStartRecommendedReading={handleRecommendForMe}
-            assessedBand={assessmentResult?.recommendedBand ?? null}
-            assessmentCompletedAt={assessmentResult?.completedAt ?? null}
             articlesReadCount={completedArticleCount}
             introducedWordsCount={bands.introduced}
             masteredWordsCount={bands.mastered}

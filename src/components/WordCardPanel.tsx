@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, Copy, Globe, Sparkles, Volume2, X } from 'lucide-react';
 import type { GrammarExplanation } from '../types';
@@ -31,6 +31,13 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
   onTranslate,
   onCopy,
 }) => {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    dialogRef.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
+    return () => { if (previous?.isConnected) previous.focus({ preventScroll: true }); };
+  }, [open]);
   if (!open) return null;
 
   const title = result?.wordOrPhrase || selectedText || 'Word card';
@@ -45,7 +52,14 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="word-card-dialog">
+      <div className="word-card-dialog" ref={dialogRef} onKeyDown={event => {
+        if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
+        if (event.key !== 'Tab') return;
+        const buttons = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], [tabindex="0"]') ?? [])];
+        const first = buttons[0]; const last = buttons[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }}>
         <div className="word-card-dialog__bar">
           <span className="word-card-dialog__label">Dictionary lookup</span>
           <button

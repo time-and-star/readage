@@ -12,6 +12,10 @@ import {
 } from './types';
 
 export interface MemoryStorage {
+  /** Optional durable replay support; old injected stores remain compatible. */
+  getMeta?<T>(key: string): Promise<T | null>;
+  setMeta?(key: string, value: unknown): Promise<void>;
+  getWordDailyEvidence?(userId: string, wordId: string): Promise<DailyWordEvidence[]>;
   // ==================== 原始事件 ====================
 
   /**

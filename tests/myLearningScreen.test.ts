@@ -10,6 +10,7 @@ const baseProps = {
   onStartTargetedReview: () => undefined,
   onOpenArticle: () => undefined,
   articlesReadCount: 2,
+  introducedWordsCount: 11,
   masteredWordsCount: 8,
   learningWordsCount: 5,
   streakDaysCount: 4,
@@ -25,6 +26,11 @@ const baseProps = {
 test('My Learning renders real metric labels and honest empty states', () => {
   const html = renderToStaticMarkup(React.createElement(MyLearningScreen, baseProps));
   assert.match(html, /已完成文章/);
+  assert.doesNotMatch(html, /英语测试|重新测试|尚未定级|cefr-profile-heading/);
+  assert.match(html, /新引入词/);
+  assert.match(html, /学习中/);
+    assert.match(html, /较熟悉词/);
+  assert.match(html, /正式到期复习/);
   assert.match(html, /连续学习天数/);
   assert.match(html, /近 7 天学习事件/);
   assert.doesNotMatch(html, /\u5c1a\u672a\u53d1\u73b0\u660e\u786e\u8584\u5f31\u70b9/);
@@ -38,6 +44,12 @@ test('My Learning renders real metric labels and honest empty states', () => {
   assert.match(html, /导出备份/);
   assert.match(html, /导入备份/);
   assert.match(html, /导出词汇表/);
+  assert.match(html, /<details[^>]*>/);
+  assert.match(html, /<summary[^>]*>[\s\S]*阅读数据说明/);
+  assert.ok(
+    html.indexOf('已完成文章') < html.indexOf('阅读数据说明'),
+    'learning metrics should appear before the expandable data explanation',
+  );
   assert.doesNotMatch(html, /演示固定值|中位示意/);
 });
 

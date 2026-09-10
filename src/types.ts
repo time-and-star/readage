@@ -251,6 +251,8 @@ export interface LearningEvent {
   articleId?: string;
   lemma?: string;
   createdAt: string;
+  /** Captured local date for learning outside the current timezone. */
+  localDate?: string;
   detail?: string;
 }
 

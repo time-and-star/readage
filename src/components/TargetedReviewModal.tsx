@@ -67,7 +67,7 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
             {onStartContextualReview && (
               <button
                 onClick={onStartContextualReview}
-                className="w-full mb-4 py-2.5 bg-[#C35E37] hover:bg-[#A94E2B] text-white rounded-xl text-sm font-medium transition-colors"
+                className="app-primary-action w-full mb-4 py-2.5 rounded-xl text-sm font-medium transition-colors"
               >
                 推荐：进入语境复习文章（P2）
               </button>
@@ -185,7 +185,7 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
               </button>
               <button
                 onClick={() => handleNext(true)}
-                className="py-3 bg-[#C35E37] hover:bg-[#A94E2B] text-white font-medium rounded-xl text-sm transition-colors flex items-center justify-center gap-1.5 shadow-2xs"
+              className="app-primary-action py-3 font-medium rounded-xl text-sm transition-colors flex items-center justify-center gap-1.5 shadow-2xs"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>Mastered!</span>
@@ -205,7 +205,7 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
             </p>
             <button
               onClick={onClose}
-              className="mt-4 px-6 py-3 bg-[#C35E37] hover:bg-[#A94E2B] text-white rounded-xl font-medium text-sm transition-colors shadow-xs"
+              className="app-primary-action mt-4 px-6 py-3 rounded-xl font-medium text-sm transition-colors shadow-xs"
             >
               Done
             </button>

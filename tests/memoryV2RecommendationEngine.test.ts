@@ -265,13 +265,7 @@ describe('review hit-rate ranking', () => {
   });
 
   it('uses CEFR as the tie-breaker when review hit counts are equal', () => {
-    const profile = buildCefrRecommendationProfile({
-      recommendedBand: 'B2',
-      inferredBand: 'B2',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+    const profile = buildCefrRecommendationProfile('B2', { confidence: 'high', useLevelFilter: true });
     const engine = new RecommendationEngine({
       userLevel: 'B2',
       cefrProfile: profile,
@@ -291,13 +285,7 @@ describe('review hit-rate ranking', () => {
   });
 
   it('gives a measurable CEFR signal at cold start and penalizes far-higher text', () => {
-    const profile = buildCefrRecommendationProfile({
-      recommendedBand: 'B1',
-      inferredBand: 'B1',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+    const profile = buildCefrRecommendationProfile('B1', { confidence: 'high', useLevelFilter: true });
     const engine = new RecommendationEngine({
       userLevel: 'B1',
       cefrProfile: profile,
@@ -316,13 +304,7 @@ describe('review hit-rate ranking', () => {
   });
 
   it('prefers a manageable article length during assessed cold start', () => {
-    const profile = buildCefrRecommendationProfile({
-      recommendedBand: 'B1',
-      inferredBand: 'B1',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+    const profile = buildCefrRecommendationProfile('B1', { confidence: 'high', useLevelFilter: true });
     const engine = new RecommendationEngine({
       cefrProfile: profile,
       allowedBands: ['B2'],
@@ -337,13 +319,7 @@ describe('review hit-rate ranking', () => {
   });
 
   it('applies a CEFR hard window only when enough eligible candidates remain', () => {
-    const profile = buildCefrRecommendationProfile({
-      recommendedBand: 'B1',
-      inferredBand: 'B1',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+    const profile = buildCefrRecommendationProfile('B1', { confidence: 'high', useLevelFilter: true });
     const engine = new RecommendationEngine({
       cefrProfile: profile,
       allowedBands: ['B2'],
@@ -368,13 +344,7 @@ describe('review hit-rate ranking', () => {
   });
 
   it('keeps protected review-hit candidates outside the CEFR window', () => {
-    const profile = buildCefrRecommendationProfile({
-      recommendedBand: 'B1',
-      inferredBand: 'B1',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+    const profile = buildCefrRecommendationProfile('B1', { confidence: 'high', useLevelFilter: true });
     const engine = new RecommendationEngine({
       cefrProfile: profile,
       allowedBands: ['B2'],

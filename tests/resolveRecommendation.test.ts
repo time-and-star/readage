@@ -105,13 +105,7 @@ describe('resolveRecommendationArticle chain', () => {
   });
 
   it('passes the same CEFR profile to catalog and local recommendation paths', async () => {
-    const profile = buildCefrRecommendationProfile({
-      recommendedBand: 'B2',
-      inferredBand: 'B2',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+    const profile = buildCefrRecommendationProfile('B2', { confidence: 'high', useLevelFilter: true });
     let catalogProfile: unknown;
     let localProfile: unknown;
 

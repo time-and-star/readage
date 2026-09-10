@@ -12,7 +12,7 @@ test('parses the landing, recommendation entry, and supported page paths', () =>
   assert.deepEqual(parseAppPath('/'), { kind: 'landing' });
   assert.deepEqual(parseAppPath('/recommend'), { kind: 'recommendation' });
   assert.deepEqual(parseAppPath('/library'), { kind: 'library' });
-  assert.deepEqual(parseAppPath('/assessment'), { kind: 'assessment' });
+  assert.deepEqual(parseAppPath('/assessment'), { kind: 'learning' });
   assert.deepEqual(parseAppPath('/learning'), { kind: 'learning' });
   assert.deepEqual(parseAppPath('/history'), { kind: 'history' });
 });
@@ -34,18 +34,18 @@ test('builds stable paths for every route kind', () => {
   assert.equal(buildAppPath({ kind: 'landing' }), '/');
   assert.equal(buildAppPath({ kind: 'recommendation' }), '/recommend');
   assert.equal(buildAppPath({ kind: 'library' }), '/library');
-  assert.equal(buildAppPath({ kind: 'assessment' }), '/assessment');
   assert.equal(buildAppPath({ kind: 'learning' }), '/learning');
   assert.equal(buildAppPath({ kind: 'history' }), '/history');
 });
 
-test('the public landing page is not skipped based on assessment history', () => {
-  assert.deepEqual(resolveInitialAppRoute('/', false), { kind: 'landing' });
-  assert.deepEqual(resolveInitialAppRoute('/', true), { kind: 'landing' });
-  // Deep links stay intact even without assessment
-  assert.deepEqual(resolveInitialAppRoute('/library', false), { kind: 'library' });
-  assert.deepEqual(resolveInitialAppRoute('/assessment', false), { kind: 'assessment' });
-  assert.deepEqual(resolveInitialAppRoute('/learning', false), { kind: 'learning' });
+test('keeps deep links and canonicalizes retired test links to learning', () => {
+  assert.deepEqual(resolveInitialAppRoute('/'), { kind: 'landing' });
+  assert.deepEqual(resolveInitialAppRoute('/library'), { kind: 'library' });
+  for (const path of ['/assessment', '/assessment/']) {
+    const route = resolveInitialAppRoute(path);
+    assert.deepEqual(route, { kind: 'learning' });
+    assert.equal(buildAppPath(route), '/learning');
+  }
 });
 
 test('tracks only valid application history markers', () => {

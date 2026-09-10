@@ -25,6 +25,8 @@ export default defineConfig(() => {
               ignored: [
                 '**/recommendation-simulation/**',
                 '**/tmp/**',
+                '**/tmp-*.out',
+                '**/tmp-*.err',
                 '**/data/**',
               ],
             },

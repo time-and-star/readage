@@ -77,16 +77,17 @@ test('validates article catalog query parameters at the API boundary', () => {
   assert.throws(() => parseCatalogArticleQuery({ level: 'B1', cursor: '-1' }), /cursor must be a non-negative integer/);
 });
 
-test('renders an article result view when the external-magazine CEFR filter is active', () => {
+test('opens the magazine library with all levels and keeps manual CEFR filters', () => {
   const html = renderToStaticMarkup(React.createElement(LibraryScreen, {
     userArticles: [],
-    userCefrLevel: 'B1',
-    hasAssessment: true,
     onSelectArticle: () => undefined,
     onInsertArticle: () => undefined,
     onBack: () => undefined,
   }));
 
-  assert.match(html, /B1 文章/);
+  for (const level of ['All', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2']) {
+    assert.match(html, new RegExp('>' + level + '</button>'));
+  }
+  assert.doesNotMatch(html, /英语测试|默认按英语测试结果| · 你的/);
   assert.doesNotMatch(html, /News in Levels - Level 2/);
 });

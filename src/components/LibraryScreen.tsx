@@ -24,9 +24,6 @@ type MagLayer = 'sources' | 'issues' | 'articles';
 interface LibraryScreenProps {
   /** User-pasted articles (「我的文章」tab). */
   userArticles: Article[];
-  /** From English test — default CEFR chip when assessed. */
-  userCefrLevel?: string;
-  hasAssessment?: boolean;
   onSelectArticle: (article: Article) => void | Promise<void>;
   onInsertArticle: () => void;
   onBack: () => void;
@@ -35,19 +32,13 @@ interface LibraryScreenProps {
 
 export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   userArticles,
-  userCefrLevel,
-  hasAssessment = false,
   onSelectArticle,
   onInsertArticle,
   onBack,
   navigation,
 }) => {
   const [tab, setTab] = useState<LibraryTab>('magazines');
-  const [levelFilter, setLevelFilter] = useState<string>(() =>
-    hasAssessment && userCefrLevel && (CEFR_LEVELS as readonly string[]).includes(userCefrLevel)
-      ? userCefrLevel
-      : 'All'
-  );
+  const [levelFilter, setLevelFilter] = useState<string>('All');
   const [topicQuery, setTopicQuery] = useState('');
 
   const [sources, setSources] = useState<MagazineSourceSummary[]>([]);
@@ -386,7 +377,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       <AppPageHeader onBack={handleHeaderBack} navigation={navigation} />
 
       {(showTopTabs || showCefr || showSearch) && (
-        <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 pt-3 sm:pt-4 space-y-3">
+        <div className="max-w-3xl w-full mx-auto px-4 sm:px-6 pt-3 sm:pt-4 space-y-3">
           {showTopTabs && (
             <div className="flex gap-2 p-1 bg-[#EFECE3] rounded-xl">
               {(
@@ -410,7 +401,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                   }}
                   className={`flex-1 min-h-11 sm:min-h-0 py-2.5 sm:py-2 rounded-lg text-sm font-medium transition-colors ${
                     tab === t.id
-                      ? 'bg-white text-[#C35E37] shadow-2xs'
+                        ? 'bg-white text-[#A94E2B] shadow-2xs'
                       : 'text-[#5B544C] hover:text-[#2B2723] active:bg-[#E8E2D5]'
                   }`}
                 >
@@ -433,25 +424,14 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                     }}
                     className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                       levelFilter === lv
-                        ? 'bg-[#C35E37] text-white'
+                        ? 'bg-[#A94E2B] text-white'
                         : 'bg-[#EFECE3] text-[#5B544C] hover:bg-[#E2DDD0]'
                     }`}
-                    title={
-                      hasAssessment && userCefrLevel && lv === userCefrLevel
-                        ? `你的英语测试等级 ${userCefrLevel}`
-                        : undefined
-                    }
                   >
                     {lv}
-                    {hasAssessment && userCefrLevel && lv === userCefrLevel ? ' · 你的' : ''}
                   </button>
                 ))}
               </div>
-              {hasAssessment && userCefrLevel && (
-                <p className="text-[11px] text-[#8C8478]">
-                  默认按英语测试结果筛选 {userCefrLevel}；可点 All 查看全部。
-                </p>
-              )}
             </div>
           )}
 
@@ -468,21 +448,21 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       )}
 
       {error && (
-        <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 pt-3">
+        <div className="max-w-3xl w-full mx-auto px-4 sm:px-6 pt-3">
           <p className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
             {error}
           </p>
         </div>
       )}
 
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-5 sm:py-6 space-y-3 safe-pb">
+      <main className="flex-1 max-w-3xl w-full mx-auto px-4 sm:px-6 py-5 sm:py-6 space-y-3 safe-pb">
         {/* ── 我的文章 ── */}
         {tab === 'mine' && (
           <>
             <button
               type="button"
               onClick={onInsertArticle}
-              className="w-full flex items-center justify-center gap-2 py-3 bg-[#C35E37] hover:bg-[#A94E2B] text-white rounded-xl text-sm font-medium transition-colors shadow-xs"
+              className="app-primary-action w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-medium transition-colors shadow-xs"
             >
               <FilePlus2 className="w-4 h-4" />
               添加文章
@@ -558,7 +538,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                   type="button"
                   onClick={() => void handleSync()}
                   disabled={!!syncStatus?.running}
-                  className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#C35E37] text-white text-xs font-semibold disabled:opacity-50 hover:bg-[#A84E2E] transition-colors"
+                  className="app-primary-action shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold disabled:opacity-50 transition-colors"
                 >
                   {syncStatus?.running ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -693,7 +673,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                 type="button"
                 onClick={() => void handleSync()}
                 disabled={!!syncStatus?.running}
-                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#C35E37] text-white text-xs font-semibold disabled:opacity-50 hover:bg-[#A84E2E] transition-colors"
+                className="app-primary-action shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold disabled:opacity-50 transition-colors"
               >
                 {syncStatus?.running ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />

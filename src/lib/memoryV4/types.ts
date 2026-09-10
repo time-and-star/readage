@@ -56,6 +56,8 @@ export interface RmeMemoryProfile {
 export interface ExposureClassificationInput {
   now: Date;
   isRecommendation: boolean;
+  articleId?: string;
+  lastEffectiveArticleId?: string | null;
   forcedExposure?: boolean;
   nextReview?: string | null;
   lastExposureAt?: string | null;

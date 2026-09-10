@@ -3,7 +3,6 @@ export type AppRoute =
   | { kind: 'recommendation' }
   | { kind: 'reading'; articleId: string }
   | { kind: 'library' }
-  | { kind: 'assessment' }
   | { kind: 'learning' }
   | { kind: 'history' };
 
@@ -38,7 +37,6 @@ const SIMPLE_ROUTE_PATHS = {
   landing: '/',
   recommendation: '/recommend',
   library: '/library',
-  assessment: '/assessment',
   learning: '/learning',
   history: '/history',
 } as const;
@@ -51,6 +49,8 @@ function normalizePathname(pathname: string): string {
 
 export function parseAppPath(pathname: string): AppRoute {
   const path = normalizePathname(pathname);
+  // Retired test links use the learning page; App canonicalizes with replaceState.
+  if (path === '/assessment') return { kind: 'learning' };
 
   for (const [kind, routePath] of Object.entries(SIMPLE_ROUTE_PATHS)) {
     if (path === routePath) return { kind } as AppRoute;
@@ -82,8 +82,7 @@ export function buildAppPath(route: AppRoute): string {
 
 /** The public landing page remains the root route for every visitor. */
 export function resolveInitialAppRoute(
-  pathname: string,
-  _hasCompletedAssessment: boolean
+  pathname: string
 ): AppRoute {
   return parseAppPath(pathname);
 }

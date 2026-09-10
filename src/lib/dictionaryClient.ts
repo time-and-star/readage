@@ -1,3 +1,5 @@
+import type { GrammarExplanation } from '../types';
+
 export interface DictionaryDefinition {
   partOfSpeech: string;
   definition: string;
@@ -29,6 +31,23 @@ interface DictionaryLookupFailure {
 export interface DictionaryLookupOptions {
   fetcher?: typeof fetch;
   signal?: AbortSignal;
+}
+
+/** Shared presentation model for in-app and extension dictionary cards. */
+export function toDictionaryWordCard(entry: DictionaryEntry): GrammarExplanation {
+  const senses = entry.definitionsEn.filter((sense) => sense.definition.trim()).slice(0, 4);
+  return {
+    wordOrPhrase: entry.lemma || entry.query,
+    type: entry.partOfSpeech || 'unknown',
+    phonetic: entry.phonetic || undefined,
+    definition: entry.definitionEn || senses[0]?.definition || entry.basicMeaningsZh[0] || '',
+    definitionChinese: senses.find((sense) => sense.definitionZh)?.definitionZh,
+    chineseTranslation: entry.basicMeaningsZh.slice(0, 2).join('，') || undefined,
+    grammarRules: [], exampleSentences: [], source: 'dictionary',
+    cefrLevel: entry.cefrLevel ?? undefined,
+    senses: senses.length ? senses : undefined,
+    exchanges: undefined, collocations: undefined, relatedWords: undefined,
+  };
 }
 
 const DICTIONARY_LOOKUP_BATCH_SIZE = 50;

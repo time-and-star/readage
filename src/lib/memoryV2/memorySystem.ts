@@ -32,6 +32,8 @@ import {
 } from './memoryScore';
 import { prepareRmeEvent, projectRmeProfile, rmeProfileForState } from './rmeV4Bridge';
 import { stageFromConfidence } from '../memoryV4';
+import { appendJournalEvents, importLookupEvents, refreshUserJournals, readExternalLearningActivity } from '../browserExtension/importer';
+import { getSystemTimeZone } from './dateUtils';
 
 export interface WordProficiencyView {
   wordId: string;
@@ -75,6 +77,10 @@ function addRmeProjection(
 }
 
 export class MemorySystemV2 {
+  getExternalLearningActivity(userId: string) { return readExternalLearningActivity(this.storage, userId); }
+  async importExtensionLookups(userId: string, events: unknown, timezone: string, now = new Date()): Promise<string[]> {
+    return importLookupEvents(this.storage, userId, events, timezone, now);
+  }
   constructor(
     private storage: MemoryStorage,
     private params: MemoryScoreParams = DEFAULT_MS_PARAMS
@@ -85,6 +91,7 @@ export class MemorySystemV2 {
    * 实时更新文章级和每日级词据
    */
   async recordEvent(event: RawWordEvent): Promise<void> {
+    if (await appendJournalEvents(this.storage, [event], getSystemTimeZone(), new Date())) return;
     const { userId, wordId, articleId, localDate } = event;
     const currentState = await this.storage.getMemoryState(userId, wordId);
     const prepared = prepareRmeEvent(currentState, event);
@@ -136,6 +143,18 @@ export class MemorySystemV2 {
   async recordBatchEvents(events: RawWordEvent[]): Promise<void> {
     if (events.length === 0) return;
 
+    const groups = new Map<string, RawWordEvent[]>();
+    for (const event of events) {
+      const key = JSON.stringify([event.userId, event.wordId]);
+      groups.set(key, [...(groups.get(key) ?? []), event]);
+    }
+    const remaining: RawWordEvent[] = [];
+    for (const group of groups.values()) {
+      if (!await appendJournalEvents(this.storage, group, getSystemTimeZone(), new Date())) remaining.push(...group);
+    }
+    events = remaining;
+    if (!events.length) return;
+
     const preparedEvents: RawWordEvent[] = [];
     const preparedStates = new Map<string, WordMemoryState | null>();
     for (const event of events) {
@@ -185,6 +204,8 @@ export class MemorySystemV2 {
    * 在应用启动或用户进入新一天时调用
    */
   async finalizeHistoricalDates(userId: string, userTimezone: string): Promise<void> {
+    // Also recovers an interrupted import, even when some days were already marked finalized.
+    await refreshUserJournals(this.storage, userId, userTimezone, new Date());
     // 1. 获取所有未结算的每日词据
     const unfinalizedEvidences = await this.storage.getUnfinalizedDailyEvidence(userId);
 

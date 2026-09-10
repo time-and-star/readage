@@ -1,0 +1,6 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "strict": true },
+  "include": ["./**/*.ts", "./**/*.d.ts", "../src/lib/browserExtension/protocol.ts", "../src/lib/dictionaryClient.ts"],
+  "exclude": ["dist"]
+}

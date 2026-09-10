@@ -280,7 +280,7 @@ export class MemoryV2RecommendationAdapter {
       allowedBands: effectiveBands,
       // Local pools use the CEFR window only when the caller keeps hard filters on.
       cefrHardFilter: applyHardFilters
-        ? options.cefrHardFilter ?? this.engineOptions.cefrHardFilter ?? Boolean(this.engineOptions.cefrProfile?.hasAssessment)
+        ? options.cefrHardFilter ?? this.engineOptions.cefrHardFilter ?? Boolean(this.engineOptions.cefrProfile?.useLevelFilter)
         : false,
     });
 

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  createOfflineWordCard,
   createWordCardRequest,
   fetchWordCard,
 } from '../src/lib/wordCard';
@@ -25,33 +24,18 @@ test('word card requests reject clicks that contain no lookup text', () => {
   assert.equal(createWordCardRequest('   ', ''), null);
 });
 
-test('offline word card always includes the selected text and context example', () => {
-  const request = createWordCardRequest('serendipity', 'It was pure serendipity.')!;
-  const card = createOfflineWordCard(request);
-  assert.equal(card.wordOrPhrase, 'serendipity');
-  assert.equal(card.source, 'ai');
-  assert.ok(card.definition.includes('serendipity'));
-  assert.deepEqual(card.exampleSentences, ['It was pure serendipity.']);
-});
-
-test('fetchWordCard uses the tutor explain path and returns the server result', async () => {
+test('single-word lookup works without accessing the authenticated AI endpoint', async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async () =>
-    new Response(
+  globalThis.fetch = (async (url) => {
+    assert.equal(url, '/api/dictionary/lookup');
+    return new Response(
       JSON.stringify({
         ok: true,
-        intent: 'explain',
-        result: {
-          wordOrPhrase: 'run',
-          type: 'verb',
-          definition: 'to move quickly on foot',
-          grammarRules: [],
-          exampleSentences: ['I run every morning.'],
-          source: 'dictionary',
-        },
+        results: [{ query: 'running', lemma: 'run', partOfSpeech: 'verb', phonetic: '',
+          cefrLevel: null, definitionEn: 'to move quickly on foot', definitionsEn: [], basicMeaningsZh: ['跑'] }],
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
-    )) as typeof fetch;
+    ); }) as typeof fetch;
 
   try {
     const request = createWordCardRequest('running', 'She is running late.')!;
@@ -63,7 +47,7 @@ test('fetchWordCard uses the tutor explain path and returns the server result', 
   }
 });
 
-test('fetchWordCard falls back offline when the network fails', async () => {
+test('a failed lookup reports an error instead of fabricating a definition', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => {
     throw new Error('network down');
@@ -71,10 +55,35 @@ test('fetchWordCard falls back offline when the network fails', async () => {
 
   try {
     const request = createWordCardRequest('curious', 'A curious case.')!;
-    const card = await fetchWordCard(request);
-    assert.equal(card.wordOrPhrase, 'curious');
-    assert.match(card.definition, /offline fallback/i);
+    await assert.rejects(fetchWordCard(request), /词典暂时无法连接/);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('a cached definition remains available when the dictionary is offline; cancelled requests stay cancelled', async () => {
+  const originalFetch = globalThis.fetch;
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  } });
+  globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true, results: [{
+    query: 'running', lemma: 'run', phonetic: '', cefrLevel: null, partOfSpeech: 'verb',
+    basicMeaningsZh: ['跑'], definitionEn: 'move quickly', definitionsEn: [],
+  }] }))) as typeof fetch;
+  try {
+    const request = createWordCardRequest('running')!;
+    const result = await fetchWordCard(request);
+    globalThis.fetch = (async () => { throw new Error('offline'); }) as typeof fetch;
+    assert.deepEqual(await fetchWordCard(request), JSON.parse(JSON.stringify(result)));
+    const controller = new AbortController(); controller.abort();
+    await assert.rejects(fetchWordCard(request, { signal: controller.signal }), /cancelled/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
   }
 });

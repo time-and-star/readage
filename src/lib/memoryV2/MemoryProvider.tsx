@@ -10,6 +10,7 @@ import React, {
   useMemo,
   type ReactNode,
 } from 'react';
+import { installExtensionBridge } from '../browserExtension/appBridge';
 import {
   getDefaultMemoryStore,
   MemoryV2Store,
@@ -37,6 +38,7 @@ export function MemoryProvider({
   );
 
   useEffect(() => {
+    const removeExtensionBridge = installExtensionBridge(store);
     void store.start().catch((error) => {
       console.error('MemoryProvider start failed:', error);
     });
@@ -58,6 +60,7 @@ export function MemoryProvider({
     store.scheduleMidnightCheck();
 
     return () => {
+      removeExtensionBridge();
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('focus', onFocus);
     };

@@ -30,10 +30,6 @@ interface MyLearningScreenProps {
   navigation?: React.ReactNode;
   onStartTargetedReview: () => void;
   onOpenArticle: (articleId: string) => void;
-  onStartEnglishTest?: () => void;
-  onStartRecommendedReading?: () => void;
-  assessedBand?: string | null;
-  assessmentCompletedAt?: string | null;
   articlesReadCount: number;
   introducedWordsCount: number;
   masteredWordsCount: number;
@@ -53,10 +49,6 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   navigation,
   onStartTargetedReview,
   onOpenArticle,
-  onStartEnglishTest,
-  onStartRecommendedReading,
-  assessedBand,
-  assessmentCompletedAt,
   articlesReadCount,
   introducedWordsCount,
   masteredWordsCount,
@@ -165,14 +157,14 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between selection:bg-[#FDE68A]">
       <AppPageHeader onBack={onBack} navigation={navigation} />
 
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-5 sm:py-6 space-y-5 sm:space-y-6 safe-pb">
+      <main className="flex flex-1 max-w-3xl w-full mx-auto flex-col gap-5 px-4 py-5 sm:gap-6 sm:px-6 sm:py-6 safe-pb">
         <section
-          className="rounded-2xl border border-[#D6E4F0] bg-[#F3F7FB] px-4 py-3 flex gap-3"
+          className="order-2 rounded-2xl border border-[#E3DDD1] bg-[#F3EFE7] px-4 py-3 flex gap-3"
           aria-labelledby="local-data-notice-heading"
         >
-          <HardDrive className="w-5 h-5 shrink-0 text-[#1E3A8A] mt-0.5" aria-hidden />
+          <HardDrive className="w-5 h-5 shrink-0 text-[#A94E2B] mt-0.5" aria-hidden />
           <div className="min-w-0">
-            <h2 id="local-data-notice-heading" className="text-sm font-semibold text-[#1E3A8A]">
+            <h2 id="local-data-notice-heading" className="text-sm font-semibold text-[#4A4038]">
               学习数据保存在本机浏览器
             </h2>
             <p className="mt-1 text-xs leading-relaxed text-[#4A5568]">
@@ -182,25 +174,27 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
           </div>
         </section>
 
-        <ReadingDataNotice />
-
-        <div className="grid grid-cols-2 gap-3 sm:gap-4">
+        <div className="order-1 grid grid-cols-2 gap-3 sm:grid-cols-5 sm:gap-4">
           <MetricCard value={articlesReadCount} label="已完成文章" />
           <MetricCard value={introducedWordsCount} label="新引入词" />
-          <MetricCard value={masteredWordsCount} label="掌握词 (L4)" />
+          <MetricCard value={masteredWordsCount} label="较熟悉词 (L4 估计)" />
           <MetricCard value={learningWordsCount} label="学习中 (L1–L3)" />
           <MetricCard value={streakDaysCount} label="连续学习天数" />
         </div>
 
+        <p className="text-xs leading-relaxed text-stone-600">
+          词汇等级根据阅读和查词行为估计，用于安排复习；未查词不代表已理解，也不代表通过了回忆测试。
+          <a href="/extension-setup.html" className="ml-2 underline text-[#8F3F22]">安装浏览器查词插件</a>
+        </p>
         <section
-          className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
+          className="order-4 bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
           aria-labelledby="vocabulary-export-heading"
         >
           <div>
             <h2 id="vocabulary-export-heading" className="font-serif text-lg font-medium text-[#2A2621]">
               词汇表
             </h2>
-            <p className="mt-1 text-sm text-[#8C8478]">
+            <p className="mt-1 text-sm text-[#6B645B]">
               导出词汇、英标、翻译和熟练度，CSV 文件可直接用 Excel 打开。
             </p>
           </div>
@@ -209,13 +203,13 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
             onClick={() => void handleExportVocabulary()}
             disabled={vocabularyExportBusy || proficienciesLoading || proficiencies.length === 0}
             aria-busy={vocabularyExportBusy || proficienciesLoading}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-[#C35E37] px-3 py-2 text-sm font-medium text-white hover:bg-[#A94E2B] disabled:cursor-not-allowed disabled:bg-[#CFA08E]"
+            className="app-primary-action inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:bg-[#CFA08E]"
           >
             <Download className="w-4 h-4" aria-hidden />
             {proficienciesLoading ? '加载中…' : vocabularyExportBusy ? '导出中…' : '导出词汇表'}
           </button>
           {!proficienciesLoading && proficiencies.length === 0 && (
-            <p className="text-xs text-[#8C8478]" role="status">
+            <p className="text-xs text-[#6B645B]" role="status">
               阅读并产生词汇学习记录后，这里会出现可导出的词汇。
             </p>
           )}
@@ -231,56 +225,8 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
           )}
         </section>
 
-        <section
-          className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
-          aria-labelledby="cefr-profile-heading"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 id="cefr-profile-heading" className="font-serif text-lg font-medium text-[#2A2621]">
-                阅读等级
-              </h2>
-              <p className="mt-1 text-sm text-[#8C8478]">
-                {assessedBand
-                  ? '来自英语测试，已同步到推荐与文库筛选。'
-                  : '尚未定级：完成英语测试后，推荐会按你的 CEFR 档位匹配。'}
-              </p>
-            </div>
-            <div className="shrink-0 rounded-xl bg-[#C35E37]/10 px-3 py-2 text-center">
-              <div className="text-xs text-[#8C8478]">CEFR</div>
-              <div className="font-serif text-xl font-semibold text-[#C35E37]">
-                {assessedBand || '—'}
-              </div>
-            </div>
-          </div>
-          {assessmentCompletedAt && (
-            <p className="text-xs text-[#8C8478]">
-              最近测试：{new Date(assessmentCompletedAt).toLocaleString()}
-            </p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            {onStartEnglishTest && (
-              <button
-                type="button"
-                onClick={onStartEnglishTest}
-                className="rounded-xl border border-[#DCD5C7] bg-white px-3 py-2 text-sm font-medium text-[#332E28] hover:bg-[#F2ECE0]"
-              >
-                {assessedBand ? '重新测试' : '开始英语测试'}
-              </button>
-            )}
-            {assessedBand && onStartRecommendedReading && (
-              <button
-                type="button"
-                onClick={onStartRecommendedReading}
-                className="rounded-xl bg-[#C35E37] px-3 py-2 text-sm font-medium text-white hover:bg-[#A94E2B]"
-              >
-                按 {assessedBand} 推荐阅读
-              </button>
-            )}
-          </div>
-        </section>
 
-        <div className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 text-sm text-[#524B43] flex flex-wrap gap-x-5 gap-y-2">
+        <div className="order-5 bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 text-sm text-[#524B43] flex flex-wrap gap-x-5 gap-y-2">
           <span>
             正式到期复习：<strong className="text-[#C35E37]">{dueWordCount}</strong> 词
           </span>
@@ -384,15 +330,19 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
           )}
         </section>}
 
+        <div className="order-6">
+          <ReadingDataNotice />
+        </div>
+
         <section
-          className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
+          className="order-7 bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
           aria-labelledby="local-backup-heading"
         >
           <div>
             <h2 id="local-backup-heading" className="font-serif text-lg font-medium text-[#2A2621]">
               本地数据备份
             </h2>
-            <p className="mt-1 text-sm text-[#8C8478]">
+            <p className="mt-1 text-sm text-[#6B645B]">
               导出为 JSON 文件，可在本机或另一台设备导入恢复。服务器不保存你的学习档案。
             </p>
           </div>
@@ -439,17 +389,17 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
           )}
         </section>
 
-        <div className="space-y-2">
+        <div className="order-8 space-y-2">
           <button
             type="button"
             onClick={onStartTargetedReview}
             disabled={isTargetedReviewLoading}
             aria-busy={isTargetedReviewLoading}
-            className="w-full py-4 bg-[#C35E37] enabled:hover:bg-[#A94E2B] disabled:bg-[#CFA08E] disabled:cursor-wait text-white rounded-xl font-medium text-lg transition-all shadow-md text-center block"
+            className="app-primary-action w-full py-4 disabled:bg-[#CFA08E] disabled:cursor-wait rounded-xl font-medium text-lg transition-all shadow-md text-center block"
           >
             {isTargetedReviewLoading ? '正在生成复习文章…' : '针对性复习（语境文章 → P2）'}
           </button>
-          <p className="text-[11px] text-center text-[#8C8478]">
+          <p className="text-[11px] text-center text-[#6B645B]">
             到期词会被织入新文章，不提供孤立词卡。
           </p>
         </div>
@@ -459,8 +409,8 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
 };
 
 const MetricCard: React.FC<{ value: number; label: string }> = ({ value, label }) => (
-  <div className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-6 text-center shadow-2xs">
-    <div className="text-4xl sm:text-5xl font-bold text-[#1E3A8A] tracking-tight mb-2">
+  <div className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 text-center shadow-2xs sm:p-5">
+    <div className="text-3xl sm:text-4xl font-bold text-[#A94E2B] tracking-tight mb-2">
       {value}
     </div>
     <div className="text-sm font-medium text-[#6B645B]">{label}</div>

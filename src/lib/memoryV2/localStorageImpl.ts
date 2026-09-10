@@ -93,6 +93,24 @@ function removeFromIndex(indexKey: string, item: string): void {
 }
 
 export class LocalStorageMemoryStorage implements MemoryStorage {
+  async getMeta<T>(key: string): Promise<T | null> {
+    return readJSON<T>(`${STORAGE_PREFIX}:meta:${key}`);
+  }
+
+  async setMeta(key: string, value: unknown): Promise<void> {
+    if (!getStorage()) throw new Error('学习记录存储不可用。');
+    writeJSON(`${STORAGE_PREFIX}:meta:${key}`, value);
+  }
+
+  async getWordDailyEvidence(userId: string, wordId: string): Promise<DailyWordEvidence[]> {
+    const rows: DailyWordEvidence[] = [];
+    for (const entry of readIndex(KEYS.dailyEvidenceIndex(userId))) {
+      if (!entry.startsWith(`${wordId}:`)) continue;
+      const row = await this.getDailyEvidence(userId, wordId, entry.slice(wordId.length + 1));
+      if (row) rows.push(row);
+    }
+    return rows;
+  }
   // ==================== 原始事件 ====================
 
   async saveRawEvent(event: RawWordEvent): Promise<void> {

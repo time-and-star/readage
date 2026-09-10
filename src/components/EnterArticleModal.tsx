@@ -173,7 +173,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
             <button
               type="submit"
               disabled={!customText.trim()}
-              className="w-full min-h-12 py-3 bg-[#C35E37] hover:bg-[#A94E2B] active:bg-[#A44B29] disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors shadow-xs"
+              className="app-primary-action w-full min-h-12 py-3 disabled:opacity-50 rounded-xl font-medium text-sm transition-colors shadow-xs"
             >
               入库并开始阅读
             </button>
@@ -202,7 +202,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
             <button
               type="submit"
               disabled={isGenerating || !topicInput.trim()}
-              className="w-full min-h-12 py-3 bg-[#C35E37] hover:bg-[#A94E2B] active:bg-[#A44B29] disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors shadow-xs flex items-center justify-center gap-2"
+              className="app-primary-action w-full min-h-12 py-3 disabled:opacity-50 rounded-xl font-medium text-sm transition-colors shadow-xs flex items-center justify-center gap-2"
             >
               {isGenerating ? (
                 <>

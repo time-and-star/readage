@@ -1,5 +1,5 @@
 import React from 'react';
-import { ClipboardCheck, Library, RefreshCw, Sparkles } from 'lucide-react';
+import { Library, RefreshCw, Sparkles } from 'lucide-react';
 import { AppPageHeader } from './AppPageHeader';
 import { ReadAgeLogo } from './ReadAgeBrand';
 
@@ -9,7 +9,6 @@ interface RecommendationEntryScreenProps {
   feedEnded: boolean;
   onStartRecommendation: () => void;
   onOpenLibrary: () => void;
-  onStartAssessment: () => void;
   onBack: () => void;
   navigation: React.ReactNode;
 }
@@ -20,7 +19,6 @@ export const RecommendationEntryScreen: React.FC<RecommendationEntryScreenProps>
   feedEnded,
   onStartRecommendation,
   onOpenLibrary,
-  onStartAssessment,
   onBack,
   navigation,
 }) => {
@@ -72,7 +70,7 @@ export const RecommendationEntryScreen: React.FC<RecommendationEntryScreenProps>
               <button
                 type="button"
                 onClick={onStartRecommendation}
-                className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#C35E37] px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-[#A94E2B] active:bg-[#A44B29] sm:w-auto sm:min-h-0 sm:py-2.5"
+                className="app-primary-action inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-medium transition-colors sm:w-auto sm:min-h-0 sm:py-2.5"
               >
                 <RefreshCw className="h-4 w-4" aria-hidden="true" />
                 Start recommendation
@@ -84,14 +82,6 @@ export const RecommendationEntryScreen: React.FC<RecommendationEntryScreenProps>
               >
                 <Library className="h-4 w-4" aria-hidden="true" />
                 Browse library
-              </button>
-              <button
-                type="button"
-                onClick={onStartAssessment}
-                className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#DCD5C7] bg-white px-4 py-3 text-sm font-medium text-[#332E28] transition-colors hover:bg-[#F2ECE0] active:bg-[#EFEAE0] sm:w-auto sm:min-h-0 sm:py-2.5"
-              >
-                <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
-                Check reading level
               </button>
             </div>
           )}

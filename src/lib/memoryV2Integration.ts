@@ -209,13 +209,15 @@ export function useMemoryV2Integration(
           recordClick,
           signals: { ...defaults, ...signals },
         });
-        const [word] = await snapshotWords([unit.wordId]);
-        if (word) {
-          emitVocabClick({ articleId, paragraphIndex, word });
-        }
       } catch (error) {
         console.error('Failed to record click for', unit.wordId, error);
+        throw error;
       }
+      // Telemetry is best effort and must not turn a committed lookup into a retry.
+      try {
+        const [word] = await snapshotWords([unit.wordId]);
+        if (word) emitVocabClick({ articleId, paragraphIndex, word });
+      } catch { /* Learning data is already committed. */ }
     },
     [streamKey, defaults, recordClick, recordExposure, snapshotWords],
   );

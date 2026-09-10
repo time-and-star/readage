@@ -2,6 +2,7 @@ import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   migrateLocalStorageToIndexedDb,
+  archiveMigratedLocalStorage,
   type LocalStorageMigrationState,
   type LocalStorageMigrationTarget,
 } from '../src/lib/memoryV2/indexedDbImpl';
@@ -162,6 +163,53 @@ afterEach(() => {
 });
 
 describe('Memory V2 localStorage to IndexedDB migration', () => {
+  it('words named article, raw or daily do not change the record type', async () => {
+    const source = new StorageFake();
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: source });
+    for (const word of ['article', 'raw', 'daily']) {
+      source.setItem(`${MEMORY_PREFIX}:state:u1:${word}`, JSON.stringify(state(word)));
+      source.setItem(`${MEMORY_PREFIX}:daily:u1:${word}:2026-07-24`, JSON.stringify({ userId: 'u1', wordId: word, localDate: '2026-07-24' }));
+    }
+    const target = new MigrationTargetFake();
+    assert.equal((await migrateLocalStorageToIndexedDb(target)).completed, true);
+    assert.equal(target.states.size, 3);
+    assert.equal(target.daily.size, 3);
+  });
+  it('only releases duplicate local data after its source archive is verified', async () => {
+    const source = new StorageFake();
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: source });
+    const key = `${MEMORY_PREFIX}:state:u1:article`;
+    const raw = JSON.stringify(state('article'));
+    source.setItem(key, raw);
+    source.setItem('english-ai:v2:articles', '[]');
+    const target = new MigrationTargetFake();
+    await archiveMigratedLocalStorage(target, source);
+    assert.equal(source.getItem(key), raw);
+    await migrateLocalStorageToIndexedDb(target);
+    const set = target.setMeta.bind(target);
+    target.setMeta = async () => { throw new Error('disk failure'); };
+    await assert.rejects(archiveMigratedLocalStorage(target, source));
+    assert.equal(source.getItem(key), raw);
+    target.setMeta = set;
+    await archiveMigratedLocalStorage(target, source);
+    assert.equal(source.getItem(key), null);
+    assert.equal((target.meta.get('localStorageSourceArchiveV1') as Record<string, string>)[key], raw);
+    assert.equal(source.getItem('english-ai:v2:articles'), '[]');
+    assert.equal(target.states.size, 1);
+  });
+  it('preserves extension replay journals and their recovery index', async () => {
+    const source = new StorageFake();
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: source });
+    const journalKey = 'extension-journal:["u1","run"]';
+    const journal = { version: 1, userId: 'u1', wordId: 'run', baselineState: null, baselineDaily: [], baselineRaw: [], events: [] };
+    source.setItem(`${MEMORY_PREFIX}:meta:${journalKey}`, JSON.stringify(journal));
+    source.setItem(`${MEMORY_PREFIX}:meta:extension-journal-index:u1`, '["run"]');
+    const target = new MigrationTargetFake();
+    const result = await migrateLocalStorageToIndexedDb(target);
+    assert.equal(result.completed, true);
+    assert.deepEqual(target.meta.get(journalKey), journal);
+    assert.deepEqual(target.meta.get('extension-journal-index:u1'), ['run']);
+  });
   it('does not mark a partial migration complete and retries failed items', async () => {
     const source = new StorageFake();
     Object.defineProperty(globalThis, 'localStorage', {

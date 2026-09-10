@@ -39,13 +39,7 @@ function proficiency(wordId: string): WordProficiencyView {
   };
 }
 
-const assessedB1 = buildCefrRecommendationProfile({
-  recommendedBand: 'B1',
-  inferredBand: 'B1',
-  totalCorrect: 5,
-  adjustment: 'same',
-  completedAt: '2026-08-11T00:00:00.000Z',
-});
+const assessedB1 = buildCefrRecommendationProfile('B1', { confidence: 'high', useLevelFilter: true });
 
 test('rating failure preserves the article source level', async () => {
   const result = await enrichArticleOnImport(

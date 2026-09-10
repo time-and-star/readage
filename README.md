@@ -8,14 +8,16 @@
 
 | 页面 | 能力 |
 |---|---|
-| P1 Home | 粘贴文章 / 文章库 / AI 推荐 / 纯口语陪练 |
-| P2 Reading | 点词查释义、讨论区、复习词高亮 |
+| P1 Home | 一键推荐 / 文章库 / 粘贴文章 / 自动续读 |
+| P2 Reading | 简明词卡、主动句子解释、讨论、连续阅读与难度反馈 |
 | P3 My Learning | 进度统计、针对性语境复习入口 |
 | P4 History | 历史/库列表，回跳 P2 |
 
-本地词汇熟练度：点击查词 → L1；口语练习正确使用目标词 → 提升 production；曝光弱信号累积。
+本地词汇记忆：成功查词形成曝光＋查询证据，阅读曝光使用可见性和停留时间约束；主应用按每日证据更新记忆估计和复习安排。未查询不等于已掌握；文字讨论不直接给词汇加分；英语测试功能已移除。
 
 ## 本地运行
+
+浏览器插件现已支持 Chrome / Edge 的网页选词查词和本地熟练度同步，安装与使用见 [浏览器插件说明](extension/README.md)。
 
 **前置：** Node.js ≥ 20
 
@@ -23,7 +25,7 @@
 npm install
 ```
 
-在 `.env` 或 `.env.local` 中配置（可选；无 key 时走离线降级文案）：
+在 `.env` 中配置 AI 服务（可选；没有有效凭证时基础词典仍可使用，AI 功能明确显示不可用）：
 
 ```
 GEMINI_API_KEY=your_key_here
@@ -48,10 +50,12 @@ GEMINI_API_KEY=your_key_here
 ```
 
 ```bash
-npm run dev
+npm run start:local
 ```
 
-打开 http://localhost:3000
+打开 http://localhost:3000。Windows 也可双击 `start-local.cmd`。保持服务进程运行；首次安装插件可打开 `/extension-setup.html`，下载 ZIP 并按页面指引加载。
+
+`npm start` 是生产模式，仍要求配置生产访问凭证；个人本机使用请选 `npm run start:local`。AI 供应商密钥无效或订阅到期时，请在本机更新 `.env` 并重启，不要把密钥发到聊天中。
 
 ## 学习数据：浏览器本地（多访客）
 
@@ -61,7 +65,7 @@ npm run dev
 |---|---|
 | 文章历史、会话与讨论 | 杂志正文库、词典数据 |
 | 词汇记忆 / FSRS 复习 | AI 代理（翻译、讨论、推荐） |
-| 测评结果、薄弱点、连续天数 | 进程与环境变量（API Key） |
+| 阅读偏好、薄弱点、连续天数 | 进程与环境变量（API Key） |
 
 在 **我的学习** 可「导出备份 / 导入备份」JSON，便于换机或防清缓存丢失。
 
@@ -112,7 +116,9 @@ npm start
 
 | 命令 | 说明 |
 |---|---|
+| `npm run start:local` | 固定本机地址的 Express + Vite，关闭启动全库同步 |
 | `npm run dev` | Express + Vite 开发服务器 |
+| `npm run build:extension` | 生成 extension/dist 和网页可下载的插件 ZIP |
 | `npm run build` | 构建前端与 server |
 | `npm run start` | 生产启动 |
 | `npm run lint` | `tsc --noEmit` |
@@ -121,5 +127,5 @@ npm start
 ## 技术栈
 
 - React 19 + TypeScript + Vite + Tailwind CSS 4
-- Express API（Gemini：查词 / 翻译 / 推荐 / 聊天 / 口语；外刊同步解析）
+- Express API（Gemini：查词 / 翻译 / 推荐 / 聊天；外刊同步解析）
 - 数据：学习状态 localStorage；外刊正文服务端落盘

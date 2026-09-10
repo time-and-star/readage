@@ -1,5 +1,6 @@
 import type { GrammarExplanation } from '../types';
-import { postTutor } from './tutorClient';
+import { postTutor, TutorApiError } from './tutorClient';
+import { lookupDictionaryWord, toDictionaryWordCard } from './dictionaryClient';
 
 export interface WordCardRequest {
   selectedText: string;
@@ -30,40 +31,54 @@ export function createWordCardRequest(
   };
 }
 
-/** Offline / error fallback so the panel always has something to show. */
-export function createOfflineWordCard(request: WordCardRequest): GrammarExplanation {
-  return {
-    wordOrPhrase: request.selectedText,
-    type: 'Vocabulary',
-    phonetic: '',
-    definition: `Context meaning of "${request.selectedText}" in the current article (offline fallback).`,
-    definitionChinese: '词卡暂时不可用，请结合上下文理解。',
-    chineseTranslation: request.selectedText,
-    grammarRules: [
-      'Look at the surrounding words to infer part of speech.',
-      'Try reusing this word in the discussion box below.',
-    ],
-    exampleSentences: [
-      request.contextSentence || `I learned the word "${request.selectedText}" today.`,
-    ],
-    source: 'ai',
-  };
-}
-
 export interface FetchWordCardOptions {
   articleId?: string;
   signal?: AbortSignal;
 }
 
 /**
- * Fetch a word card via `/api/tutor` explain.
- * Server path is dictionary-first for single English words; phrases/misses use AI.
- * Network failures return an offline fallback (unless the request was aborted).
+ * Single words use the dictionary and bounded local cache.
+ * Phrases and dictionary misses use AI. Failures never fabricate a definition.
  */
 export async function fetchWordCard(
   request: WordCardRequest,
   options: FetchWordCardOptions = {},
 ): Promise<GrammarExplanation> {
+  const cacheKey = `english-ai:v2:word-card:${request.selectedText.toLowerCase()}`;
+  const singleWord = /^[a-z]+(?:['-][a-z]+)*$/i.test(request.selectedText);
+  if (options.signal?.aborted) throw new Error('Lookup cancelled');
+  if (singleWord) {
+    try {
+      const cached = typeof localStorage === 'undefined' ? null : localStorage.getItem(cacheKey);
+      if (cached) {
+        const card = JSON.parse(cached) as GrammarExplanation;
+        if (card.source === 'dictionary' && card.definition && card.wordOrPhrase) return card;
+      }
+    } catch { /* A cache failure must not prevent a dictionary request. */ }
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(8_000)])
+      : AbortSignal.timeout(8_000);
+    try {
+      const entry = await lookupDictionaryWord(request.selectedText, { signal });
+      if (entry) {
+        const card = toDictionaryWordCard(entry);
+        try {
+          if (typeof localStorage !== 'undefined') {
+            const keys = Object.keys(localStorage).filter(key => key.startsWith('english-ai:v2:word-card:'));
+            if (!keys.includes(cacheKey) && keys.length >= 500) {
+              for (const key of keys.slice(0, keys.length - 499)) localStorage.removeItem(key);
+            }
+            localStorage.setItem(cacheKey, JSON.stringify(card));
+          }
+        }
+        catch { /* Optional cache; learning persistence is handled separately. */ }
+        return card;
+      }
+    } catch (error) {
+      if (options.signal?.aborted) throw new Error('Lookup cancelled');
+      throw new Error('词典暂时无法连接，请启动本地服务后重试。已缓存的单词仍可查询。');
+    }
+  }
   try {
     const response = await postTutor<GrammarExplanation>(
       {
@@ -73,13 +88,16 @@ export async function fetchWordCard(
         contextSentence: request.contextSentence,
       },
       fetch,
-      { signal: options.signal },
+      { signal: options.signal, maxRetries: 0, timeoutMs: 20_000 },
     );
     return response.result;
   } catch (error) {
     if (error instanceof Error && /cancelled|abort/i.test(error.message)) {
       throw error;
     }
-    return createOfflineWordCard(request);
+    if (error instanceof TutorApiError) throw error;
+    throw new Error(singleWord
+      ? '词典未收录此词，AI 解释暂不可用。请检查拼写或稍后重试。'
+      : '句子解释暂不可用，请检查服务连接后重试。');
   }
 }

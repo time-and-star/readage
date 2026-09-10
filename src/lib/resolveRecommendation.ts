@@ -182,10 +182,7 @@ async function resolveFromFullCatalog(
   } = context;
   const profile = cefrProfile
     ?? memoryOptions?.cefrProfile
-    ?? buildCefrRecommendationProfile(
-      null,
-      resolveUserCefrLevel({ recommendedBand: userLevel })
-    );
+    ?? buildCefrRecommendationProfile(resolveUserCefrLevel(userLevel));
   const effectiveMemoryOptions: MemoryV2RecommendationOptions = {
     ...memoryOptions,
     userLevel: profile.userLevel,
@@ -365,10 +362,7 @@ export async function resolveRecommendationArticle(
   } = context;
   const profile = cefrProfile
     ?? memoryOptions?.cefrProfile
-    ?? buildCefrRecommendationProfile(
-      null,
-      resolveUserCefrLevel({ recommendedBand: userLevel })
-    );
+    ?? buildCefrRecommendationProfile(resolveUserCefrLevel(userLevel));
   const effectiveMemoryOptions: MemoryV2RecommendationOptions = {
     ...memoryOptions,
     userLevel: profile.userLevel,

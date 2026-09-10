@@ -5,7 +5,6 @@ import {
   cefrBandDistance,
   cefrLevelMatchMultiplier,
   getCefrRelation,
-  normalizeUserReadingAssessment,
   preferredRewriteLevels,
   projectBandsOntoCatalog,
   resolveUserCefrLevel,
@@ -13,28 +12,10 @@ import {
 } from '../src/lib/userReadingProfile';
 
 describe('userReadingProfile bridge', () => {
-  it('resolves assessed band and falls back to B1', () => {
-    assert.equal(resolveUserCefrLevel({ recommendedBand: 'C1' }), 'C1');
+  it('resolves preferred band and falls back to B1', () => {
+    assert.equal(resolveUserCefrLevel('C1'), 'C1');
     assert.equal(resolveUserCefrLevel(null), 'B1');
-    assert.equal(resolveUserCefrLevel({ recommendedBand: 'nope' }), 'B1');
-  });
-
-  it('normalizes persisted assessment payloads', () => {
-    const ok = normalizeUserReadingAssessment({
-      recommendedBand: 'b2',
-      inferredBand: 'B1',
-      totalCorrect: 4.8,
-      adjustment: 'up',
-      completedAt: '2026-07-24T00:00:00.000Z',
-    });
-    assert.deepEqual(ok, {
-      recommendedBand: 'B2',
-      inferredBand: 'B1',
-      totalCorrect: 4,
-      adjustment: 'up',
-      completedAt: '2026-07-24T00:00:00.000Z',
-    });
-    assert.equal(normalizeUserReadingAssessment({ recommendedBand: 'B2' }), null);
+    assert.equal(resolveUserCefrLevel('nope'), 'B1');
   });
 
   it('boosts exact and adjacent CEFR matches for recommendations', () => {
@@ -44,15 +25,15 @@ describe('userReadingProfile bridge', () => {
     assert.ok(cefrLevelMatchMultiplier('B1', 'B2') > cefrLevelMatchMultiplier('A1', 'B2'));
   });
 
-  it('suggests rewrite targets near the assessed band', () => {
+  it('suggests rewrite targets near the preferred band', () => {
     assert.deepEqual(preferredRewriteLevels('B2'), ['B2', 'B1', 'C1']);
     assert.equal(suggestedWordCountRange('B1').label, '180–300 词');
   });
 
-  it('builds a low-weight default profile when no assessment exists', () => {
+  it('builds a low-weight default profile without a configured level filter', () => {
     assert.deepEqual(buildCefrRecommendationProfile(null), {
       userLevel: 'B1',
-      hasAssessment: false,
+      useLevelFilter: false,
       confidence: 'low',
       idealBands: ['B1', 'B2'],
       stretchBand: 'B2',
@@ -61,28 +42,10 @@ describe('userReadingProfile bridge', () => {
     });
   });
 
-  it('derives recommendation confidence from a completed assessment', () => {
-    const high = buildCefrRecommendationProfile({
-      recommendedBand: 'B2',
-      inferredBand: 'B2',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
-    const medium = buildCefrRecommendationProfile({
-      recommendedBand: 'C1',
-      inferredBand: 'B2',
-      totalCorrect: 5,
-      adjustment: 'up',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
-    const low = buildCefrRecommendationProfile({
-      recommendedBand: 'A2',
-      inferredBand: 'B1',
-      totalCorrect: 2,
-      adjustment: 'down',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+  it('accepts explicit confidence for configured recommendation profiles', () => {
+    const high = buildCefrRecommendationProfile('B2', { confidence: 'high', useLevelFilter: true });
+    const medium = buildCefrRecommendationProfile('C1', { confidence: 'medium', useLevelFilter: true });
+    const low = buildCefrRecommendationProfile('A2', { confidence: 'low', useLevelFilter: true });
 
     assert.equal(high.confidence, 'high');
     assert.equal(high.cefrWeight, 1.3);

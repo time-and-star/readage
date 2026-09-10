@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ReadAge 查词</title><link rel="stylesheet" href="popup.css"></head>
+<body><main>
+  <header><span>ReadAge</span><h1>让每次查词成为积累</h1><p>选中英文单词，点击「查词」。学习记录留在你的浏览器里。</p></header>
+  <p id="setup" role="status">正在检查连接…</p>
+  <button id="connect" class="primary">连接学习应用</button>
+  <button id="site" class="primary" disabled>为当前网站启用查词</button>
+  <label class="toggle"><input type="checkbox" id="enabled">启用网页查词（立即生效）</label>
+  <details><summary>连接设置</summary><section><label for="origin">主应用地址</label><input id="origin" type="url" placeholder="http://localhost:3000" spellcheck="false">
+    <div class="row"><button id="save">保存并授权</button><button id="check">检查连接</button></div>
+  </section></details>
+  <section><h2>学习记录</h2><p id="pending">正在读取…</p><p id="last" class="muted"></p><p id="other" class="muted"></p>
+    <div class="row"><button id="open">打开主应用</button><button id="sync">立即同步</button></div>
+  </section>
+  <p id="message" role="status" aria-live="polite"></p>
+  <footer>首次使用：连接应用 → 授权当前网站 → 选词查词。记录自动保存和同步。<br>主应用网页关闭时暂存记录；本地服务停止时仅能查缓存词。Chrome 与 Edge 各自保存学习数据。</footer>
+</main><script src="popup.js"></script></body></html>

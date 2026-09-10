@@ -8,6 +8,9 @@ coverage/
 !.env.example
 data/magazines/
 local-data/
+tmp/
+tmp-*.out
+tmp-*.err
 *.pid
 *.wav
 # Local packaging / export archives (too large for git)
@@ -20,3 +23,4 @@ vendor/nextword-local-dictionary/data/*.pack
 .deploy_key.pem
 .deploy_token.txt
 
+public/readage-extension.zip

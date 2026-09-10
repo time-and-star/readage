@@ -5,6 +5,7 @@ import { AsyncLocalStorage } from 'async_hooks';
 import path from 'path';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import { classifyAiError } from './server/llm/publicError';
 import type {
   ArticleLevelRating,
   ArticleTranslationResult,
@@ -969,6 +970,11 @@ app.post('/api/tutor', requireSensitiveApiAccess, async (req, res) => {
       }
       return;
     }
+    const publicFailure = classifyAiError(error);
+    if (publicFailure) {
+      console.warn(`[tutor:${request.intent}] ${publicFailure.code}`);
+      return res.status(503).json({ ok: false, error: publicFailure });
+    }
     const code = err.code || (err.message.includes('required') ? 'INVALID_REQUEST' : 'TUTOR_FAILED');
     const status = code === 'INVALID_REQUEST' ? 400 : code === 'ARTICLE_VALIDATION_FAILED' ? 422 : 500;
     console.error(`[tutor:${request.intent}]`, err);
@@ -1001,12 +1007,11 @@ function isLoopbackRequest(req: express.Request): boolean {
   );
 }
 
-/** Particle lab ring-buffer: loopback, or public when REC_DEBUG_PUBLIC is not "0". */
+/** Diagnostics are private in development and require explicit opt-in in production. */
 function isRecDebugAllowed(req: express.Request): boolean {
-  if (isLoopbackRequest(req)) return true;
-  // Behind nginx, socket is often loopback already; also allow same-origin lab on public host.
   if (process.env.REC_DEBUG_PUBLIC === '0') return false;
-  return true;
+  if (process.env.REC_DEBUG_PUBLIC === '1') return true;
+  return process.env.NODE_ENV !== 'production' && isLoopbackRequest(req);
 }
 
 function pushRecommendationDebugEvent(event: Record<string, unknown>): void {

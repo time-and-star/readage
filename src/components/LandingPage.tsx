@@ -3,7 +3,7 @@ import { ReadAgeBrand } from './ReadAgeBrand';
 import './landingPage.css';
 
 type LandingPageProps = {
-  onStartAssessment: () => void;
+  onStartReading: () => void;
 };
 
 type Particle = {
@@ -39,7 +39,7 @@ function createParticles(count: number): Particle[] {
 
 const PARTICLES = createParticles(68);
 
-export function LandingPage({ onStartAssessment }: LandingPageProps) {
+export function LandingPage({ onStartReading }: LandingPageProps) {
   const heroCopyRef = useRef<HTMLElement>(null);
   const bookRef = useRef<HTMLDivElement>(null);
 
@@ -145,8 +145,8 @@ export function LandingPage({ onStartAssessment }: LandingPageProps) {
         <button
           className="readage-landing__start-button"
           type="button"
-          onClick={onStartAssessment}
-          aria-label="Start the reading level assessment"
+          onClick={onStartReading}
+          aria-label="Start article reading"
         >
           Start
         </button>

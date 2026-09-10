@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { AppPageHeader } from '../src/components/AppPageHeader';
 
-test('renders back, navigation, and page actions without a page title', () => {
+test('renders the shared ReadAge brand with back, navigation, and page actions', () => {
   const html = renderToStaticMarkup(
     React.createElement(AppPageHeader, {
       onBack: () => undefined,
@@ -15,6 +15,7 @@ test('renders back, navigation, and page actions without a page title', () => {
   );
 
   assert.match(html, /aria-label="Back"/);
+  assert.match(html, />ReadAge</);
   assert.match(html, /aria-label="Primary navigation"/);
   assert.match(html, />Search</);
   assert.doesNotMatch(html, /<h1/);

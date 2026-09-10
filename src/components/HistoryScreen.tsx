@@ -76,7 +76,20 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
           )}
       />
 
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-4 safe-pb">
+      <main className="flex-1 max-w-3xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5 safe-pb">
+        <header className="flex items-end justify-between gap-4 border-b border-[#E3DDD1] pb-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#A94E2B]">
+              Reading record
+            </p>
+            <h1 className="mt-1 font-serif text-2xl font-semibold text-[#2A2621] sm:text-3xl">
+              学习历史
+            </h1>
+            <p className="mt-1 text-sm text-[#6B645B]">
+              {filteredArticles.length} 篇文章记录
+            </p>
+          </div>
+        </header>
         {filteredArticles.length === 0 ? (
           <div className="text-center py-12 text-[#888] space-y-2">
             <p className="text-sm">还没有学习历史</p>

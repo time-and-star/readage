@@ -98,7 +98,7 @@ describe('MemoryV2RecommendationAdapter targeted review', () => {
       {
         cefrProfile: {
           userLevel: 'B1',
-          hasAssessment: true,
+          useLevelFilter: true,
           confidence: 'high',
           idealBands: ['B1', 'B2'],
           stretchBand: 'B2',
@@ -153,7 +153,7 @@ describe('MemoryV2RecommendationAdapter targeted review', () => {
       reviewWords: ['alpha', 'beta'],
       cefrProfile: {
         userLevel: 'B1',
-        hasAssessment: true,
+        useLevelFilter: true,
         confidence: 'high',
         idealBands: ['B1', 'B2'],
         stretchBand: 'B2',

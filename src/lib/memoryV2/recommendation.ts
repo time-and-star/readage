@@ -232,10 +232,7 @@ export class RecommendationEngine {
 
   getCefrProfile(): CefrRecommendationProfile {
     const profile = this.params.cefrProfile
-      ?? buildCefrRecommendationProfile(
-        null,
-        resolveUserCefrLevel({ recommendedBand: this.params.userLevel })
-      );
+      ?? buildCefrRecommendationProfile(resolveUserCefrLevel(this.params.userLevel));
     return this.params.cefrWeight === undefined
       ? profile
       : { ...profile, cefrWeight: this.params.cefrWeight };
@@ -269,7 +266,7 @@ export class RecommendationEngine {
     const relation = getCefrRelation(articleLevel, profile.userLevel);
     if (relation === 'unknown') return { score: 0, relation };
     if (
-      !profile.hasAssessment
+      !profile.useLevelFilter
       && (relation === 'far-higher' || relation === 'far-lower')
     ) {
       return { score: 0, relation };
@@ -555,8 +552,8 @@ export class RecommendationEngine {
     });
 
     const profile = this.getCefrProfile();
-    const shouldUseCefrHardFilter = params.cefrHardFilter ?? profile.hasAssessment;
-    if (!shouldUseCefrHardFilter || !profile.hasAssessment || filtered.length === 0) {
+    const shouldUseCefrHardFilter = params.cefrHardFilter ?? profile.useLevelFilter;
+    if (!shouldUseCefrHardFilter || !profile.useLevelFilter || filtered.length === 0) {
       return filtered;
     }
 

@@ -4,6 +4,7 @@
  */
 
 import { MemorySystemV2 } from './memorySystem';
+import { withMemoryWriteLock } from '../browserExtension/memoryLock';
 import { LocalStorageMemoryStorage } from './localStorageImpl';
 import { createPreferredMemoryStorage } from './indexedDbImpl';
 import type { MemoryStorage } from './storage';
@@ -50,6 +51,19 @@ function isQuotaError(error: unknown): boolean {
 }
 
 export class MemoryV2Store {
+  async importExtensionLookups(events: unknown): Promise<string[]> {
+    await this.ensureReady();
+    const ids = await withMemoryWriteLock(() => this.system.importExtensionLookups(this.userId, events, this.timezone, this.now()));
+    this.bumpVersion();
+    if (typeof BroadcastChannel !== 'undefined') {
+      const channel = new BroadcastChannel('readage-memory-changed');
+      channel.postMessage('changed');
+      channel.close();
+    }
+    return ids;
+  }
+
+  refreshExternalChanges(): void { this.bumpVersion(); }
   system: MemorySystemV2;
   readonly userId: string;
   readonly timezone: string;
@@ -120,7 +134,7 @@ export class MemoryV2Store {
         // Prefer IndexedDB when available (no-op if a custom storage was injected).
         if (!this.injectedStorage) {
           try {
-            const preferred = await createPreferredMemoryStorage();
+            const preferred = await withMemoryWriteLock(() => createPreferredMemoryStorage());
             this.system = new MemorySystemV2(preferred);
           } catch (error) {
             console.warn(
@@ -165,7 +179,7 @@ export class MemoryV2Store {
 
     this.finalizeJob = (async () => {
       try {
-        await this.system.finalizeHistoricalDates(this.userId, this.timezone);
+        await withMemoryWriteLock(() => this.system.finalizeHistoricalDates(this.userId, this.timezone));
         this.lastSeenLocalDate = getLocalDateInTimeZone(this.now(), this.timezone);
         this.storageError = null;
         this.lifecycleError = null;
@@ -265,7 +279,7 @@ export class MemoryV2Store {
     }));
 
     try {
-      await this.system.recordBatchEvents(events);
+      await withMemoryWriteLock(() => this.system.recordBatchEvents(events));
       this.storageError = null;
       this.scheduleNotify();
     } catch (error) {
@@ -279,7 +293,7 @@ export class MemoryV2Store {
 
   private async recordEvent(event: RawWordEvent): Promise<void> {
     try {
-      await this.system.recordEvent(event);
+      await withMemoryWriteLock(() => this.system.recordEvent(event));
       this.storageError = null;
       this.scheduleNotify();
     } catch (error) {

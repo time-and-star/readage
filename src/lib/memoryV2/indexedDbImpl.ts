@@ -67,6 +67,12 @@ function transactionDone(tx: IDBTransaction): Promise<void> {
 }
 
 export class IndexedDbMemoryStorage implements MemoryStorage {
+  async getWordDailyEvidence(userId: string, wordId: string): Promise<DailyWordEvidence[]> {
+    return this.withStore(STORE.dailyEvidence, 'readonly', async (store) => {
+      const rows = await requestToPromise(store.getAll()) as Array<{ evidence: DailyWordEvidence }>;
+      return rows.map(row => row.evidence).filter(row => row.userId === userId && row.wordId === wordId);
+    });
+  }
   private dbPromise: Promise<IDBDatabase> | null = null;
 
   private open(): Promise<IDBDatabase> {
@@ -486,6 +492,7 @@ export interface LocalStorageMigrationTarget {
 }
 
 type MigrationItem =
+  | { kind: 'meta'; key: string; value: unknown }
   | { kind: 'raw'; value: RawWordEvent[] }
   | { kind: 'article'; value: ArticleWordEvidence }
   | { kind: 'daily'; value: DailyWordEvidence }
@@ -545,7 +552,15 @@ function hasStrings(value: unknown, fields: string[]): value is Record<string, u
 }
 
 function parseMigrationItem(key: string, value: unknown): MigrationItem | null {
-  if (key.includes(':raw:') && !key.includes(':raw-index:')) {
+  if (key.startsWith(`${LS_PREFIX}:meta:extension-journal-index:`)) {
+    if (!Array.isArray(value) || !value.every(word => typeof word === 'string')) throw new Error('Invalid extension journal index');
+    return { kind: 'meta', key: key.slice(`${LS_PREFIX}:meta:`.length), value };
+  }
+  if (key.startsWith(`${LS_PREFIX}:meta:extension-journal:`)) {
+    if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.events)) throw new Error('Invalid extension journal');
+    return { kind: 'meta', key: key.slice(`${LS_PREFIX}:meta:`.length), value };
+  }
+  if (key.startsWith(`${LS_PREFIX}:raw:`)) {
     if (
       !Array.isArray(value) ||
       !value.every((event) =>
@@ -564,25 +579,25 @@ function parseMigrationItem(key: string, value: unknown): MigrationItem | null {
     }
     return { kind: 'raw', value: value as unknown as RawWordEvent[] };
   }
-  if (key.includes(':article:') && !key.includes(':article-index:')) {
+  if (key.startsWith(`${LS_PREFIX}:article:`)) {
     if (!hasStrings(value, ['userId', 'wordId', 'articleId', 'localDate'])) {
       throw new Error('Invalid article evidence record');
     }
     return { kind: 'article', value: value as unknown as ArticleWordEvidence };
   }
-  if (key.includes(':daily:') && !key.includes(':daily-index:')) {
+  if (key.startsWith(`${LS_PREFIX}:daily:`)) {
     if (!hasStrings(value, ['userId', 'wordId', 'localDate'])) {
       throw new Error('Invalid daily evidence record');
     }
     return { kind: 'daily', value: value as unknown as DailyWordEvidence };
   }
-  if (key.includes(':state:') && !key.includes(':state-index:')) {
+  if (key.startsWith(`${LS_PREFIX}:state:`)) {
     if (!hasStrings(value, ['userId', 'wordId', 'nextReview'])) {
       throw new Error('Invalid memory state record');
     }
     return { kind: 'state', value: value as unknown as WordMemoryState };
   }
-  if (key.includes(':task:') && !key.includes(':task-index:')) {
+  if (key.startsWith(`${LS_PREFIX}:task:`)) {
     if (!hasStrings(value, ['userId', 'localDate', 'createdAt'])) {
       throw new Error('Invalid finalization task record');
     }
@@ -611,6 +626,11 @@ async function importAndVerifyItem(
   target: LocalStorageMigrationTarget,
   item: MigrationItem
 ): Promise<void> {
+  if (item.kind === 'meta') {
+    await target.setMeta(item.key, item.value);
+    if (!sameJson(await target.getMeta(item.key), item.value)) throw new Error('Extension journal verification failed');
+    return;
+  }
   if (item.kind === 'raw') {
     if (item.value.length === 0) return;
     const sample = item.value[0];
@@ -769,11 +789,11 @@ export async function migrateLocalStorageToIndexedDb(
     const key = localStorage.key(i);
     if (!key || !key.startsWith(LS_PREFIX)) continue;
     if (
-      key.includes(':raw-index:') ||
-      key.includes(':article-index:') ||
-      key.includes(':daily-index:') ||
-      key.includes(':state-index:') ||
-      key.includes(':task-index:')
+      key.startsWith(`${LS_PREFIX}:raw-index:`) ||
+      key.startsWith(`${LS_PREFIX}:article-index:`) ||
+      key.startsWith(`${LS_PREFIX}:daily-index:`) ||
+      key.startsWith(`${LS_PREFIX}:state-index:`) ||
+      key.startsWith(`${LS_PREFIX}:task-index:`)
     ) {
       continue;
     }
@@ -834,6 +854,29 @@ export async function migrateLocalStorageToIndexedDb(
 }
 
 /** Prefer IndexedDB; fall back to localStorage when unavailable or migration is incomplete. */
+export async function archiveMigratedLocalStorage(target: Pick<LocalStorageMigrationTarget, 'getMeta' | 'setMeta'>, source: Storage): Promise<void> {
+  const marker = await target.getMeta<unknown>(MIGRATION_META_KEY);
+  if (!isCompletedMigrationState(marker)) return;
+  const snapshot: Record<string, string> = {};
+  for (let i = 0; i < source.length; i++) {
+    const key = source.key(i);
+    if (key?.startsWith(`${LS_PREFIX}:`)) {
+      const raw = source.getItem(key);
+      if (raw !== null) snapshot[key] = raw;
+    }
+  }
+  if (!Object.keys(snapshot).length) return;
+  const archiveKey = 'localStorageSourceArchiveV1';
+  const previous = await target.getMeta<Record<string, string>>(archiveKey) ?? {};
+  const archive = { ...previous, ...snapshot };
+  await target.setMeta(archiveKey, archive);
+  if (!sameJson(await target.getMeta(archiveKey), archive)) throw new Error('Source archive verification failed');
+  // Original bytes remain in IndexedDB metadata and are included in normal backups.
+  for (const [key, raw] of Object.entries(snapshot)) {
+    if (source.getItem(key) === raw) source.removeItem(key);
+  }
+}
+
 export async function createPreferredMemoryStorage(): Promise<MemoryStorage> {
   if (typeof indexedDB === 'undefined') {
     return new LocalStorageMemoryStorage();
@@ -848,6 +891,8 @@ export async function createPreferredMemoryStorage(): Promise<MemoryStorage> {
       console.warn('Memory migration is incomplete; retrying from localStorage next start.');
       return new LocalStorageMemoryStorage();
     }
+    try { await archiveMigratedLocalStorage(idb, localStorage); }
+    catch (error) { console.warn('Memory source archive pending; keeping original local records.', error); }
     return idb;
   } catch (error) {
     console.warn('IndexedDB Memory storage unavailable; using localStorage.', error);

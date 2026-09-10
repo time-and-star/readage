@@ -33,6 +33,29 @@ const FSRS_PARAMETERS = generatorParameters({
 // FSRS 调度器实例
 const scheduler = fsrs(FSRS_PARAMETERS);
 
+const MIN_PASSIVE_RECALL_CONTEXTS = 2;
+
+/** Passive no-lookup evidence must repeat across both days and article contexts. */
+export function hasSufficientPassiveRecallEvidence(
+  memoryState: WordMemoryState | null,
+): boolean {
+  const lastReviewAt = memoryState?.lastReview
+    ? Date.parse(memoryState.lastReview)
+    : Number.NEGATIVE_INFINITY;
+  const eligible = (memoryState?.rme?.exposureHistory ?? []).filter((exposure) => {
+    const occurredAt = Date.parse(exposure.occurredAt);
+    return exposure.isValid
+      && exposure.quality >= 0.8
+      && Number.isFinite(occurredAt)
+      && occurredAt > lastReviewAt;
+  });
+  const articleIds = new Set(eligible.map((exposure) => exposure.articleId));
+  const localDates = new Set(eligible.map((exposure) => exposure.localDate));
+
+  return articleIds.size >= MIN_PASSIVE_RECALL_CONTEXTS
+    && localDates.size >= MIN_PASSIVE_RECALL_CONTEXTS;
+}
+
 /**
  * 将我们的评级映射到 FSRS Rating
  */
@@ -169,6 +192,14 @@ export function finalizeDailyEvidence(
 
   // 如果没有评级，不提交
   if (!pendingGrade) {
+    return memoryState;
+  }
+
+  if (
+    pendingGrade === 'Good'
+    && dailyEvidence.articleEvidence.length > 0
+    && !hasSufficientPassiveRecallEvidence(memoryState)
+  ) {
     return memoryState;
   }
 

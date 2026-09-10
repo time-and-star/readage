@@ -1,7 +1,11 @@
-export type RecommendationEntryAction = 'start' | 'assessment';
+import { buildCefrRecommendationProfile } from './userReadingProfile';
+import type { CefrBand } from './articleLevel';
 
-export function getRecommendationEntryAction(
-  hasCompletedAssessment: boolean
-): RecommendationEntryAction {
-  return hasCompletedAssessment ? 'start' : 'assessment';
+/** Cold-start defaults that do not import comprehension-test results into ranking. */
+export function getArticleOnlyRecommendationDefaults(preferredLevel?: CefrBand) {
+  const cefrProfile = buildCefrRecommendationProfile(preferredLevel);
+  return {
+    userLevel: cefrProfile.userLevel,
+    cefrProfile,
+  };
 }

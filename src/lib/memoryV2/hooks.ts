@@ -18,6 +18,23 @@ import {
   type MemoryV2Store,
 } from './memoryStore';
 import { getLocalDateInTimeZone, getSystemTimeZone } from './dateUtils';
+import type { LearningEvent } from '../../types';
+
+export function useExternalLearningActivity() {
+  const store = useMemoryStore();
+  const version = useStoreVersion(store);
+  const ready = useStoreReady(store);
+  const [events, setEvents] = useState<LearningEvent[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    if (ready) void store.system.getExternalLearningActivity(store.userId).then(value => {
+      if (active) { setEvents(value); setError(null); }
+    }).catch(() => { if (active) setError('插件学习统计暂未加载，重新连接后会自动恢复。'); });
+    return () => { active = false; };
+  }, [store, version, ready]);
+  return { events, error };
+}
 
 function getUserId(): string {
   return getDefaultMemoryStore().userId;
