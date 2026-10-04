@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FilePlus2, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowUpRight, BookOpen, FilePlus2, Loader2, RefreshCw, Search } from 'lucide-react';
 import {
   Article,
   MagazineArticleStub,
@@ -10,6 +10,7 @@ import {
 } from '../types';
 import { CEFR_LEVELS } from '../data/mockArticles';
 import { getArticleCefrLevel } from '../lib/articleLevel';
+import { filterUserLibrary, groupUserLibrary, importBatchFormatLabel } from '../lib/userLibrary';
 import { getJsonApiHeaders } from '../lib/apiAuth';
 import { AppPageHeader } from './AppPageHeader';
 
@@ -20,6 +21,11 @@ type LibraryTab = 'mine' | 'magazines';
  * L1 sources → L2 issues → L3 articles
  */
 type MagLayer = 'sources' | 'issues' | 'articles';
+
+const libraryCardClass = 'library-card group w-full text-left bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-5 sm:p-6 shadow-2xs transition-all duration-200 hover:bg-[#F2ECE0] hover:border-[#C35E37]/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37] focus-visible:ring-offset-4 focus-visible:ring-offset-[#F8F6F0] disabled:opacity-60';
+const libraryTitleClass = 'library-card-title font-serif text-xl font-medium leading-snug text-[#2A2621] group-hover:text-[#A94E2B] transition-colors';
+const libraryMetaClass = 'library-meta flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed text-[#777066]';
+const libraryEmptyClass = 'library-empty col-span-full rounded-2xl border border-dashed border-[#DCD5C7] bg-[#FAF8F3]/70 px-6 py-14 text-center text-[#777066] text-sm leading-relaxed';
 
 interface LibraryScreenProps {
   /** User-pasted articles (「我的文章」tab). */
@@ -40,6 +46,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   const [tab, setTab] = useState<LibraryTab>('magazines');
   const [levelFilter, setLevelFilter] = useState<string>('All');
   const [topicQuery, setTopicQuery] = useState('');
+  /** L1→L2 inside My articles: which imported file is open. */
+  const [activeImportBatchId, setActiveImportBatchId] = useState<string | null>(null);
 
   const [sources, setSources] = useState<MagazineSourceSummary[]>([]);
   const [issues, setIssues] = useState<MagazineIssue[]>([]);
@@ -73,18 +81,23 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     [sources, activeSourceId]
   );
 
-  const filteredMine = useMemo(() => {
-    return userArticles.filter((a) => {
-      if (levelFilter !== 'All' && getArticleCefrLevel(a) !== levelFilter) return false;
-      if (!topicQuery.trim()) return true;
-      const q = topicQuery.toLowerCase();
-      return (
-        a.title.toLowerCase().includes(q) ||
-        a.description.toLowerCase().includes(q) ||
-        (a.topic || '').toLowerCase().includes(q)
-      );
-    });
-  }, [userArticles, levelFilter, topicQuery]);
+  const activeImportFile = useMemo(() => {
+    if (!activeImportBatchId) return null;
+    const found = groupUserLibrary(userArticles).find(
+      (item) => item.kind === 'file' && item.file.id === activeImportBatchId,
+    );
+    return found && found.kind === 'file' ? found.file : null;
+  }, [userArticles, activeImportBatchId]);
+  const mineLayer = activeImportFile ? 'articles' : 'files';
+
+  const filteredMine = useMemo(
+    () => filterUserLibrary(userArticles, {
+      level: levelFilter,
+      query: topicQuery,
+      batchId: mineLayer === 'articles' ? activeImportBatchId : null,
+    }),
+    [userArticles, levelFilter, topicQuery, mineLayer, activeImportBatchId],
+  );
 
   const filteredSources = useMemo(() => {
     return sources.filter((s) => {
@@ -329,6 +342,12 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   };
 
   const handleHeaderBack = () => {
+    if (tab === 'mine' && activeImportBatchId) {
+      setActiveImportBatchId(null);
+      setTopicQuery('');
+      setError(null);
+      return;
+    }
     if (tab === 'magazines') {
       if (magLayer === 'articles') {
         setSelectedIssue(null);
@@ -348,7 +367,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   };
 
   const formatSyncTime = (iso: string | null | undefined) => {
-    if (!iso) return '尚未同步';
+    if (!iso) return 'Not synced yet';
     try {
       return new Date(iso).toLocaleString();
     } catch {
@@ -358,157 +377,215 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
 
   const searchPlaceholder =
     tab === 'mine'
-      ? '搜索我的文章…'
+      ? mineLayer === 'articles'
+        ? 'Search this file…'
+        : 'Search your files and articles…'
       : isArticleCatalogFilter
-        ? '搜索文章…'
+        ? 'Search articles…'
         : magLayer === 'articles'
-        ? '搜索本期文章…'
+        ? 'Search this issue…'
         : magLayer === 'issues'
-          ? '搜索期号…'
-          : '搜索杂志…';
+          ? 'Search issues…'
+          : 'Search publications…';
 
   /** Top chrome (tabs / CEFR / search) only when not on mine-only filters at L1, or always except we hide tab switch deep in drill-down? Keep tabs only at L1. */
-  const showTopTabs = tab === 'mine' || magLayer === 'sources';
+  const showTopTabs = (tab === 'mine' && mineLayer === 'files') || magLayer === 'sources';
   const showCefr = tab === 'mine' || magLayer === 'sources';
   const showSearch = true;
 
   return (
-    <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col selection:bg-[#FDE68A]">
+    <div className="library-screen min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col selection:bg-[#FDE68A]">
       <AppPageHeader onBack={handleHeaderBack} navigation={navigation} />
 
-      {(showTopTabs || showCefr || showSearch) && (
-        <div className="max-w-3xl w-full mx-auto px-4 sm:px-6 pt-3 sm:pt-4 space-y-3">
-          {showTopTabs && (
-            <div className="flex gap-2 p-1 bg-[#EFECE3] rounded-xl">
-              {(
-                [
-                  { id: 'magazines' as const, label: '外刊杂志' },
-                  { id: 'mine' as const, label: '我的文章' },
-                ] as const
-              ).map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => {
-                    setTab(t.id);
-                    setTopicQuery('');
-                    setError(null);
-                    if (t.id === 'mine') {
-                      setActiveSourceId(null);
-                      setSelectedIssue(null);
-                      setIssueArticles([]);
-                    }
-                  }}
-                  className={`flex-1 min-h-11 sm:min-h-0 py-2.5 sm:py-2 rounded-lg text-sm font-medium transition-colors ${
-                    tab === t.id
-                        ? 'bg-white text-[#A94E2B] shadow-2xs'
-                      : 'text-[#5B544C] hover:text-[#2B2723] active:bg-[#E8E2D5]'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          )}
+      <div className="library-heading max-w-5xl w-full mx-auto px-4 sm:px-8 pt-8 sm:pt-12 pb-6 sm:pb-8">
+        <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#A94E2B]">The reading room</p>
+        <h1 className="font-serif text-3xl sm:text-5xl font-normal tracking-tight leading-tight text-[#2B2723]">
+          {tab === 'mine'
+            ? mineLayer === 'articles'
+              ? activeImportFile?.title || 'Imported file'
+              : 'Your articles'
+            : magLayer === 'articles' ? selectedIssue?.issueLabel || selectedIssue?.title : magLayer === 'issues' ? activeSource?.displayName : 'A world of good reading.'}
+        </h1>
+        <p className="mt-3 max-w-xl text-sm sm:text-base leading-relaxed text-[#777066]">
+          {tab === 'mine'
+            ? mineLayer === 'articles'
+              ? 'Choose a story from this file and make it your next reading session.'
+              : 'Keep the stories you love. Turn each one into a little progress.'
+            : magLayer === 'articles' ? 'Choose a story from this issue and make it your next reading session.' : magLayer === 'issues' ? 'Explore recent issues and find a story that sparks your curiosity.' : 'Discover fresh perspectives, or bring a story of your own. Your next chapter starts here.'}
+        </p>
+      </div>
 
-          {showCefr && (
-            <div className="space-y-2">
-              <div className="flex flex-wrap gap-2">
-                {CEFR_LEVELS.map((lv) => (
+      {(showTopTabs || showCefr || showSearch) && (
+        <div className="max-w-5xl w-full mx-auto px-4 sm:px-8">
+          <div className="library-filters rounded-2xl border border-[#E3DDD1] bg-[#FAF8F3] p-4 sm:p-5 space-y-4">
+            {showTopTabs && (
+              <div className="flex gap-1 p-1 bg-[#EFECE3] rounded-xl sm:max-w-sm" aria-label="Library collection">
+                {(
+                  [
+                    { id: 'magazines' as const, label: 'Publications' },
+                    { id: 'mine' as const, label: 'My articles' },
+                  ] as const
+                ).map((t) => (
                   <button
-                    key={lv}
+                    key={t.id}
                     type="button"
+                    aria-pressed={tab === t.id}
                     onClick={() => {
-                      setLevelFilter(lv);
-                      if (lv === 'All') setTopicQuery('');
+                      setTab(t.id);
+                      setTopicQuery('');
+                      setError(null);
+                      if (t.id === 'mine') {
+                        setActiveSourceId(null);
+                        setSelectedIssue(null);
+                        setIssueArticles([]);
+                      } else {
+                        setActiveImportBatchId(null);
+                      }
                     }}
-                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                      levelFilter === lv
-                        ? 'bg-[#A94E2B] text-white'
-                        : 'bg-[#EFECE3] text-[#5B544C] hover:bg-[#E2DDD0]'
-                    }`}
+                    className={`flex-1 min-h-11 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37] ${tab === t.id
+                        ? 'bg-white text-[#A94E2B] shadow-2xs'
+                        : 'text-[#5B544C] hover:text-[#2B2723] active:bg-[#E8E2D5]'
+                      }`}
                   >
-                    {lv}
+                    {t.label}
                   </button>
                 ))}
               </div>
-            </div>
-          )}
+            )}
 
-          {showSearch && (
-            <input
-              type="text"
-              value={topicQuery}
-              onChange={(e) => setTopicQuery(e.target.value)}
-              placeholder={searchPlaceholder}
-              className="w-full bg-white border border-[#DDD6C8] rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C35E37]"
-            />
-          )}
+            {showCefr && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <span className="text-xs font-medium text-[#777066]">Reading level</span>
+                <div className="flex flex-wrap gap-1.5" aria-label="Filter by reading level">
+                  {CEFR_LEVELS.map((lv) => (
+                    <button
+                      key={lv}
+                      type="button"
+                      aria-pressed={levelFilter === lv}
+                      onClick={() => {
+                        setLevelFilter(lv);
+                        if (lv === 'All') setTopicQuery('');
+                      }}
+                      className={`min-h-11 min-w-11 px-3.5 py-2 rounded-full text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37] focus-visible:ring-offset-2 ${levelFilter === lv
+                          ? 'bg-[#A94E2B] text-white'
+                          : 'bg-[#EFECE3] text-[#5B544C] hover:bg-[#E2DDD0]'
+                        }`}
+                    >
+                      {lv}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {showSearch && (
+              <label className="relative block">
+                <span className="sr-only">{searchPlaceholder}</span>
+                <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8C8478]" aria-hidden="true" />
+                <input
+                  type="text"
+                  value={topicQuery}
+                  onChange={(e) => setTopicQuery(e.target.value)}
+                  placeholder={searchPlaceholder}
+                  className="w-full min-h-12 bg-[#F8F6F0] border border-[#DDD6C8] rounded-xl pl-11 pr-4 py-3 text-sm placeholder:text-[#8C8478] outline-none focus:border-[#C35E37] focus:ring-2 focus:ring-[#C35E37]/15 transition-all"
+                />
+              </label>
+            )}
+          </div>
         </div>
       )}
 
       {error && (
-        <div className="max-w-3xl w-full mx-auto px-4 sm:px-6 pt-3">
-          <p className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
+        <div className="max-w-5xl w-full mx-auto px-4 sm:px-8 pt-4">
+          <p className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3" role="alert">
             {error}
           </p>
         </div>
       )}
 
-      <main className="flex-1 max-w-3xl w-full mx-auto px-4 sm:px-6 py-5 sm:py-6 space-y-3 safe-pb">
+      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-8 py-6 sm:py-8 space-y-5 safe-pb">
         {/* ── 我的文章 ── */}
         {tab === 'mine' && (
           <>
-            <button
-              type="button"
-              onClick={onInsertArticle}
-              className="app-primary-action w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-medium transition-colors shadow-xs"
-            >
-              <FilePlus2 className="w-4 h-4" />
-              添加文章
-            </button>
+            {mineLayer === 'files' && (
+              <button
+                type="button"
+                onClick={onInsertArticle}
+                className="app-primary-action inline-flex min-h-12 items-center justify-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold transition-colors shadow-xs"
+              >
+                <FilePlus2 className="w-4 h-4" />
+                导入文章
+              </button>
+            )}
 
             {userArticles.length === 0 ? (
-              <div className="text-center text-[#888] py-12 text-sm space-y-2">
-                <p>还没有添加过文章。</p>
-                <p className="text-xs">粘贴英文正文后即可进入主动阅读学习。</p>
+              <div className={`${libraryEmptyClass} space-y-2`}>
+                <BookOpen className="mx-auto mb-4 h-7 w-7 text-[#A94E2B]" aria-hidden="true" />
+                <p className="font-serif text-xl text-[#2B2723]">Make this shelf your own.</p>
+                <p>导入文件或粘贴文章，开始阅读。</p>
               </div>
             ) : filteredMine.length === 0 ? (
-              <p className="text-center text-[#888] py-12 text-sm">没有匹配的文章</p>
+              <p className={libraryEmptyClass}>
+                {mineLayer === 'articles' ? 'No articles in this file match your search.' : 'No articles match your search.'}
+              </p>
             ) : (
-              filteredMine.map((article) => (
-                <button
-                  key={article.id}
-                  type="button"
-                  onClick={() => onSelectArticle(article)}
-                  className="w-full text-left bg-[#FAF8F3] hover:bg-[#F3EFE4] border border-[#E3DDD1] rounded-2xl p-5 shadow-2xs transition-all group"
-                >
-                  <div className="flex items-start justify-between gap-2 mb-1">
-                    <h3 className="font-serif text-lg font-medium text-[#2A2621] group-hover:text-[#C35E37] transition-colors">
-                      {article.title}
+              <div className="library-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {filteredMine.map((item) => item.kind === 'file' ? (
+                  <button
+                    key={item.file.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveImportBatchId(item.file.id);
+                      setTopicQuery('');
+                      setError(null);
+                    }}
+                    className={libraryCardClass}
+                  >
+                    <h3 className={`${libraryTitleClass} mb-5`}>
+                      {item.file.title}
                     </h3>
-                    {article.level && (
-                      <span className="shrink-0 px-2.5 py-0.5 bg-[#EFECE3] text-[#5B544C] rounded-full text-xs font-semibold">
-                        {article.level}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs sm:text-sm text-[#666056] mb-2 leading-relaxed">
-                    {article.description}
-                  </p>
-                  <div className="flex gap-2 text-[11px] text-[#8A8377]">
-                    <span>我的文章</span>
-                    {article.topic && (
-                      <>
-                        <span>·</span>
-                        <span>{article.topic}</span>
-                      </>
-                    )}
-                    <span>·</span>
-                    <span>点击进入 P2 学习</span>
-                  </div>
-                </button>
-              ))
+                    <div className={libraryMetaClass}>
+                      <span>{importBatchFormatLabel(item.file.format)}</span>
+                      <span>·</span>
+                      <span>{item.file.articles.length} {item.file.articles.length === 1 ? 'article' : 'articles'}</span>
+                      <span className="ml-auto inline-flex items-center gap-1 text-[#A94E2B] font-medium">View file <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></span>
+                    </div>
+                  </button>
+                ) : (
+                  <button
+                    key={item.article.id}
+                    type="button"
+                    onClick={() => onSelectArticle(item.article)}
+                    className={libraryCardClass}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <h3 className={libraryTitleClass}>
+                        {item.article.title}
+                      </h3>
+                      {getArticleCefrLevel(item.article) && (
+                        <span className="shrink-0 px-2.5 py-0.5 bg-[#EFECE3] text-[#5B544C] rounded-full text-xs font-semibold">
+                          {getArticleCefrLevel(item.article)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-[#666056] mb-5 leading-relaxed line-clamp-3">
+                      {item.article.description}
+                    </p>
+                    <div className={libraryMetaClass}>
+                      <span>{mineLayer === 'articles' ? importBatchFormatLabel(activeImportFile?.format) : 'My article'}</span>
+                      {item.article.topic && (
+                        <>
+                          <span>·</span>
+                          <span>{item.article.topic}</span>
+                        </>
+                      )}
+                      <span>·</span>
+                      <span>{item.article.content.join(' ').split(/\s+/).filter(Boolean).length} words</span>
+                      <span className="ml-auto inline-flex items-center gap-1 text-[#A94E2B] font-medium">Start reading <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></span>
+                    </div>
+                  </button>
+                ))}
+              </div>
             )}
           </>
         )}
@@ -516,20 +593,20 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         {/* ── L1: 杂志列表 ── */}
         {tab === 'magazines' && magLayer === 'sources' && (
           <>
-            <div className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-xs text-[#666056]">
-                  <div>上次同步：{formatSyncTime(lastSyncAt || syncStatus?.lastRunAt)}</div>
+            <div className="library-status rounded-2xl border border-[#E3DDD1] bg-[#EFECE3]/50 p-4 sm:p-5 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs leading-relaxed text-[#666056]">
+                  <div><span className="font-medium">Last updated</span> · {formatSyncTime(lastSyncAt || syncStatus?.lastRunAt)}</div>
                   {syncStatus?.running && (
                     <div className="text-[#C35E37] mt-1 flex items-center gap-1">
                       <Loader2 className="w-3 h-3 animate-spin" />
-                      {syncStatus.progress || '同步中…'}
+                      {syncStatus.progress || 'Syncing…'}
                     </div>
                   )}
                   {syncStatus?.lastResult && !syncStatus.running && (
-                    <div className="mt-1 text-[11px] text-[#8A8377]">
-                      导入 {syncStatus.lastResult.importedIssues} · 跳过{' '}
-                      {syncStatus.lastResult.skippedIssues} · 失败{' '}
+                    <div className="mt-1 text-xs text-[#777066]">
+                      Imported {syncStatus.lastResult.importedIssues} · Skipped{' '}
+                      {syncStatus.lastResult.skippedIssues} · Failed{' '}
                       {syncStatus.lastResult.failedIssues}
                     </div>
                   )}
@@ -538,121 +615,129 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                   type="button"
                   onClick={() => void handleSync()}
                   disabled={!!syncStatus?.running}
-                  className="app-primary-action shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold disabled:opacity-50 transition-colors"
+                  className="shrink-0 inline-flex min-h-11 items-center gap-2 border border-[#DCD5C7] bg-[#FAF8F3] px-4 py-2.5 rounded-xl text-xs font-semibold text-[#5B544C] hover:bg-[#EFECE3] disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37]"
                 >
                   {syncStatus?.running ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
                     <RefreshCw className="w-3.5 h-3.5" />
                   )}
-                  同步全部
+                  Sync publications
                 </button>
               </div>
-              <p className="text-[10px] leading-relaxed text-[#9A9286]">
-                先选杂志，再选期号，最后选文章。内容来自社区镜像，仅供个人英语学习，请支持正版订阅。
+              <p className="text-xs leading-relaxed text-[#777066]">
+                Explore a publication, choose an issue, and start reading. Community mirrors are for personal study; please support original subscriptions.
               </p>
             </div>
 
             {isArticleCatalogFilter ? (
               <>
-                <p className="text-xs text-[#666056]" aria-live="polite">
-                  {catalogTotal > 0 ? `${catalogTotal} 篇 ${levelFilter} 文章` : `${levelFilter} 文章`}
+                <p className="library-meta text-xs font-medium text-[#666056]" aria-live="polite">
+                  {catalogTotal > 0 ? `${catalogTotal} articles at ${levelFilter}` : `Articles at ${levelFilter}`}
                 </p>
                 {loadingCatalogArticles && catalogArticles.length === 0 ? (
-                  <p className="text-center text-[#888] py-12 text-sm flex items-center justify-center gap-2" role="status">
-                    <Loader2 className="w-4 h-4 animate-spin" /> 加载文章…
+                  <p className="text-center text-[#777066] py-12 text-sm flex items-center justify-center gap-2" role="status">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading articles…
                   </p>
                 ) : catalogArticles.length === 0 ? (
-                  <p className="text-center text-[#888] py-12 text-sm">
-                    没有匹配的文章
+                  <p className={libraryEmptyClass}>
+                    No articles match your search.
                   </p>
                 ) : (
                   <>
-                    {catalogArticles.map((article) => (
-                      <button
-                        key={article.id}
-                        type="button"
-                        disabled={loadingArticleId === article.id}
-                        onClick={() => void openMagazineArticle(article)}
-                        className="w-full text-left bg-[#FAF8F3] hover:bg-[#F3EFE4] border border-[#E3DDD1] rounded-2xl p-5 shadow-2xs transition-all group disabled:opacity-60"
-                      >
-                        <div className="flex items-start justify-between gap-2 mb-1">
-                          <h3 className="font-serif text-lg font-medium text-[#2A2621] group-hover:text-[#C35E37] transition-colors">
-                            {article.title}
-                          </h3>
-                          {loadingArticleId === article.id ? (
-                            <Loader2 className="w-4 h-4 animate-spin text-[#C35E37] shrink-0" />
-                          ) : (
-                            <span className="shrink-0 px-2.5 py-0.5 bg-[#EFECE3] text-[#5B544C] rounded-full text-xs font-semibold">
-                              {article.level}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs sm:text-sm text-[#666056] mb-2 leading-relaxed line-clamp-2">
-                          {article.description}
-                        </p>
-                        <div className="flex flex-wrap gap-2 text-[11px] text-[#8A8377]">
-                          <span>{article.sourceName}</span>
-                          <span>·</span>
-                          <span>{article.issueLabel}</span>
-                          <span>·</span>
-                          <span>{article.wordCount} words</span>
-                        </div>
-                      </button>
-                    ))}
+                    <div className="library-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {catalogArticles.map((article) => (
+                        <button
+                          key={article.id}
+                          type="button"
+                          disabled={loadingArticleId === article.id}
+                          onClick={() => void openMagazineArticle(article)}
+                          className={libraryCardClass}
+                        >
+                          <div className="flex items-start justify-between gap-3 mb-3">
+                            <h3 className={libraryTitleClass}>
+                              {article.title}
+                            </h3>
+                            {loadingArticleId === article.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin text-[#C35E37] shrink-0" />
+                            ) : (
+                              <span className="shrink-0 px-2.5 py-0.5 bg-[#EFECE3] text-[#5B544C] rounded-full text-xs font-semibold">
+                                {article.level}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-[#666056] mb-5 leading-relaxed line-clamp-3">
+                            {article.description}
+                          </p>
+                          <div className={libraryMetaClass}>
+                            <span>{article.sourceName}</span>
+                            <span>·</span>
+                            <span>{article.issueLabel}</span>
+                            <span>·</span>
+                            <span>{article.wordCount} words</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
                     {catalogNextCursor && (
                       <button
                         type="button"
                         onClick={() => void loadCatalogArticlePage(catalogNextCursor, true)}
                         disabled={loadingCatalogArticles}
-                        className="w-full border border-[#DDD6C8] bg-white hover:bg-[#F3EFE4] text-[#524B43] rounded-xl py-2.5 text-sm font-medium transition-colors disabled:opacity-60"
+                        className="w-full min-h-12 border border-[#DDD6C8] bg-[#FAF8F3] hover:bg-[#F3EFE4] text-[#524B43] rounded-xl py-3 text-sm font-semibold transition-colors disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37]"
                       >
-                        {loadingCatalogArticles ? '加载中…' : '加载更多'}
+                        {loadingCatalogArticles ? 'Loading…' : 'Load more articles'}
                       </button>
                     )}
                   </>
                 )}
               </>
             ) : loadingCatalog ? (
-              <p className="text-center text-[#888] py-12 text-sm flex items-center justify-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" /> 加载杂志…
+              <p className="text-center text-[#777066] py-12 text-sm flex items-center justify-center gap-2" role="status">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading publications…
               </p>
             ) : filteredSources.length === 0 ? (
-              <div className="text-center text-[#888] py-12 text-sm space-y-2">
-                <p>还没有杂志目录。</p>
-                <p className="text-xs">点击「同步全部」从 GitHub 拉取（需联网）。</p>
+              <div className={`${libraryEmptyClass} space-y-2`}>
+                <BookOpen className="mx-auto mb-4 h-7 w-7 text-[#A94E2B]" aria-hidden="true" />
+                <p className="font-serif text-xl text-[#2B2723]">Your next story is on its way.</p>
+                <p>Sync publications to fetch the latest available issues.</p>
               </div>
             ) : (
-              filteredSources.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => openSource(s.id)}
-                  className="w-full text-left bg-[#FAF8F3] hover:bg-[#F3EFE4] border border-[#E3DDD1] rounded-2xl p-5 shadow-2xs transition-all group"
-                >
-                  <div className="flex items-start justify-between gap-2 mb-1">
-                    <h3 className="font-serif text-lg font-medium text-[#2A2621] group-hover:text-[#C35E37] transition-colors">
-                      {s.displayName}
-                    </h3>
-                    {s.levelHint && (
-                      <span className="shrink-0 px-2.5 py-0.5 bg-[#EFECE3] text-[#5B544C] rounded-full text-xs font-semibold">
-                        {s.levelHint}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-2 text-[11px] text-[#8A8377]">
-                    <span>{s.issueCount} 个期号</span>
-                    {s.topic && (
-                      <>
-                        <span>·</span>
-                        <span>{s.topic}</span>
-                      </>
-                    )}
-                    <span>·</span>
-                    <span>进入期号列表</span>
-                  </div>
-                </button>
-              ))
+              <div className="library-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {filteredSources.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => openSource(s.id)}
+                    className={`${libraryCardClass} flex flex-col`}
+                  >
+                    <div className="mb-5 flex w-full items-center justify-between">
+                      <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-[#E3DDD1] bg-[#EFECE3] text-[#A94E2B]"><BookOpen className="h-5 w-5" aria-hidden="true" /></span>
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#777066]">Publication</span>
+                    </div>
+                    <div className="flex w-full items-start justify-between gap-3 mb-4">
+                      <h3 className={libraryTitleClass}>
+                        {s.displayName}
+                      </h3>
+                      {s.levelHint && (
+                        <span className="shrink-0 px-2.5 py-0.5 bg-[#EFECE3] text-[#5B544C] rounded-full text-xs font-semibold">
+                          {s.levelHint}
+                        </span>
+                      )}
+                    </div>
+                    <div className={`${libraryMetaClass} mt-auto w-full`}>
+                      <span>{s.issueCount} issues</span>
+                      {s.topic && (
+                        <>
+                          <span>·</span>
+                          <span>{s.topic}</span>
+                        </>
+                      )}
+                      <span className="ml-auto inline-flex items-center gap-1 text-[#A94E2B] font-medium">Explore <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></span>
+                    </div>
+                  </button>
+                ))}
+              </div>
             )}
           </>
         )}
@@ -660,75 +745,75 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         {/* ── L2: 期号列表（单一杂志） ── */}
         {tab === 'magazines' && magLayer === 'issues' && (
           <>
-            <div className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 flex items-center justify-between gap-3">
-              <div className="text-xs text-[#666056] min-w-0">
-                <div className="font-medium text-[#2B2723] truncate">
+            <div className="library-status bg-[#EFECE3]/50 border border-[#E3DDD1] rounded-2xl p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs leading-relaxed text-[#666056] min-w-0">
+                <div className="font-semibold text-sm text-[#2B2723]">
                   {activeSource?.displayName}
                 </div>
-                <div className="mt-0.5 text-[#8A8377]">
-                  仅显示本杂志期号 · 可单独同步
+                <div className="mt-1 text-[#777066]">
+                  Browse available issues or sync this publication.
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => void handleSync()}
                 disabled={!!syncStatus?.running}
-                className="app-primary-action shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold disabled:opacity-50 transition-colors"
+                className="shrink-0 inline-flex min-h-11 items-center gap-2 border border-[#DCD5C7] bg-[#FAF8F3] px-4 py-2.5 rounded-xl text-xs font-semibold text-[#5B544C] hover:bg-[#EFECE3] disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37]"
               >
                 {syncStatus?.running ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <RefreshCw className="w-3.5 h-3.5" />
                 )}
-                同步本期源
+                Sync publication
               </button>
             </div>
 
             {loadingCatalog ? (
-              <p className="text-center text-[#888] py-12 text-sm flex items-center justify-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" /> 加载期号…
+              <p className="text-center text-[#777066] py-12 text-sm flex items-center justify-center gap-2" role="status">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading issues…
               </p>
             ) : filteredIssues.length === 0 ? (
-              <div className="text-center text-[#888] py-12 text-sm space-y-2">
-                <p>该杂志还没有已导入的期号。</p>
-                <p className="text-xs">点击「同步本期源」拉取并解析。</p>
+              <div className={`${libraryEmptyClass} space-y-2`}>
+                <p className="font-serif text-xl text-[#2B2723]">No issues here yet.</p>
+                <p>Sync this publication to bring its issues into your library.</p>
               </div>
             ) : (
-              filteredIssues.map((issue) => (
-                <button
-                  key={issue.id}
-                  type="button"
-                  onClick={() => void openIssue(issue)}
-                  className="w-full text-left bg-[#FAF8F3] hover:bg-[#F3EFE4] border border-[#E3DDD1] rounded-2xl p-5 shadow-2xs transition-all group"
-                >
-                  <div className="flex items-start justify-between gap-2 mb-1">
-                    <h3 className="font-serif text-lg font-medium text-[#2A2621] group-hover:text-[#C35E37] transition-colors">
-                      {issue.issueLabel || issue.title}
-                    </h3>
-                    <span
-                      className={`shrink-0 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                        issue.status === 'ready'
-                          ? 'bg-emerald-50 text-emerald-800'
-                          : issue.status === 'failed'
-                            ? 'bg-red-50 text-red-700'
-                            : 'bg-amber-50 text-amber-800'
-                      }`}
-                    >
-                      {issue.status}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-2 text-[11px] text-[#8A8377]">
-                    <span>{issue.format.toUpperCase()}</span>
-                    <span>·</span>
-                    <span>{issue.articleCount} 篇文章</span>
-                    <span>·</span>
-                    <span>进入文章列表</span>
-                  </div>
-                  {issue.errorMessage && (
-                    <p className="mt-2 text-xs text-red-600">{issue.errorMessage}</p>
-                  )}
-                </button>
-              ))
+              <div className="library-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {filteredIssues.map((issue) => (
+                  <button
+                    key={issue.id}
+                    type="button"
+                    onClick={() => void openIssue(issue)}
+                    className={libraryCardClass}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-4">
+                      <h3 className={libraryTitleClass}>
+                        {issue.issueLabel || issue.title}
+                      </h3>
+                      <span
+                        className={`shrink-0 px-2.5 py-0.5 rounded-full text-xs font-semibold ${issue.status === 'ready'
+                            ? 'bg-emerald-50 text-emerald-800'
+                            : issue.status === 'failed'
+                              ? 'bg-red-50 text-red-700'
+                              : 'bg-amber-50 text-amber-800'
+                          }`}
+                      >
+                        {issue.status}
+                      </span>
+                    </div>
+                    <div className={libraryMetaClass}>
+                      <span>{issue.format.toUpperCase()}</span>
+                      <span>·</span>
+                      <span>{issue.articleCount} articles</span>
+                      <span className="ml-auto inline-flex items-center gap-1 text-[#A94E2B] font-medium">View issue <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></span>
+                    </div>
+                    {issue.errorMessage && (
+                      <p className="mt-2 text-xs text-red-600">{issue.errorMessage}</p>
+                    )}
+                  </button>
+                ))}
+              </div>
             )}
           </>
         )}
@@ -736,40 +821,41 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         {/* ── L3: 文章列表 ── */}
         {tab === 'magazines' && magLayer === 'articles' && (
           loadingIssue ? (
-            <p className="text-center text-[#888] py-12 text-sm flex items-center justify-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" /> 加载文章列表…
+            <p className="text-center text-[#777066] py-12 text-sm flex items-center justify-center gap-2" role="status">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading articles…
             </p>
           ) : filteredIssueArticles.length === 0 ? (
-            <p className="text-center text-[#888] py-12 text-sm">
-              {issueArticles.length === 0 ? '该期暂无可用文章' : '没有匹配的文章'}
+            <p className={libraryEmptyClass}>
+              {issueArticles.length === 0 ? 'No articles are available in this issue yet.' : 'No articles match your search.'}
             </p>
           ) : (
-            filteredIssueArticles.map((article) => (
-              <button
-                key={article.id}
-                type="button"
-                disabled={loadingArticleId === article.id}
-                onClick={() => void openMagazineArticle(article)}
-                className="w-full text-left bg-[#FAF8F3] hover:bg-[#F3EFE4] border border-[#E3DDD1] rounded-2xl p-5 shadow-2xs transition-all group disabled:opacity-60"
-              >
-                <div className="flex items-start justify-between gap-2 mb-1">
-                  <h3 className="font-serif text-lg font-medium text-[#2A2621] group-hover:text-[#C35E37] transition-colors">
-                    {article.title}
-                  </h3>
-                  {loadingArticleId === article.id && (
-                    <Loader2 className="w-4 h-4 animate-spin text-[#C35E37] shrink-0" />
-                  )}
-                </div>
-                <p className="text-xs sm:text-sm text-[#666056] mb-2 leading-relaxed line-clamp-2">
-                  {article.description}
-                </p>
-                <div className="flex gap-2 text-[11px] text-[#8A8377]">
-                  {article.wordCount != null && <span>{article.wordCount} words</span>}
-                  <span>·</span>
-                  <span>点击进入 P2 学习</span>
-                </div>
-              </button>
-            ))
+            <div className="library-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {filteredIssueArticles.map((article) => (
+                <button
+                  key={article.id}
+                  type="button"
+                  disabled={loadingArticleId === article.id}
+                  onClick={() => void openMagazineArticle(article)}
+                  className={libraryCardClass}
+                >
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <h3 className={libraryTitleClass}>
+                      {article.title}
+                    </h3>
+                    {loadingArticleId === article.id && (
+                      <Loader2 className="w-4 h-4 animate-spin text-[#C35E37] shrink-0" />
+                    )}
+                  </div>
+                  <p className="text-sm text-[#666056] mb-5 leading-relaxed line-clamp-3">
+                    {article.description}
+                  </p>
+                  <div className={libraryMetaClass}>
+                    {article.wordCount != null && <span>{article.wordCount} words</span>}
+                    <span className="ml-auto inline-flex items-center gap-1 text-[#A94E2B] font-medium">Start reading <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></span>
+                  </div>
+                </button>
+              ))}
+            </div>
           )
         )}
       </main>

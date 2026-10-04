@@ -16,7 +16,11 @@ const HEADER_LENGTH_BYTES = 4; // UInt32BE
 const REQUIRED_FILES = [PACK_FILE];
 
 export function normalizeWord(word) {
-  return String(word ?? "").toLowerCase().trim().replace(/^'+|'+$/g, "");
+  return String(word ?? "").normalize("NFKC").toLowerCase().trim()
+    .replace(/[\u2018\u2019\u02bc]/g, "'")
+    .replace(/[\u2010\u2011]/g, "-")
+    .replace(/\u00ad/g, "")
+    .replace(/^'+|'+$/g, "");
 }
 
 export function fallbackLemma(word) {
@@ -71,6 +75,20 @@ function buildCandidates(word) {
   add(lemma);
   if (!lemma.endsWith("e") && lemma.length >= 2 && !/[aeiou]$/.test(lemma)) add(`${lemma}e`);
   add(normalized);
+
+  // Candidate generation is permissive; lookup validates every derived form
+  // against the pack's exchange records before returning a different headword.
+  if (normalized.endsWith("ing") && normalized.length > 4) {
+    const root = normalized.slice(0, -3);
+    add(root);
+    add(`${root}e`);
+    if (root.endsWith("y")) add(`${root.slice(0, -1)}ie`);
+    if (root.at(-1) === root.at(-2)) add(root.slice(0, -1));
+  }
+  if (normalized.endsWith("s")) {
+    add(normalized.slice(0, -1));
+    if (normalized.endsWith("es")) add(normalized.slice(0, -2));
+  }
 
   if (normalized.endsWith("ed") && normalized.length > 4) {
     const root = normalized.slice(0, -2);
@@ -429,9 +447,19 @@ export function createDictionary(options = {}) {
     const cacheKey = `lookup:${query}`;
     if (entryCache.has(cacheKey)) return entryCache.get(cacheKey);
 
-    for (const candidate of buildCandidates(query)) {
+    const exact = readLocalEntry(query);
+    const exactForms = parseExchanges(exact?.exchange ?? "");
+    // Contractions/compounds must not be stemmed into unrelated words or phrases.
+    const candidates = /['\s-]/.test(query) ? [query] : buildCandidates(query);
+    for (const candidate of candidates) {
       const local = readLocalEntry(candidate);
       if (local) {
+        if (candidate !== query) {
+          const forms = parseExchanges(local.exchange);
+          const confirmed = exactForms.some((form) => form.label === "原形" && normalizeWord(form.value) === candidate)
+            || forms.some((form) => form.label !== "原形" && normalizeWord(form.value) === query);
+          if (!confirmed) continue;
+        }
         const entry = buildEntry(query, local);
         entryCache.set(cacheKey, entry);
         return entry;

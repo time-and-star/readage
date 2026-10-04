@@ -1,13 +1,4 @@
 import React, { useRef, useState } from 'react';
-import { CheckCircle2, Clock3, Download, HardDrive, Upload } from 'lucide-react';
-import {
-  PolarAngleAxis,
-  PolarGrid,
-  PolarRadiusAxis,
-  Radar,
-  RadarChart,
-  ResponsiveContainer,
-} from 'recharts';
 import { ArticleProgressRow, WeakPointMetric } from '../types';
 import type { WordProficiencyView } from '../lib/memoryV2';
 import { AppPageHeader } from './AppPageHeader';
@@ -48,7 +39,6 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   onBack,
   navigation,
   onStartTargetedReview,
-  onOpenArticle,
   articlesReadCount,
   introducedWordsCount,
   masteredWordsCount,
@@ -58,15 +48,8 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   dueWordCount,
   proficiencies,
   proficienciesLoading,
-  weakPointMetrics,
   isTargetedReviewLoading,
-  articleProgress,
 }) => {
-  const radarData = weakPointMetrics.slice(0, 6).map((metric) => ({
-    skill: metric.skill.slice(0, 16),
-    severity: metric.severity,
-    issueCount: metric.issueCount,
-  }));
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [backupBusy, setBackupBusy] = useState<'export' | 'import' | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
@@ -154,221 +137,69 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between selection:bg-[#FDE68A]">
+    <div className="learning-screen min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col selection:bg-[#F3D7C7]">
       <AppPageHeader onBack={onBack} navigation={navigation} />
 
-      <main className="flex flex-1 max-w-3xl w-full mx-auto flex-col gap-5 px-4 py-5 sm:gap-6 sm:px-6 sm:py-6 safe-pb">
-        <section
-          className="order-2 rounded-2xl border border-[#E3DDD1] bg-[#F3EFE7] px-4 py-3 flex gap-3"
-          aria-labelledby="local-data-notice-heading"
-        >
-          <HardDrive className="w-5 h-5 shrink-0 text-[#A94E2B] mt-0.5" aria-hidden />
-          <div className="min-w-0">
-            <h2 id="local-data-notice-heading" className="text-sm font-semibold text-[#4A4038]">
-              学习数据保存在本机浏览器
-            </h2>
-            <p className="mt-1 text-xs leading-relaxed text-[#4A5568]">
-              常规学习档案默认只写在当前设备，不会自动上传为云端档案。AI 请求和推荐诊断有单独的数据去向，请查看下方说明。
-              换设备或清除站点数据会丢失进度；可用下方「导出备份」保存到文件。
-            </p>
-          </div>
-        </section>
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-7 sm:px-8 sm:py-9 safe-pb">
+        <h1 className="text-2xl font-semibold tracking-tight text-[#2A2621]">学习概览</h1>
 
-        <div className="order-1 grid grid-cols-2 gap-3 sm:grid-cols-5 sm:gap-4">
+        <dl className="grid grid-cols-3 rounded-xl border border-[#E3DDD1] bg-[#FFFDFA] py-5" aria-label="核心学习统计">
           <MetricCard value={articlesReadCount} label="已完成文章" />
           <MetricCard value={introducedWordsCount} label="新引入词" />
-          <MetricCard value={masteredWordsCount} label="较熟悉词 (L4 估计)" />
-          <MetricCard value={learningWordsCount} label="学习中 (L1–L3)" />
           <MetricCard value={streakDaysCount} label="连续学习天数" />
-        </div>
+        </dl>
 
-        <p className="text-xs leading-relaxed text-stone-600">
-          词汇等级根据阅读和查词行为估计，用于安排复习；未查词不代表已理解，也不代表通过了回忆测试。
-          <a href="/extension-setup.html" className="ml-2 underline text-[#8F3F22]">安装浏览器查词插件</a>
-        </p>
-        <section
-          className="order-4 bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
-          aria-labelledby="vocabulary-export-heading"
-        >
-          <div>
-            <h2 id="vocabulary-export-heading" className="font-serif text-lg font-medium text-[#2A2621]">
-              词汇表
-            </h2>
-            <p className="mt-1 text-sm text-[#6B645B]">
-              导出词汇、英标、翻译和熟练度，CSV 文件可直接用 Excel 打开。
-            </p>
-          </div>
+        <section className="flex items-center justify-between gap-3 border-y border-[#E3DDD1] py-4" aria-labelledby="targeted-review-heading">
+          <h2 id="targeted-review-heading" className="text-sm text-[#655B50]">
+            待复习 <strong className="mx-1 font-semibold tabular-nums text-[#2A2621]">{dueWordCount}</strong> 词
+          </h2>
           <button
             type="button"
-            onClick={() => void handleExportVocabulary()}
-            disabled={vocabularyExportBusy || proficienciesLoading || proficiencies.length === 0}
-            aria-busy={vocabularyExportBusy || proficienciesLoading}
-            className="app-primary-action inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:bg-[#CFA08E]"
+            onClick={onStartTargetedReview}
+            disabled={isTargetedReviewLoading}
+            aria-busy={isTargetedReviewLoading}
+            className="app-primary-action inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold disabled:cursor-wait disabled:bg-[#CFA08E]"
           >
-            <Download className="w-4 h-4" aria-hidden />
-            {proficienciesLoading ? '加载中…' : vocabularyExportBusy ? '导出中…' : '导出词汇表'}
+            {isTargetedReviewLoading ? '正在生成复习文章…' : '开始复习'}
           </button>
-          {!proficienciesLoading && proficiencies.length === 0 && (
-            <p className="text-xs text-[#6B645B]" role="status">
-              阅读并产生词汇学习记录后，这里会出现可导出的词汇。
-            </p>
-          )}
-          {vocabularyExportMessage && (
-            <p className="text-xs text-[#2F6B3A]" role="status">
-              {vocabularyExportMessage}
-            </p>
-          )}
-          {vocabularyExportError && (
-            <p className="text-xs text-[#A94E2B]" role="alert">
-              {vocabularyExportError}
-            </p>
-          )}
         </section>
 
-
-        <div className="order-5 bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 text-sm text-[#524B43] flex flex-wrap gap-x-5 gap-y-2">
-          <span>
-            正式到期复习：<strong className="text-[#C35E37]">{dueWordCount}</strong> 词
-          </span>
-          <span>
-            近 7 天学习事件：<strong>{recentEventCount}</strong>
-          </span>
-        </div>
-
-        {false && <section className="space-y-2" aria-labelledby="article-progress-heading">
-          <h2 id="article-progress-heading" className="font-serif text-lg font-medium text-[#2A2621]">
-            按文章的进度
-          </h2>
-          {articleProgress.length === 0 ? (
-            <p className="text-sm text-[#8C8478] bg-[#FAF8F3] border border-[#E3DDD1] rounded-xl p-4">
-              打开文章学习后，这里会记录阅读状态、查词与讨论次数。
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {articleProgress.map(({ article, discussionCount }) => {
-                const completed = article.status === 'Completed';
-                return (
-                  <li key={article.id}>
-                    <button
-                      type="button"
-                      onClick={() => onOpenArticle(article.id)}
-                      className="w-full text-left bg-[#FAF8F3] hover:bg-[#F3EFE4] border border-[#E3DDD1] rounded-xl p-4 transition-colors"
-                    >
-                      <div className="flex items-start justify-between gap-3 mb-1.5">
-                        <span className="font-medium text-sm text-[#2A2621]">{article.title}</span>
-                        <span className={`inline-flex items-center gap-1 shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                          completed
-                            ? 'bg-[#E6F2E8] text-[#2F6B3A]'
-                            : 'bg-[#EFEAE0] text-[#6B645B]'
-                        }`}>
-                          {completed ? <CheckCircle2 className="w-3 h-3" /> : <Clock3 className="w-3 h-3" />}
-                          {completed ? '已完成' : '学习中'}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-3 text-[11px] text-[#6B645B]">
-                        <span>讨论 {discussionCount}</span>
-                        <span className="text-[#C35E37]">继续 →</span>
-                      </div>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>}
-
-        {false && <section
-          className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-6 shadow-2xs"
-          aria-labelledby="weak-points-heading"
-        >
-          <h2 id="weak-points-heading" className="text-xs font-semibold text-[#8C8478] uppercase tracking-wider">
-            需要加强的知识点
-          </h2>
-          <p className="text-[11px] text-[#8C8478] mt-1 mb-3">
-            根据近期结构化批改记录中知识点出现的次数计算，图形越靠外表示越需要复习。
-          </p>
-
-          {radarData.length === 0 ? (
-            <div className="min-h-40 rounded-xl border border-dashed border-[#DCD5C8] bg-[#F7F4ED] px-5 py-8 flex flex-col items-center justify-center text-center">
-              <CheckCircle2 className="w-8 h-8 text-[#6F9B73] mb-2" />
-              <p className="text-sm font-medium text-[#4A443C]">尚未发现明确薄弱点</p>
-              <p className="text-xs text-[#8C8478] mt-1">完成口语批改后，这里会显示真实反馈频次。</p>
-            </div>
-          ) : (
-            <>
-              <div className="h-56 w-full" aria-label="薄弱点频次雷达图">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
-                    <PolarGrid stroke="#E2DDD0" />
-                    <PolarAngleAxis
-                      dataKey="skill"
-                      tick={{ fill: '#4A443C', fontSize: 12, fontWeight: 500 }}
-                    />
-                    <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-                    <Radar
-                      name="需加强程度"
-                      dataKey="severity"
-                      stroke="#C35E37"
-                      fill="#E8A387"
-                      fillOpacity={0.42}
-                      strokeWidth={2}
-                    />
-                  </RadarChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="flex flex-wrap gap-1.5 mt-2">
-                {weakPointMetrics.map((metric) => (
-                  <span
-                    key={metric.skill}
-                    className="px-2 py-1 bg-[#FDF2EE] text-[#A94E2B] border border-[#FADCD1] rounded-md text-[11px]"
-                  >
-                    {metric.skill} · {metric.issueCount} 次记录
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
-        </section>}
-
-        <div className="order-6">
-          <ReadingDataNotice />
-        </div>
-
-        <section
-          className="order-7 bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
-          aria-labelledby="local-backup-heading"
-        >
-          <div>
-            <h2 id="local-backup-heading" className="font-serif text-lg font-medium text-[#2A2621]">
-              本地数据备份
-            </h2>
-            <p className="mt-1 text-sm text-[#6B645B]">
-              导出为 JSON 文件，可在本机或另一台设备导入恢复。服务器不保存你的学习档案。
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
+        <section className="space-y-3" aria-labelledby="learning-tools-heading">
+          <h2 id="learning-tools-heading" className="text-xs font-medium text-[#85786B]">工具</h2>
+          <div className="grid grid-cols-2 gap-2 min-[520px]:grid-cols-4">
+            <button
+              type="button"
+              onClick={() => void handleExportVocabulary()}
+              disabled={vocabularyExportBusy || proficienciesLoading || proficiencies.length === 0}
+              aria-busy={vocabularyExportBusy || proficienciesLoading}
+              className={toolButtonClassName}
+            >
+              {proficienciesLoading ? '加载中…' : vocabularyExportBusy ? '导出中…' : '导出词汇表'}
+            </button>
             <button
               type="button"
               onClick={() => void handleExportBackup()}
               disabled={backupBusy !== null}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-[#DCD5C7] bg-white px-3 py-2 text-sm font-medium text-[#332E28] hover:bg-[#F2ECE0] disabled:opacity-60"
+              aria-busy={backupBusy === 'export'}
+              className={toolButtonClassName}
             >
-              <Download className="w-4 h-4" aria-hidden />
               {backupBusy === 'export' ? '导出中…' : '导出备份'}
             </button>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={backupBusy !== null}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-[#DCD5C7] bg-white px-3 py-2 text-sm font-medium text-[#332E28] hover:bg-[#F2ECE0] disabled:opacity-60"
+              aria-busy={backupBusy === 'import'}
+              className={toolButtonClassName}
             >
-              <Upload className="w-4 h-4" aria-hidden />
               {backupBusy === 'import' ? '导入中…' : '导入备份'}
             </button>
+            <a href="/extension-setup.html" className={toolButtonClassName}>安装查词插件</a>
             <input
               ref={fileInputRef}
               type="file"
               accept="application/json,.json"
+              aria-label="选择学习备份文件"
               className="hidden"
               onChange={(event) => {
                 const file = event.target.files?.[0] ?? null;
@@ -377,42 +208,44 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
               }}
             />
           </div>
-          {backupMessage && (
-            <p className="text-xs text-[#2F6B3A]" role="status">
-              {backupMessage}
-            </p>
-          )}
-          {backupError && (
-            <p className="text-xs text-[#A94E2B]" role="alert">
-              {backupError}
-            </p>
-          )}
+          {vocabularyExportMessage && <p className="text-xs leading-5 text-[#2F6B3A]" role="status">{vocabularyExportMessage}</p>}
+          {vocabularyExportError && <p className="text-xs leading-5 text-[#A94E2B]" role="alert">{vocabularyExportError}</p>}
+          {backupMessage && <p className="text-xs leading-5 text-[#2F6B3A]" role="status">{backupMessage}</p>}
+          {backupError && <p className="text-xs leading-5 text-[#A94E2B]" role="alert">{backupError}</p>}
         </section>
 
-        <div className="order-8 space-y-2">
-          <button
-            type="button"
-            onClick={onStartTargetedReview}
-            disabled={isTargetedReviewLoading}
-            aria-busy={isTargetedReviewLoading}
-            className="app-primary-action w-full py-4 disabled:bg-[#CFA08E] disabled:cursor-wait rounded-xl font-medium text-lg transition-all shadow-md text-center block"
-          >
-            {isTargetedReviewLoading ? '正在生成复习文章…' : '针对性复习（语境文章 → P2）'}
-          </button>
-          <p className="text-[11px] text-center text-[#6B645B]">
-            到期词会被织入新文章，不提供孤立词卡。
-          </p>
-        </div>
+        <details className="border-t border-[#E3DDD1] pt-4 text-sm text-[#6B6156]">
+          <summary className="cursor-pointer rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-[#A94E2B]">学习详情</summary>
+          <div className="mt-4 space-y-3 text-xs leading-6">
+            <dl className="flex flex-wrap gap-x-6 gap-y-1">
+              <div className="flex gap-2"><dt>较熟悉词 (L4 估计)</dt><dd className="font-semibold tabular-nums text-[#443A30]">{masteredWordsCount}</dd></div>
+              <div className="flex gap-2"><dt>学习中 (L1–L3)</dt><dd className="font-semibold tabular-nums text-[#443A30]">{learningWordsCount}</dd></div>
+              <div className="flex gap-2"><dt>近 7 天学习事件</dt><dd className="font-semibold tabular-nums text-[#443A30]">{recentEventCount}</dd></div>
+            </dl>
+            <p>正式到期复习指已到复习时间的词。开始复习会把待复习词编入新文章。</p>
+            <p>词汇等级根据阅读和查词行为估计，用于安排复习；未查词不代表已理解，也不代表通过了回忆测试。</p>
+            <p>词汇表包含词汇、音标、翻译和熟练度，CSV 文件可用 Excel 打开。</p>
+            {!proficienciesLoading && proficiencies.length === 0 && <p>阅读并产生词汇学习记录后，这里会出现可导出的词汇。</p>}
+            <p>备份为 JSON 文件，可在本机或另一台设备导入恢复。导入前会确认覆盖当前记录。</p>
+          </div>
+        </details>
+
+        <footer className="space-y-3 border-t border-[#E3DDD1] pt-4">
+          <p className="text-xs leading-5 text-[#85786B]">学习数据保存在本机浏览器；换设备或清除站点数据前，请导出备份。</p>
+          <div className="[&_details]:rounded-none [&_details]:border-0 [&_details]:bg-transparent [&_details]:p-0 [&_summary]:items-center [&_summary>div:first-child]:hidden [&_summary>div>span:first-child]:text-xs [&_summary>div>span:first-child]:font-medium [&_summary>div>span:first-child]:text-[#6B6156] [&_summary>div>span:last-child]:hidden [&_summary>svg]:mt-0 [&_summary>svg]:h-4 [&_summary>svg]:w-4">
+            <ReadingDataNotice />
+          </div>
+        </footer>
       </main>
     </div>
   );
 };
 
+const toolButtonClassName = 'inline-flex min-h-10 min-w-0 items-center justify-center rounded-lg border border-[#DDD5C8] bg-[#FFFDFA] px-2 py-2 text-xs font-medium text-[#5D5247] transition-colors hover:bg-[#F0EBE2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A94E2B] disabled:cursor-not-allowed disabled:opacity-50';
+
 const MetricCard: React.FC<{ value: number; label: string }> = ({ value, label }) => (
-  <div className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 text-center shadow-2xs sm:p-5">
-    <div className="text-3xl sm:text-4xl font-bold text-[#A94E2B] tracking-tight mb-2">
-      {value}
-    </div>
-    <div className="text-sm font-medium text-[#6B645B]">{label}</div>
+  <div className="learning-metric-card flex min-w-0 flex-col items-center gap-2 px-1 text-center [&:not(:first-child)]:border-l [&:not(:first-child)]:border-[#E7E0D5]">
+    <dt className="order-2 text-[11px] font-medium leading-5 text-[#82766A] sm:text-xs">{label}</dt>
+    <dd className="text-3xl font-semibold tabular-nums tracking-tight text-[#44382D] sm:text-4xl">{value}</dd>
   </div>
 );

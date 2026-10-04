@@ -71,6 +71,7 @@ export {
   useWordProficiency,
   useAllWordProficiency,
   useDueWords,
+  useConfirmationWords,
   useProficiencyStats,
   useMemoryStorageError,
   memoryV2,

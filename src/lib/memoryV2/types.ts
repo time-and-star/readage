@@ -10,6 +10,8 @@ export type RawEventType = 'exposure' | 'click';
 
 /** Optional RME-V4 signals collected during normal reading. */
 export interface MemoryExposureSignals {
+  /** Stable timestamp for all cumulative snapshots of one reading encounter. */
+  exposureOccurredAt?: string;
   isRecommendation?: boolean;
   dwellTimeMs?: number;
   expectedDwellTimeMs?: number;
@@ -62,7 +64,7 @@ export interface DailyWordEvidence {
   validExposureCount: number;
   /** 总点击occurrence数 */
   clickedOccurrenceCount: number;
-  /** 待定评级（当天实时更新） */
+  /** Legacy reading summary; Good here is exposure quality, never a verified FSRS success. */
   pendingGrade: 'Good' | 'Again' | null;
   /** Average quality across valid exposures for this day. */
   averageRmeQuality?: number;
@@ -73,10 +75,31 @@ export interface DailyWordEvidence {
 /** FSRS 评级 */
 export type FsrsGrade = 'Again' | 'Good';
 
+export type VerificationOutcome = 'recognized' | 'incorrect' | 'uncertain' | 'guessed' | 'skipped';
+export interface ReadingVerificationInput {
+  attemptId: string;
+  questionId: string;
+  wordId: string;
+  articleId: string;
+  outcome: VerificationOutcome;
+  selectedOptionId?: string;
+  /** Retained to avoid reusing a generated test sentence on a later pause. */
+  questionSentence?: string;
+  purpose?: 'delayed_verification' | 'immediate_practice';
+}
+export interface ReadingVerificationEvidence extends ReadingVerificationInput {
+  userId: string;
+  occurredAt: string;
+  localDate: string;
+  timezone: string;
+}
+
 /** 单词记忆状态（FSRS 主记录） */
 export interface WordMemoryState {
   userId: string;
   wordId: string;
+  /** Actual lookup time, independent of the older matching exposure timestamp. */
+  lastAssistedAt?: string;
   /** FSRS Stability (days) */
   stability: number;
   /** FSRS Difficulty */
@@ -110,6 +133,9 @@ export interface WordMemoryState {
     scheduledDays: number;
     learningSteps: number;
     review: string;
+    source?: 'reading_lookup' | 'verification';
+    localDate?: string;
+    verificationAttemptIds?: string[];
   }>;
   /** Additive RME-V4 profile; absent on legacy V2.2 states. */
   rme?: RmeMemoryProfile;

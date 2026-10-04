@@ -22,7 +22,7 @@ export function aggregateArticleEvidence(
 ): ArticleWordEvidence | null {
   if (events.length === 0) return null;
 
-  // V4 first exposures and sub-24h natural repeats remain history only.
+  // First sightings and additional same-day exposures remain history only.
   const sortedEvents = [...events].sort(
     (a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()
   );
@@ -42,7 +42,8 @@ export function aggregateArticleEvidence(
   // 统计有效曝光次数
   const validExposureCount = exposureEvents.length;
   const averageRmeQuality = exposureEvents.some((event) => typeof event.rmeQuality === 'number')
-    ? exposureEvents.reduce((sum, event) => sum + (event.rmeQuality ?? 1), 0) / exposureEvents.length
+    ? exposureEvents.reduce((sum, event) => sum
+      + (clickedOccurrences.has(event.occurrenceId) ? 0 : event.rmeQuality ?? 1), 0) / exposureEvents.length
     : undefined;
 
   // 统计被点击的 occurrence 数量（去重）
@@ -76,7 +77,8 @@ export function getArticleGrade(evidence: ArticleWordEvidence): FsrsGrade | null
     return 'Again';
   }
 
-  if (evidence.validExposureCount === 0) {
+  if (evidence.validExposureCount === 0
+    || (evidence.averageRmeQuality !== undefined && evidence.averageRmeQuality < 0.8)) {
     return null; // 不提供证据
   }
 
@@ -157,7 +159,8 @@ export function calculateDailyGrade(
   }
 
   // 检查是否有有效曝光
-  const hasValidExposure = articleEvidences.some((e) => e.validExposureCount > 0);
+  const hasValidExposure = articleEvidences.some((e) => e.validExposureCount > 0
+    && (e.averageRmeQuality === undefined || e.averageRmeQuality >= 0.8));
   if (!hasValidExposure) {
     return null;
   }

@@ -10,8 +10,11 @@ await build({ entryPoints: ['background', 'content', 'bridge', 'popup'].map(name
   absWorkingDir: root, tsconfig: path.join(root, 'tsconfig.json'),
   bundle: true, outdir, format: 'iife', platform: 'browser', target: 'chrome120', sourcemap: true });
 for (const name of ['manifest.json', 'popup.html', 'popup.css']) await copyFile(path.join(root, name), path.join(outdir, name));
+await mkdir(path.join(outdir, 'icons'), { recursive: true });
+const icons = [16, 32, 48, 128].map(size => `icons/icon-${size}.png`);
+for (const name of icons) await copyFile(path.join(root, name), path.join(outdir, name));
 const zip = new JSZip();
-for (const name of ['manifest.json', 'popup.html', 'popup.css', 'background.js', 'content.js', 'bridge.js', 'popup.js']) {
+for (const name of ['manifest.json', 'popup.html', 'popup.css', 'background.js', 'content.js', 'bridge.js', 'popup.js', ...icons]) {
   zip.file(name, await readFile(path.join(outdir, name)));
 }
 const archive = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });

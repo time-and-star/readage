@@ -26,6 +26,7 @@ export function chaptersToArticles(
       magazineIssueId: makeIssueId(source.id, issueLabel),
       magazineSourceId: source.id,
       content: ch.paragraphs,
+      media: ch.media,
       keyWords: [],
     };
   });

@@ -11,7 +11,7 @@ import {
 } from './memorySystem';
 
 export { DEFAULT_REVIEW_QUEUE_LIMIT } from './memorySystem';
-import type { MemoryExposureSignals } from './types';
+import type { MemoryExposureSignals, ReadingVerificationInput } from './types';
 import { useMemoryStore } from './MemoryProvider';
 import {
   getDefaultMemoryStore,
@@ -19,6 +19,7 @@ import {
 } from './memoryStore';
 import { getLocalDateInTimeZone, getSystemTimeZone } from './dateUtils';
 import type { LearningEvent } from '../../types';
+import { seedCanonicalMemoryBaselines } from '../canonicalMemoryBaseline';
 
 export function useExternalLearningActivity() {
   const store = useMemoryStore();
@@ -86,26 +87,37 @@ export function useMemorySystem() {
   }, [store]);
 
   const recordExposure = useCallback(
-    (wordId: string, articleId: string, occurrenceId: string, signals?: MemoryExposureSignals) =>
-      store.recordExposure(wordId, articleId, occurrenceId, signals),
+    async (wordId: string, articleId: string, occurrenceId: string, signals?: MemoryExposureSignals) => {
+      await seedCanonicalMemoryBaselines(store, [wordId]);
+      await store.recordExposure(wordId, articleId, occurrenceId, signals);
+    },
     [store]
   );
 
   const recordExposures = useCallback(
-    (items: ReadonlyArray<{
+    async (items: ReadonlyArray<{
       wordId: string;
       articleId: string;
       occurrenceId: string;
-    } & MemoryExposureSignals>) =>
-      store.recordExposures(items),
+    } & MemoryExposureSignals>) => {
+      await seedCanonicalMemoryBaselines(store, items.map((item) => item.wordId));
+      await store.recordExposures(items);
+    },
     [store]
   );
 
   const recordClick = useCallback(
-    (wordId: string, articleId: string, occurrenceId: string) =>
-      store.recordClick(wordId, articleId, occurrenceId),
+    async (wordId: string, articleId: string, occurrenceId: string) => {
+      await seedCanonicalMemoryBaselines(store, [wordId]);
+      await store.recordClick(wordId, articleId, occurrenceId);
+    },
     [store]
   );
+
+  const recordVerification = useCallback(async (input: ReadingVerificationInput) => {
+    await seedCanonicalMemoryBaselines(store, [input.wordId]);
+    await store.recordVerification(input);
+  }, [store]);
 
   return {
     memorySystem: store.system,
@@ -113,6 +125,7 @@ export function useMemorySystem() {
     recordExposure,
     recordExposures,
     recordClick,
+    recordVerification,
     ready,
     version,
     storageError: store.getSnapshot().storageError,
@@ -225,6 +238,38 @@ export function useDueWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT) {
   return { dueWords, loading: loading || !ready, refresh };
 }
 
+/** 获取尚未进入 FSRS、需要再次确认的单词 */
+export function useConfirmationWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT) {
+  const store = useMemoryStore();
+  const version = useStoreVersion(store);
+  const ready = useStoreReady(store);
+  const [confirmationWords, setConfirmationWords] = useState<WordProficiencyView[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      await store.ensureReady();
+      const result = await store.system.getConfirmationWords(store.userId, new Date(), limit, store.timezone);
+      setConfirmationWords(result);
+    } catch (error) {
+      console.error('Failed to load confirmation words:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [store, limit]);
+
+  useEffect(() => {
+    if (!ready) {
+      setLoading(true);
+      return;
+    }
+    void refresh();
+  }, [refresh, version, ready]);
+
+  return { confirmationWords, loading: loading || !ready, refresh };
+}
+
 /**
  * 获取熟练度统计的 Hook
  */
@@ -267,6 +312,23 @@ export function useMemoryStorageError(): string | null {
     () => store.getSnapshot().storageError,
     () => store.getSnapshot().storageError
   );
+}
+
+/** Lifecycle state for showing recoverable memory initialization failures. */
+export function useMemoryLifecycle() {
+  const store = useMemoryStore();
+  // getSnapshot returns a fresh object, so subscribe through the stable
+  // primitive version value and read the current fields during render.
+  useStoreVersion(store);
+  const snapshot = store.getSnapshot();
+  const retry = useCallback(() => store.start(), [store]);
+  return {
+    ready: snapshot.ready,
+    status: snapshot.status,
+    retryable: snapshot.retryable,
+    error: snapshot.lifecycleError,
+    retry,
+  };
 }
 
 /**

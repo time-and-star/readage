@@ -1,5 +1,7 @@
 import { toLemma } from './proficiency';
-import { getPhraseHighlightMatches } from './textHighlight';
+import { getReadingTermMatches } from './textHighlight';
+import { normalizeEnglishSurface } from './englishTokens';
+import { tokenizeReadingParagraph } from './readingTokens';
 import { shouldTrackMemoryWord } from './memoryV2/stopWords';
 
 export interface ReadingLearningUnit {
@@ -24,15 +26,10 @@ export function limitConcurrentExposureCandidates<T>(
   return candidates.slice(0, Math.max(0, limit - active));
 }
 
-function tokenizeParagraph(paragraphText: string): string[] {
-  const trimmed = paragraphText.trim();
-  return trimmed ? trimmed.split(/\s+/) : [];
-}
-
 function isMetadataParagraph(paragraphText: string): boolean {
   // Imported magazine bodies can contain provenance lines such as
   // "downloaded from https://...". Do not turn a URL slug into one lemma.
-  return /(?:https?:\/\/|www\.)/i.test(paragraphText);
+  return /^\s*(?:This (?:article|poem) was downloaded\b|downloaded from\b)/i.test(paragraphText);
 }
 
 /**
@@ -46,36 +43,33 @@ export function extractLearningUnits(
 ): ReadingLearningUnit[] {
   if (isMetadataParagraph(paragraphText)) return [];
 
-  const tokens = tokenizeParagraph(paragraphText);
-  const matches = getPhraseHighlightMatches(tokens, [...highlightTerms]);
+  const tokens = tokenizeReadingParagraph(paragraphText);
+  const matches = new Map(getReadingTermMatches(tokens, highlightTerms).map((match) => [match.tokenIndex, match]));
   const allowlist = new Set(
-    highlightTerms.map((term) => toLemma(term)).filter(Boolean)
+    highlightTerms.map((term) => toLemma(normalizeEnglishSurface(term))).filter(Boolean)
   );
   const units: ReadingLearningUnit[] = [];
 
-  for (let tokenIndex = 0; tokenIndex < tokens.length;) {
-    const matchedTerm = matches[tokenIndex];
-    if (matchedTerm) {
-      const wordId = toLemma(matchedTerm);
-      const tokenLength = Math.max(1, wordId.split(' ').filter(Boolean).length);
+  let coveredUntil = -1;
+  for (const token of tokens) {
+    if (token.type !== 'word' || token.tokenIndex < coveredUntil) continue;
+    const { tokenIndex } = token;
+    const match = matches.get(tokenIndex);
+    if (match) {
+      const wordId = toLemma(normalizeEnglishSurface(match.term));
+      const { tokenLength } = match;
       // Highlighted phrases/terms are always tracked (including stop-word exceptions).
       if (wordId) {
         units.push({ wordId, tokenIndex, tokenLength });
       }
-      tokenIndex += tokenLength;
+      coveredUntil = tokenIndex + tokenLength;
       continue;
     }
 
-    const lexicalTokens = tokens[tokenIndex].match(
-      /[a-z]+(?:['\u2018\u2019\u02bc][a-z]+)*(?:-[a-z]+(?:['\u2018\u2019\u02bc][a-z]+)*)*/gi,
-    ) ?? [];
-    for (const lexicalToken of lexicalTokens) {
-      const wordId = toLemma(lexicalToken);
-      if (wordId && shouldTrackMemoryWord(wordId, allowlist)) {
-        units.push({ wordId, tokenIndex, tokenLength: 1 });
-      }
+    const wordId = toLemma(normalizeEnglishSurface(token.value));
+    if (wordId && shouldTrackMemoryWord(wordId, allowlist)) {
+      units.push({ wordId, tokenIndex, tokenLength: 1 });
     }
-    tokenIndex += 1;
   }
 
   return units;

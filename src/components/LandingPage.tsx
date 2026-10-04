@@ -1,4 +1,5 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
+import { ArrowUpRight } from 'lucide-react';
 import { ReadAgeBrand } from './ReadAgeBrand';
 import './landingPage.css';
 
@@ -131,6 +132,9 @@ export function LandingPage({ onStartReading }: LandingPageProps) {
           <span className="readage-landing__title-outline">Age</span>
           <span className="readage-landing__title-dot" aria-hidden="true" />
         </h1>
+        <p className="readage-landing__description">
+          A new perspective, one article at a time.
+        </p>
       </section>
 
       <div className="readage-landing__book" aria-hidden="true" ref={bookRef}>
@@ -148,7 +152,8 @@ export function LandingPage({ onStartReading }: LandingPageProps) {
           onClick={onStartReading}
           aria-label="Start article reading"
         >
-          Start
+          <ArrowUpRight className="h-5 w-5" strokeWidth={1.5} aria-hidden="true" />
+          <span>Start reading</span>
         </button>
       </div>
     </main>

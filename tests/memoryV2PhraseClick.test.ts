@@ -88,6 +88,60 @@ test('clicking either rendered token of a phrase creates matching exposure and g
   assert.equal(getArticleGrade(evidence), 'Again');
 });
 
+test('single-word lookup inside financial advice records only the clicked component', async () => {
+  const lookupParagraph = 'Get financial advice from professionals.';
+  const passivePhrase = extractLearningUnits(lookupParagraph, ['financial advice'])
+    .find((unit) => unit.wordId === 'financial advice');
+  assert.ok(passivePhrase);
+
+  for (const [clickedWord, tokenIndex] of [['financial', 1], ['advice', 2]] as const) {
+    const clickedUnit = findLearningUnitAtTokenIndex(lookupParagraph, [clickedWord], tokenIndex);
+    assert.deepEqual(clickedUnit, { wordId: clickedWord, tokenIndex, tokenLength: 1 });
+    assert.notEqual(
+      createMemoryOccurrenceId('article-1', 0, clickedUnit!),
+      createMemoryOccurrenceId('article-1', 0, passivePhrase),
+    );
+
+    const events: RawWordEvent[] = [];
+    const exposedOccurrenceIds = new Set<string>();
+    await recordParagraphExposureWithRollback({
+      articleId: 'article-1',
+      paragraphIndex: 0,
+      units: [passivePhrase],
+      exposedOccurrenceIds,
+      recordExposures: async (items) => {
+        for (const item of items) events.push(event(item.wordId, item.occurrenceId, 'exposure'));
+      },
+    });
+    await recordMemoryClickWithExposure({
+      articleId: 'article-1',
+      paragraphIndex: 0,
+      unit: clickedUnit!,
+      canonicalWordId: clickedWord,
+      exposedOccurrenceIds,
+      recordExposure: async (wordId, _articleId, occurrenceId) => {
+        events.push(event(wordId, occurrenceId, 'exposure'));
+      },
+      recordClick: async (wordId, _articleId, occurrenceId) => {
+        events.push(event(wordId, occurrenceId, 'click'));
+      },
+    });
+
+    assert.deepEqual(events.map(({ wordId, eventType }) => ({ wordId, eventType })), [
+      { wordId: 'financial advice', eventType: 'exposure' },
+      { wordId: clickedWord, eventType: 'exposure' },
+      { wordId: clickedWord, eventType: 'click' },
+    ]);
+    const clickedEvidence = aggregateArticleEvidence(events.filter(({ wordId }) => wordId === clickedWord));
+    const phraseEvidence = aggregateArticleEvidence(events.filter(({ wordId }) => wordId === 'financial advice'));
+    assert.ok(clickedEvidence);
+    assert.ok(phraseEvidence);
+    assert.equal(clickedEvidence.validExposureCount, 1);
+    assert.equal(clickedEvidence.clickedOccurrenceCount, 1);
+    assert.equal(phraseEvidence.clickedOccurrenceCount, 0);
+  }
+});
+
 test('ordinary word exposure and click retain the same unit and occurrence id', () => {
   const units = extractLearningUnits(paragraph, highlightTerms);
   const exposure = units.find((unit) => unit.wordId === 'recognize');

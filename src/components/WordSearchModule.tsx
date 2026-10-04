@@ -4,6 +4,9 @@ import type { GrammarExplanation } from '../types';
 import { lookupDictionaryWord, toDictionaryWordCard as toWordCardResult } from '../lib/dictionaryClient';
 import { useMemorySystem } from '../lib/memoryV2/hooks';
 import { WordCardPanel } from './WordCardPanel';
+import { canonicalLearningWordId } from '../lib/learningWordIds';
+import { useSpeech } from '../lib/speech/useSpeech';
+import { SpeechFeedback } from './SpeechControls';
 
 export function normalizeWordSearchQuery(value: string): string {
   return value.trim().replace(/\s+/g, ' ').slice(0, 80);
@@ -24,6 +27,7 @@ export async function recordWordSearchEvidence(
 }
 
 export const WordSearchModule: React.FC = () => {
+  const speech = useSpeech();
   const [searchOpen, setSearchOpen] = useState(false);
   const [cardOpen, setCardOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -35,6 +39,13 @@ export const WordSearchModule: React.FC = () => {
   const { recordExposure, recordClick } = useMemorySystem();
 
   useEffect(() => () => abortRef.current?.abort(), []);
+  const speechPreparationText = result?.wordOrPhrase || selectedText;
+  useEffect(() => {
+    if (!cardOpen || !speechPreparationText) return;
+    let cancel: (() => void) | undefined;
+    const timer = setTimeout(() => { cancel = speech.prepare(speechPreparationText); }, 300);
+    return () => { clearTimeout(timer); cancel?.(); };
+  }, [cardOpen, speechPreparationText, speech.prepare, speech.preferences.lang, speech.preferences.rate]);
 
   const search = async (event?: React.FormEvent, requestedQuery = query) => {
     event?.preventDefault();
@@ -53,7 +64,7 @@ export const WordSearchModule: React.FC = () => {
       const entry = await lookupDictionaryWord(normalized, { signal: controller.signal });
       if (controller.signal.aborted) return;
       if (entry) {
-        const wordId = (entry.lemma || normalized).toLowerCase();
+        const wordId = canonicalLearningWordId(normalized, entry.lemma);
         setResult(toWordCardResult(entry));
         try {
           await recordWordSearchEvidence(wordId, normalized, recordExposure, recordClick);
@@ -72,6 +83,7 @@ export const WordSearchModule: React.FC = () => {
   };
 
   const close = () => {
+    speech.stop();
     abortRef.current?.abort();
     setSearchOpen(false);
     setCardOpen(false);
@@ -131,12 +143,13 @@ export const WordSearchModule: React.FC = () => {
         result={result}
         selectedText={selectedText}
         onClose={close}
-        onSpeak={(text) => window.speechSynthesis?.speak(new SpeechSynthesisUtterance(text))}
+        onSpeak={speech.speak}
         onLookupRelated={(word) => {
           setQuery(word);
           void search(undefined, word);
         }}
       />
+      <SpeechFeedback state={speech.state} onStop={speech.stop} floating />
     </>
   );
 };

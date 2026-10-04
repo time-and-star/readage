@@ -16,6 +16,8 @@ export const TUTOR_TIMEOUT_MS: Partial<Record<TutorRequest['intent'], number>> &
   rate_article: 180_000,
   rewrite_article: 180_000,
   recommend_article: RECOMMENDATION_INTERACTION_BUDGET_MS,
+  reading_verification: 15_000,
+  after_reading: 32_000,
   explain: 60_000,
   discuss: 90_000,
 };
@@ -24,6 +26,8 @@ export const TUTOR_TIMEOUT_MS: Partial<Record<TutorRequest['intent'], number>> &
 export const TUTOR_MAX_RETRIES: Partial<Record<TutorRequest['intent'], number>> & { default: number } = {
   default: 3,
   recommend_article: 0,
+  reading_verification: 0,
+  after_reading: 0,
   translate_article: 3,
   rewrite_article: 3,
 };

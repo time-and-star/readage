@@ -56,20 +56,29 @@ export function applyAppLocalStorage(
 ): { written: number; removed: number } {
   if (!storage) return { written: 0, removed: 0 };
 
-  const toRemove: string[] = [];
-  for (let i = 0; i < storage.length; i += 1) {
-    const key = storage.key(i);
-    if (key && isAppStorageKey(key)) toRemove.push(key);
-  }
-  for (const key of toRemove) storage.removeItem(key);
+  const previous = collectAppLocalStorage(storage);
+  const toRemove = Object.keys(previous);
+  try {
+    for (const key of toRemove) storage.removeItem(key);
 
-  let written = 0;
-  for (const [key, value] of Object.entries(data)) {
-    if (!isAppStorageKey(key) || typeof value !== 'string') continue;
-    storage.setItem(key, value);
-    written += 1;
+    let written = 0;
+    for (const [key, value] of Object.entries(data)) {
+      if (!isAppStorageKey(key) || typeof value !== 'string') continue;
+      storage.setItem(key, value);
+      written += 1;
+    }
+    return { written, removed: toRemove.length };
+  } catch (error) {
+    // Restore the previous namespace when quota or another storage failure
+    // interrupts a replacement halfway through.
+    try {
+      for (const key of Object.keys(collectAppLocalStorage(storage))) storage.removeItem(key);
+      for (const [key, value] of Object.entries(previous)) storage.setItem(key, value);
+    } catch (rollbackError) {
+      throw new Error('学习数据恢复失败，原有数据可能需要从备份文件重新导入。', { cause: rollbackError });
+    }
+    throw error;
   }
-  return { written, removed: toRemove.length };
 }
 
 export function validateLocalDataBackup(raw: unknown): LocalDataBackup {
@@ -240,15 +249,32 @@ export async function importLocalDataBackup(raw: unknown): Promise<{
   hasIndexedDb: boolean;
 }> {
   const backup = validateLocalDataBackup(raw);
-  const ls = applyAppLocalStorage(backup.localStorage);
-  if (backup.indexedDb) {
-    await restoreMemoryIndexedDb(backup.indexedDb);
+  const previousLocalStorage = collectAppLocalStorage();
+  const previousIndexedDb = backup.indexedDb ? await dumpMemoryIndexedDb() : null;
+  if (backup.indexedDb && typeof indexedDB === 'undefined') {
+    throw new Error('当前浏览器不支持 IndexedDB，无法恢复完整备份。');
   }
-  return {
-    localStorageWritten: ls.written,
-    localStorageRemoved: ls.removed,
-    hasIndexedDb: Boolean(backup.indexedDb),
-  };
+  if (backup.indexedDb && !previousIndexedDb) {
+    throw new Error('无法读取当前 IndexedDB，已停止恢复以避免覆盖现有数据。');
+  }
+
+  try {
+    if (backup.indexedDb) await restoreMemoryIndexedDb(backup.indexedDb);
+    const ls = applyAppLocalStorage(backup.localStorage);
+    return {
+      localStorageWritten: ls.written,
+      localStorageRemoved: ls.removed,
+      hasIndexedDb: Boolean(backup.indexedDb),
+    };
+  } catch (error) {
+    // IndexedDB and localStorage are separate transactions. Roll both back so
+    // a failed import never leaves the app with a mixed state.
+    if (previousIndexedDb) {
+      try { await restoreMemoryIndexedDb(previousIndexedDb); } catch { /* preserve original error */ }
+    }
+    try { applyAppLocalStorage(previousLocalStorage); } catch { /* preserve original error */ }
+    throw error;
+  }
 }
 
 export function downloadLocalDataBackup(backup: LocalDataBackup, filename?: string): void {

@@ -1,5 +1,5 @@
 /** Minimal types for the Chrome APIs used by this extension (no runtime dependency). */
-interface ExtensionTab { id?: number; url?: string }
+interface ExtensionTab { id?: number; url?: string; windowId?: number }
 interface ExtensionSender { id?: string; url?: string; tab?: ExtensionTab; frameId?: number }
 declare const chrome: {
   runtime: {
@@ -9,7 +9,7 @@ declare const chrome: {
     onInstalled: { addListener(listener: (details?: { reason?: string }) => void): void };
     onStartup: { addListener(listener: () => void): void };
   };
-  storage: { local: {
+  storage: { onChanged: { addListener(listener: (changes: Record<string, unknown>, areaName: string) => void): void }; local: {
     get(keys?: string | string[] | null): Promise<Record<string, any>>;
     set(items: Record<string, unknown>): Promise<void>;
     remove(keys: string | string[]): Promise<void>;
@@ -23,14 +23,16 @@ declare const chrome: {
   tabs: {
     query(options: { active?: boolean; currentWindow?: boolean; url?: string }): Promise<ExtensionTab[]>;
     create(options: { url: string }): Promise<ExtensionTab>;
+    update(tabId: number, options: { active: boolean }): Promise<ExtensionTab>;
     sendMessage<T = any>(tabId: number, message: unknown, options?: { frameId: number }): Promise<T>;
   };
   scripting: {
-    getRegisteredContentScripts(): Promise<Array<{ id: string; matches?: string[] }>>;
+    getRegisteredContentScripts(): Promise<Array<{ id: string; matches?: string[]; js?: string[]; runAt?: 'document_idle'; allFrames?: boolean }>>;
     unregisterContentScripts(options: { ids: string[] }): Promise<void>;
     registerContentScripts(scripts: Array<{ id: string; matches: string[]; js: string[]; runAt: 'document_idle'; allFrames: false }>): Promise<void>;
     executeScript(options: { target: { tabId: number }; files: string[] }): Promise<unknown>;
   };
+  windows: { update(windowId: number, options: { focused: boolean }): Promise<unknown> };
   alarms: { create(name: string, options: { periodInMinutes: number }): Promise<void>;
     onAlarm: { addListener(listener: () => void): void } };
 };

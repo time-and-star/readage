@@ -8,7 +8,7 @@ import { withMemoryWriteLock } from '../browserExtension/memoryLock';
 import { LocalStorageMemoryStorage } from './localStorageImpl';
 import { createPreferredMemoryStorage } from './indexedDbImpl';
 import type { MemoryStorage } from './storage';
-import type { MemoryExposureSignals, RawWordEvent } from './types';
+import type { MemoryExposureSignals, RawWordEvent, ReadingVerificationInput } from './types';
 import {
   getLocalDateInTimeZone,
   getSystemTimeZone,
@@ -51,6 +51,22 @@ function isQuotaError(error: unknown): boolean {
 }
 
 export class MemoryV2Store {
+  async recordVerification(input: ReadingVerificationInput): Promise<void> {
+    await this.ensureReady();
+    try {
+      await withMemoryWriteLock(() => this.system.recordVerification(this.userId, input, this.now()));
+      this.storageError = null;
+      this.bumpVersion();
+      if (typeof BroadcastChannel !== 'undefined') {
+        const channel = new BroadcastChannel('readage-memory-changed');
+        channel.postMessage('changed');
+        channel.close();
+      }
+    } catch (error) {
+      if (isQuotaError(error)) { this.storageError = '学习记录存储空间不足，确认结果暂未保存。'; this.bumpVersion(); }
+      throw error;
+    }
+  }
   async importExtensionLookups(events: unknown): Promise<string[]> {
     await this.ensureReady();
     const ids = await withMemoryWriteLock(() => this.system.importExtensionLookups(this.userId, events, this.timezone, this.now()));
@@ -86,9 +102,9 @@ export class MemoryV2Store {
   constructor(options: MemoryStoreOptions = {}) {
     const storage = options.storage ?? new LocalStorageMemoryStorage();
     this.injectedStorage = Boolean(options.storage);
-    this.system = new MemorySystemV2(storage);
     this.userId = options.userId ?? DEFAULT_USER_ID;
     this.timezone = options.timezone ?? getSystemTimeZone();
+    this.system = new MemorySystemV2(storage, undefined, this.timezone);
     this.now = options.now ?? (() => new Date());
     this.lastSeenLocalDate = getLocalDateInTimeZone(this.now(), this.timezone);
   }
@@ -135,7 +151,7 @@ export class MemoryV2Store {
         if (!this.injectedStorage) {
           try {
             const preferred = await withMemoryWriteLock(() => createPreferredMemoryStorage());
-            this.system = new MemorySystemV2(preferred);
+            this.system = new MemorySystemV2(preferred, undefined, this.timezone);
           } catch (error) {
             console.warn(
               'Preferred memory storage init failed; keeping constructor storage.',
@@ -222,20 +238,28 @@ export class MemoryV2Store {
     return getLocalDateInTimeZone(now, this.timezone);
   }
 
+  async seedCanonicalWordMemory(canonicalWordId: string, legacyWordIds: readonly string[]): Promise<void> {
+    await this.ensureReady();
+    await withMemoryWriteLock(() => this.system.seedCanonicalWordMemory(this.userId, canonicalWordId, legacyWordIds));
+  }
+
   async recordExposure(
     wordId: string,
     articleId: string,
     occurrenceId: string,
     signals: MemoryExposureSignals = {},
   ): Promise<void> {
+    const now = this.now();
+    const exposureAt = signals.exposureOccurredAt && Number.isFinite(Date.parse(signals.exposureOccurredAt))
+      ? new Date(signals.exposureOccurredAt) : now;
     await this.recordEvent({
       userId: this.userId,
       wordId,
       articleId,
       occurrenceId,
       eventType: 'exposure',
-      occurredAt: this.now().toISOString(),
-      localDate: this.getLocalDate(),
+      occurredAt: exposureAt.toISOString(),
+      localDate: this.getLocalDate(exposureAt),
       ...signals,
     });
   }
@@ -265,18 +289,22 @@ export class MemoryV2Store {
     } & MemoryExposureSignals>
   ): Promise<void> {
     if (items.length === 0) return;
-    const localDate = this.getLocalDate();
-    const occurredAt = this.now().toISOString();
-    const events: RawWordEvent[] = items.map((item) => ({
-      userId: this.userId,
-      wordId: item.wordId,
-      articleId: item.articleId,
-      occurrenceId: item.occurrenceId,
-      eventType: 'exposure' as const,
-      occurredAt,
-      localDate,
-      ...item,
-    }));
+    await this.ensureReady();
+    const now = this.now();
+    const events: RawWordEvent[] = items.map((item) => {
+      const exposureAt = item.exposureOccurredAt && Number.isFinite(Date.parse(item.exposureOccurredAt))
+        ? new Date(item.exposureOccurredAt) : now;
+      return {
+        userId: this.userId,
+        wordId: item.wordId,
+        articleId: item.articleId,
+        occurrenceId: item.occurrenceId,
+        eventType: 'exposure' as const,
+        ...item,
+        occurredAt: exposureAt.toISOString(),
+        localDate: this.getLocalDate(exposureAt),
+      };
+    });
 
     try {
       await withMemoryWriteLock(() => this.system.recordBatchEvents(events));
@@ -292,6 +320,7 @@ export class MemoryV2Store {
   }
 
   private async recordEvent(event: RawWordEvent): Promise<void> {
+    await this.ensureReady();
     try {
       await withMemoryWriteLock(() => this.system.recordEvent(event));
       this.storageError = null;

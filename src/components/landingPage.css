@@ -13,7 +13,7 @@
     radial-gradient(circle at 14% 18%, rgba(55, 104, 133, 0.2), transparent 34%),
     linear-gradient(180deg, #06111e 0%, #0a1b2a 52%, #12354a 100%);
   color: var(--landing-paper);
-  font-family: "Arial Narrow", "Aptos Narrow", "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-sans);
 }
 
 .readage-landing,
@@ -114,11 +114,11 @@
 .readage-landing__eyebrow {
   margin: 0 0 clamp(18px, 2.7vh, 30px);
   color: rgba(214, 234, 239, 0.82);
-  font-size: clamp(10px, 0.82vw, 14px);
-  font-weight: 700;
-  letter-spacing: 0.62em;
+  font-size: clamp(11px, 0.82vw, 14px);
+  font-weight: 500;
+  letter-spacing: 0.28em;
   line-height: 1.5;
-  text-indent: 0.62em;
+  text-indent: 0.28em;
   text-transform: uppercase;
 }
 
@@ -128,6 +128,7 @@
   align-items: baseline;
   justify-content: center;
   color: var(--landing-paper);
+  font-family: "Arial Narrow", "Aptos Narrow", "Helvetica Neue", Arial, sans-serif;
   font-size: clamp(86px, 16.5vw, 276px);
   font-stretch: condensed;
   font-weight: 800;
@@ -135,6 +136,17 @@
   line-height: 0.72;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.readage-landing__description {
+  max-width: 36ch;
+  margin: clamp(24px, 3vh, 36px) auto 0;
+  color: rgba(225, 234, 235, 0.78);
+  font-size: clamp(14px, 1.05vw, 17px);
+  font-weight: 400;
+  letter-spacing: 0.015em;
+  line-height: 1.7;
+  text-wrap: balance;
 }
 
 .readage-landing__title-solid {
@@ -293,7 +305,9 @@
   width: clamp(82px, 7.4vw, 116px);
   height: clamp(82px, 7.4vw, 116px);
   padding: 0;
-  place-items: center;
+  place-content: center;
+  justify-items: center;
+  gap: 7px;
   border: 1px solid rgba(7, 19, 31, 0.38);
   border-radius: 50%;
   background: rgba(7, 19, 31, 0.94);
@@ -303,11 +317,9 @@
   color: var(--landing-paper);
   cursor: pointer;
   font: inherit;
-  font-size: clamp(10px, 0.75vw, 13px);
-  font-weight: 700;
-  letter-spacing: 0.28em;
-  text-indent: 0.28em;
-  text-transform: uppercase;
+  font-size: clamp(11px, 0.85vw, 13px);
+  font-weight: 500;
+  letter-spacing: 0.02em;
   transition:
     background 220ms ease,
     color 220ms ease,
@@ -367,8 +379,10 @@
   }
 
   .readage-landing__eyebrow {
-    letter-spacing: 0.34em;
-    text-indent: 0.34em;
+    max-width: 36ch;
+    margin-inline: auto;
+    letter-spacing: 0.2em;
+    text-indent: 0.2em;
   }
 
   .readage-landing__title {

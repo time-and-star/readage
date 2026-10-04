@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { ChevronRight, Volume2, X } from 'lucide-react';
+import { getCompactWordCard } from '../lib/compactWordCard';
 import { WordCardPanel, type WordCardPanelProps } from './WordCardPanel';
 
 export interface LookupAnchor { left: number; bottom: number; top: number }
@@ -31,30 +33,78 @@ export function ReadingLookupCard(props: Props) {
   }, [open, expanded, onClose]);
   useLayoutEffect(() => {
     if (!open || expanded) return;
-    const rect = card.current?.getBoundingClientRect();
-    const height = rect?.height ?? 180;
-    const left = Math.max(12, Math.min(anchor?.left ?? 12, window.innerWidth - (rect?.width ?? 340) - 12));
-    const below = (anchor?.bottom ?? 90) + 8;
-    const top = below + height <= window.innerHeight - 12 ? below : Math.max(12, (anchor?.top ?? 200) - height - 8);
-    setPosition({ left, top });
+    const element = card.current;
+    const updatePosition = () => {
+      const rect = element?.getBoundingClientRect();
+      const height = rect?.height ?? 220;
+      const viewportWidth = document.documentElement.clientWidth;
+      const left = Math.max(12, Math.min(anchor?.left ?? 12, viewportWidth - (rect?.width ?? 320) - 12));
+      const below = (anchor?.bottom ?? 90) + 8;
+      const preferredTop = below + height <= window.innerHeight - 12
+        ? below : (anchor?.top ?? 200) - height - 8;
+      const top = Math.max(12, Math.min(preferredTop, window.innerHeight - height - 12));
+      setPosition(previous => previous.left === left && previous.top === top ? previous : { left, top });
+    };
+    updatePosition();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updatePosition);
+    if (element) observer?.observe(element);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updatePosition);
+    };
   }, [open, expanded, anchor, result, loading, error, props.recordStatus]);
   if (!open) return null;
   if (expanded) return <WordCardPanel {...props} />;
+  const preview = result ? getCompactWordCard(result, selectedText) : null;
+  const recordLabel = props.recordStatus === '学习记录已保存' ? '已保存' : props.recordStatus;
   return createPortal(
-    <div ref={card} role="dialog" aria-label="简明释义" className="reading-lookup-card" style={position}>
-      <div className="flex items-start justify-between gap-3">
-        <strong className="text-lg break-words">{result?.wordOrPhrase || selectedText}</strong>
-        <button aria-label="关闭释义" onClick={onClose} className="shrink-0 px-2 py-1">×</button>
-      </div>
-      {loading ? <p role="status">正在查询…</p> : error ? <div role="alert"><p>{error}</p><button onClick={onRetry} className="mt-2 underline">重试</button></div> : result && <>
-        <div className="flex items-center gap-3 text-xs text-stone-600 mt-1">
-          <span>{result.type} {result.phonetic}</span>
-          <button onClick={() => props.onSpeak(result.wordOrPhrase)} aria-label="播放发音" className="underline">发音</button>
+    <div ref={card} role="dialog" aria-label="简明释义" aria-busy={loading} className="reading-lookup-card" style={position}>
+      <header className="reading-lookup-card__header">
+        <h3 className="reading-lookup-card__word">{preview?.word || selectedText}</h3>
+        <button type="button" aria-label="关闭释义" onClick={onClose} className="reading-lookup-card__close">
+          <X size={14} strokeWidth={1.5} aria-hidden="true" />
+        </button>
+      </header>
+      {loading ? (
+        <p className="reading-lookup-card__message" role="status">正在查询…</p>
+      ) : error ? (
+        <div className="reading-lookup-card__error" role="alert">
+          <p className="reading-lookup-card__message">{error}</p>
+          <button type="button" onClick={onRetry} className="reading-lookup-card__text-action">重试查询</button>
         </div>
-        <p className="mt-3 leading-relaxed">{result.chineseTranslation || result.definitionChinese || result.definition}</p>
-        <button className="mt-3 text-xs underline" onClick={() => setExpanded(true)}>展开完整解释</button>
-        {props.recordStatus && <p role="status" className="mt-2 text-xs text-stone-600">{props.recordStatus}</p>}
-        {props.onRetryRecord && <button className="mt-2 text-xs underline" onClick={props.onRetryRecord}>重试保存记录</button>}
+      ) : preview && <>
+        <div className="reading-lookup-card__meta">
+          {preview.phonetic && <span className="reading-lookup-card__phonetic">{preview.phonetic}</span>}
+          {preview.restoredFrom && <span>由 <span lang="en">{preview.restoredFrom}</span> 还原</span>}
+          <button type="button" onClick={() => props.onSpeak(preview.word)} aria-label="播放发音" title="播放发音" className="reading-lookup-card__speak">
+            <Volume2 size={13} strokeWidth={1.5} aria-hidden="true" />
+          </button>
+        </div>
+        {(preview.meaningZh || (preview.partOfSpeech && !preview.definitionEn)) && (
+          <div className="reading-lookup-card__meaning">
+            {preview.partOfSpeech && <span className="reading-lookup-card__pos" lang="en">{preview.partOfSpeech}</span>}
+            {preview.meaningZh && <p className="reading-lookup-card__chinese">{preview.meaningZh}</p>}
+          </div>
+        )}
+        {preview.definitionEn && (preview.meaningZh ? (
+          <p className="reading-lookup-card__english" lang="en">{preview.definitionEn}</p>
+        ) : (
+          <div className="reading-lookup-card__meaning">
+            {preview.partOfSpeech && <span className="reading-lookup-card__pos" lang="en">{preview.partOfSpeech}</span>}
+            <p className="reading-lookup-card__english reading-lookup-card__english--only" lang="en">{preview.definitionEn}</p>
+          </div>
+        ))}
+        <button type="button" className="reading-lookup-card__more" aria-label="展开完整解释" onClick={() => setExpanded(true)}>
+          <ChevronRight size={10} aria-hidden="true" />
+          更多
+        </button>
+        {(recordLabel || props.onRetryRecord) && (
+          <footer className="reading-lookup-card__footer" data-pending={props.onRetryRecord ? 'true' : undefined}>
+            {recordLabel && <p role="status"><span className="reading-lookup-card__status-dot" aria-hidden="true" />{recordLabel}</p>}
+            {props.onRetryRecord && <button type="button" className="reading-lookup-card__text-action" onClick={props.onRetryRecord}>重试保存</button>}
+          </footer>
+        )}
       </>}
     </div>, document.body,
   );

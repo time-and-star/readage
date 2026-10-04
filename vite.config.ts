@@ -2,6 +2,7 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
+import { VITE_WATCH_IGNORED } from './src/viteWatchConfig';
 
 export default defineConfig(() => {
   return {
@@ -22,13 +23,7 @@ export default defineConfig(() => {
         process.env.DISABLE_HMR === 'true'
           ? null
           : {
-              ignored: [
-                '**/recommendation-simulation/**',
-                '**/tmp/**',
-                '**/tmp-*.out',
-                '**/tmp-*.err',
-                '**/data/**',
-              ],
+              ignored: [...VITE_WATCH_IGNORED],
             },
     },
   };

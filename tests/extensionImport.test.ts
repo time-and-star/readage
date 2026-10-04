@@ -2,6 +2,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { LocalStorageMemoryStorage } from '../src/lib/memoryV2/localStorageImpl';
 import { MemorySystemV2 } from '../src/lib/memoryV2/memorySystem';
+import { initializeWordMemory } from '../src/lib/memoryV2/fsrsIntegration';
 import { importLookupEvents, readExternalLearningActivity } from '../src/lib/browserExtension/importer';
 import { getLearningActivityDateKeys, countRecentLearningEvents } from '../src/lib/learningAnalytics';
 import type { LookupEvent } from '../src/lib/browserExtension/protocol';
@@ -15,6 +16,13 @@ class BrowserStorage implements Storage {
   getItem(key: string) { return this.data.get(key) ?? null; }
   setItem(key: string, value: string) { this.data.set(key, value); }
   removeItem(key: string) { this.data.delete(key); }
+}
+class FailingIndexStorage extends BrowserStorage {
+  failIndexWrites = false;
+  setItem(key: string, value: string) {
+    if (this.failIndexWrites && key.includes('-index:')) throw new Error('index unavailable');
+    super.setItem(key, value);
+  }
 }
 function setup() {
   const localStorage = new BrowserStorage();
@@ -85,7 +93,77 @@ test('lookup retains its captured local day when the application timezone differ
   const event = { ...lookup('2026-09-01'), occurredAt: '2026-09-01T23:30:00.000Z' };
   await importLookupEvents(storage, 'u', [event], 'America/Los_Angeles', now);
   assert.equal((await storage.getDailyEvidence('u', 'run', '2026-09-02'))?.clickedOccurrenceCount, 1);
-  assert.equal((await storage.getMemoryState('u', 'run'))?.lastReview, '2026-09-02T15:59:59.999Z');
+  assert.equal((await storage.getMemoryState('u', 'run'))?.lastReview, event.occurredAt);
+});
+
+test('localStorage indexes preserve word ids containing colons', async () => {
+  const { storage } = setup();
+  const wordId = 'run:phrasal';
+  const event: RawWordEvent = {
+    userId: 'u', wordId, articleId: 'article', occurrenceId: 'occurrence',
+    eventType: 'exposure', occurredAt: '2026-09-01T12:00:00.000Z', localDate: '2026-09-01',
+  };
+  const system = new MemorySystemV2(storage);
+  await system.recordEvent(event);
+  assert.equal((await storage.getRawEventsByDateRange('u', wordId, '2026-09-01', '2026-09-01')).length, 1);
+  assert.equal((await storage.getUnfinalizedDailyEvidence('u')).length, 1);
+  assert.equal((await storage.getUnfinalizedDailyEvidenceByDate('u', '2026-09-01')).length, 1);
+});
+
+test('repairs an index after the record write succeeds and retry does not duplicate raw events', async () => {
+  const localStorage = new FailingIndexStorage();
+  Object.defineProperty(globalThis, 'window', { value: { localStorage }, configurable: true });
+  const storage = new LocalStorageMemoryStorage();
+  const event: RawWordEvent = {
+    userId: 'u', wordId: 'recover', articleId: 'article', occurrenceId: 'occurrence',
+    eventType: 'exposure', occurredAt: '2026-09-01T12:00:00.000Z', localDate: '2026-09-01',
+  };
+
+  localStorage.failIndexWrites = true;
+  await assert.rejects(storage.saveRawEvent(event), /index unavailable/);
+  localStorage.failIndexWrites = false;
+  assert.equal((await storage.getRawEventsByDateRange('u', 'recover', '2026-09-01', '2026-09-01')).length, 1);
+
+  await storage.saveRawEvent(event);
+  assert.equal((await storage.getRawEventsByDateRange('u', 'recover', '2026-09-01', '2026-09-01')).length, 1);
+});
+
+test('repairs a daily evidence index after its data write succeeds', async () => {
+  const localStorage = new FailingIndexStorage();
+  Object.defineProperty(globalThis, 'window', { value: { localStorage }, configurable: true });
+  const storage = new LocalStorageMemoryStorage();
+  const evidence = {
+    userId: 'u', wordId: 'recover', localDate: '2026-09-01', articleEvidence: [], articleCount: 0,
+    validExposureCount: 0, clickedOccurrenceCount: 1, pendingGrade: 'Again' as const, finalizedAt: null,
+  };
+
+  localStorage.failIndexWrites = true;
+  await assert.rejects(storage.saveDailyEvidence(evidence), /index unavailable/);
+  localStorage.failIndexWrites = false;
+  assert.equal((await storage.getUnfinalizedDailyEvidence('u')).length, 1);
+});
+
+test('repairs article, state, and finalization indexes after partial writes', async () => {
+  const localStorage = new FailingIndexStorage();
+  Object.defineProperty(globalThis, 'window', { value: { localStorage }, configurable: true });
+  const storage = new LocalStorageMemoryStorage();
+  const article = {
+    userId: 'u', wordId: 'recover', articleId: 'article:with-colon', localDate: '2026-09-01',
+    validExposureCount: 1, clickedOccurrenceCount: 0,
+    firstSeenAt: '2026-09-01T12:00:00.000Z', lastSeenAt: '2026-09-01T12:00:00.000Z',
+  };
+  const state = initializeWordMemory('u', 'recover:state');
+  const task = { userId: 'u', localDate: '2026-09-01', wordIds: ['recover:state'], createdAt: now.toISOString() };
+
+  localStorage.failIndexWrites = true;
+  await assert.rejects(storage.saveArticleEvidence(article), /index unavailable/);
+  await assert.rejects(storage.saveMemoryState(state), /index unavailable/);
+  await assert.rejects(storage.createFinalizationTask(task), /index unavailable/);
+  localStorage.failIndexWrites = false;
+
+  assert.deepEqual(await storage.getArticleEvidencesByDate('u', 'recover', '2026-09-01'), [article]);
+  assert.deepEqual(JSON.parse(JSON.stringify(await storage.getAllMemoryStates('u'))), JSON.parse(JSON.stringify([state])));
+  assert.deepEqual(await storage.getPendingFinalizationTasks('u'), [task]);
 });
 
 test('replayed lookup history matches the existing engine receiving events on each learning day', async () => {

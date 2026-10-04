@@ -39,6 +39,23 @@ export const FSRS_PARAMETERS = generatorParameters({
 const scheduler = fsrs(FSRS_PARAMETERS);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Use the same FSRS-6 curve and weights as review scheduling. */
+export function calculateFsrsForgettingCurve(elapsedDays: number, stabilityDays: number): number {
+  if (!Number.isFinite(elapsedDays) || !Number.isFinite(stabilityDays) || stabilityDays <= 0) return 0;
+  if (elapsedDays <= 0) return 1;
+  const retention = scheduler.forgetting_curve(elapsedDays, stabilityDays);
+  return Number.isFinite(retention) ? Math.min(1, Math.max(0, retention)) : 0;
+}
+
+/** Run the canonical app-wide FSRS scheduler. */
+export function scheduleFsrsReview(
+  card: Card,
+  at: Date,
+  rating: Grade,
+): { card: Card; log: ReviewLog } {
+  return scheduler.next(card, at, rating);
+}
+
 function finite(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -129,7 +146,7 @@ export function reviewFsrsMemory(
     throw new RangeError('Cannot review FSRS memory earlier than the previous review');
   }
 
-  const result = scheduler.next(toCard(memory), at, rating);
+  const result = scheduleFsrsReview(toCard(memory), at, rating);
   return {
     ...memoryMetadata(),
     historyStartReps: memory.historyStartReps,

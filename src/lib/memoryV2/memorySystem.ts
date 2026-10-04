@@ -10,6 +10,7 @@ import {
   WordMemoryState,
   MemoryScoreParams,
   DEFAULT_MS_PARAMS,
+  type ReadingVerificationInput,
 } from './types';
 import { MemoryStorage } from './storage';
 import {
@@ -23,6 +24,7 @@ import {
   finalizeDailyEvidence,
   batchFinalizeDailyEvidence,
   getPendingFinalizationDates,
+  hasSufficientPassiveRecallEvidence,
 } from './fsrsIntegration';
 import {
   calculateMemoryScore,
@@ -31,9 +33,12 @@ import {
   scoreToLevelWithHysteresis,
 } from './memoryScore';
 import { prepareRmeEvent, projectRmeProfile, rmeProfileForState } from './rmeV4Bridge';
-import { stageFromConfidence } from '../memoryV4';
-import { appendJournalEvents, importLookupEvents, refreshUserJournals, readExternalLearningActivity } from '../browserExtension/importer';
-import { getSystemTimeZone } from './dateUtils';
+import { updateExposureQuality } from '../memoryV4';
+import { stageFromConfidence, classifyExposure } from '../memoryV4';
+import { appendJournalEvents, importLookupEvents, refreshUserJournals, refreshWordJournal, readExternalLearningActivity } from '../browserExtension/importer';
+import { getLocalDateInTimeZone, getSystemTimeZone } from './dateUtils';
+import { mergeExposureSnapshot } from './rawEventPersistence';
+import { readVerificationHistory, saveVerificationAttempt, replayVerificationEvidence } from './verificationMemory';
 
 export interface WordProficiencyView {
   wordId: string;
@@ -62,6 +67,41 @@ export interface WordProficiencyStats {
 
 export const DEFAULT_REVIEW_QUEUE_LIMIT = 5;
 
+function applyPersistedClickQuality(
+  state: WordMemoryState | null,
+  events: RawWordEvent[],
+): WordMemoryState | null {
+  if (!state?.rme) return state;
+  const clicked = events.filter((event) => event.eventType === 'click');
+  if (clicked.length === 0) return state;
+  let profile = rmeProfileForState(state);
+  for (const event of clicked) {
+    const exposure = profile.exposureHistory.filter(item =>
+      item.occurrenceId === event.occurrenceId && Date.parse(item.occurredAt) <= Date.parse(event.occurredAt))
+      .sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt))[0];
+    if (exposure) profile = updateExposureQuality(profile, event.occurrenceId, 0, exposure.localDate);
+  }
+  const latestEventAt = events.reduce((latest, event) => {
+    const timestamp = new Date(event.occurredAt).getTime();
+    return Number.isFinite(timestamp) && timestamp > latest ? timestamp : latest;
+  }, Number.NEGATIVE_INFINITY);
+  const projectionTime = Number.isFinite(latestEventAt) ? new Date(latestEventAt) : new Date();
+  return { ...state, rme: projectRmeProfile(profile, state, projectionTime) };
+}
+
+/** Raw events of settled days are pruned; partial late writes cannot erase known evidence. */
+function preserveHistoricalArticleEvidence(prior: ArticleWordEvidence | undefined, current: ArticleWordEvidence): ArticleWordEvidence {
+  if (!prior) return current;
+  return { ...current,
+    validExposureCount: Math.max(prior.validExposureCount, current.validExposureCount),
+    clickedOccurrenceCount: Math.max(prior.clickedOccurrenceCount, current.clickedOccurrenceCount),
+    firstSeenAt: [prior.firstSeenAt, current.firstSeenAt].sort()[0],
+    lastSeenAt: [prior.lastSeenAt, current.lastSeenAt].sort().at(-1)!,
+    ...(current.averageRmeQuality === undefined && prior.averageRmeQuality !== undefined
+      ? { averageRmeQuality: prior.averageRmeQuality } : {}),
+  };
+}
+
 function addRmeProjection(
   state: WordMemoryState,
   view: WordProficiencyView,
@@ -77,24 +117,66 @@ function addRmeProjection(
 }
 
 export class MemorySystemV2 {
+  getVerificationHistory(userId: string) { return readVerificationHistory(this.storage, userId); }
+  getReadingVerificationMemoryStates(userId: string) { return this.storage.getAllMemoryStates(userId); }
+
+  async recordVerification(userId: string, input: ReadingVerificationInput, now = new Date()): Promise<void> {
+    await saveVerificationAttempt(this.storage, userId, input, this.timezone, now);
+    if (input.purpose === 'immediate_practice') return;
+    if (!await refreshWordJournal(this.storage, userId, input.wordId, this.timezone, now)) {
+      await this.refreshVerificationWord(userId, input.wordId, now);
+    }
+  }
+
+  private async refreshVerificationWord(userId: string, wordId: string, now = new Date()): Promise<void> {
+    const attempts = (await readVerificationHistory(this.storage, userId)).filter(attempt => attempt.wordId === wordId);
+    if (!attempts.length) return;
+    const state = await this.storage.getMemoryState(userId, wordId);
+    const days = this.storage.getWordDailyEvidence ? await this.storage.getWordDailyEvidence(userId, wordId)
+      : (await Promise.all([...new Set(attempts.map(attempt => attempt.localDate))]
+        .map(date => this.storage.getDailyEvidence(userId, wordId, date)))).filter((day): day is DailyWordEvidence => Boolean(day));
+    const updated = replayVerificationEvidence(state, attempts, this.timezone, days, now);
+    if (updated && updated !== state) await this.storage.saveMemoryState(updated);
+  }
+
   getExternalLearningActivity(userId: string) { return readExternalLearningActivity(this.storage, userId); }
   async importExtensionLookups(userId: string, events: unknown, timezone: string, now = new Date()): Promise<string[]> {
     return importLookupEvents(this.storage, userId, events, timezone, now);
   }
   constructor(
     private storage: MemoryStorage,
-    private params: MemoryScoreParams = DEFAULT_MS_PARAMS
+    private params: MemoryScoreParams = DEFAULT_MS_PARAMS,
+    private timezone: string = getSystemTimeZone(),
   ) {}
+
+  /** Preserve one known legacy baseline when a word first adopts its canonical ID. */
+  async seedCanonicalWordMemory(userId: string, canonicalWordId: string, legacyWordIds: readonly string[]): Promise<void> {
+    if (await this.storage.getMemoryState(userId, canonicalWordId)) return;
+    const aliases = [...new Set(legacyWordIds)].filter(id => id !== canonicalWordId);
+    if (!aliases.length) return;
+    const candidates = [...(await this.storage.getBatchMemoryStates(userId, aliases)).values()];
+    const lastKnownAt = (state: WordMemoryState) => Math.max(0,
+      Date.parse(state.lastReview ?? '') || 0, Date.parse(state.rme?.lastExposureAt ?? '') || 0);
+    candidates.sort((left, right) => (Date.parse(right.lastReview ?? '') || 0) - (Date.parse(left.lastReview ?? '') || 0)
+      || lastKnownAt(right) - lastKnownAt(left)
+      || left.wordId.localeCompare(right.wordId));
+    const baseline = candidates[0];
+    if (baseline) await this.storage.saveMemoryState({ ...baseline, wordId: canonicalWordId });
+  }
 
   /**
    * 记录原始事件
    * 实时更新文章级和每日级词据
    */
   async recordEvent(event: RawWordEvent): Promise<void> {
-    if (await appendJournalEvents(this.storage, [event], getSystemTimeZone(), new Date())) return;
+    if (await appendJournalEvents(this.storage, [event], this.timezone, new Date())) return;
     const { userId, wordId, articleId, localDate } = event;
     const currentState = await this.storage.getMemoryState(userId, wordId);
-    const prepared = prepareRmeEvent(currentState, event);
+    const previousRaw = (await this.storage.getRawEventsByDate(userId, wordId, localDate))
+      .find(prior => prior.occurrenceId === event.occurrenceId
+        && prior.eventType === event.eventType && prior.occurredAt === event.occurredAt);
+    const prepared = prepareRmeEvent(currentState,
+      previousRaw ? mergeExposureSnapshot(previousRaw, event) ?? event : event, this.timezone);
     const normalizedEvent = prepared.event;
 
     // 1. 保存原始事件
@@ -104,8 +186,17 @@ export class MemorySystemV2 {
     const articleEvents = await this.storage.getRawEventsByDate(userId, wordId, localDate);
     const articleSpecificEvents = articleEvents.filter((e) => e.articleId === articleId);
 
+    const correctedState = applyPersistedClickQuality(prepared.state ?? currentState, articleEvents);
+    if (correctedState && correctedState !== prepared.state) await this.storage.saveMemoryState(correctedState);
+
     // 3. 聚合文章级词据
-    const articleEvidence = aggregateArticleEvidence(articleSpecificEvents);
+    let dailyEvidence = await this.storage.getDailyEvidence(userId, wordId, localDate);
+    const hasHistoricalReview = Boolean(dailyEvidence?.finalizedAt)
+      || Boolean(currentState?.fsrsReviews.some(review => getLocalDateInTimeZone(new Date(review.review), this.timezone) === localDate));
+    const aggregated = aggregateArticleEvidence(articleSpecificEvents);
+    const articleEvidence = aggregated && hasHistoricalReview
+      ? preserveHistoricalArticleEvidence(dailyEvidence?.articleEvidence.find(row => row.articleId === articleId), aggregated)
+      : aggregated;
     if (articleEvidence) {
       await this.storage.saveArticleEvidence(articleEvidence);
     }
@@ -118,8 +209,6 @@ export class MemorySystemV2 {
     );
 
     // 5. 聚合或更新每日词据
-    let dailyEvidence = await this.storage.getDailyEvidence(userId, wordId, localDate);
-
     if (!dailyEvidence) {
       // 首次创建
       dailyEvidence = aggregateDailyEvidence(allArticleEvidences);
@@ -132,9 +221,8 @@ export class MemorySystemV2 {
       await this.storage.saveDailyEvidence(dailyEvidence);
     }
 
-    if (prepared.state) {
-      await this.storage.saveMemoryState(prepared.state);
-    }
+    if (correctedState) await this.storage.saveMemoryState(correctedState);
+    await this.refreshVerificationWord(userId, wordId);
   }
 
   /**
@@ -150,7 +238,7 @@ export class MemorySystemV2 {
     }
     const remaining: RawWordEvent[] = [];
     for (const group of groups.values()) {
-      if (!await appendJournalEvents(this.storage, group, getSystemTimeZone(), new Date())) remaining.push(...group);
+      if (!await appendJournalEvents(this.storage, group, this.timezone, new Date())) remaining.push(...group);
     }
     events = remaining;
     if (!events.length) return;
@@ -162,7 +250,13 @@ export class MemorySystemV2 {
       const current = preparedStates.has(key)
         ? preparedStates.get(key) || null
         : await this.storage.getMemoryState(event.userId, event.wordId);
-      const prepared = prepareRmeEvent(current, event);
+      const sameEncounter = (prior: RawWordEvent) => prior.occurrenceId === event.occurrenceId
+        && prior.eventType === event.eventType && prior.occurredAt === event.occurredAt;
+      const previousRaw = preparedEvents.filter(prior => prior.userId === event.userId
+        && prior.wordId === event.wordId).reverse().find(sameEncounter)
+        ?? (await this.storage.getRawEventsByDate(event.userId, event.wordId, event.localDate)).find(sameEncounter);
+      const prepared = prepareRmeEvent(current,
+        previousRaw ? mergeExposureSnapshot(previousRaw, event) ?? event : event, this.timezone);
       preparedEvents.push(prepared.event);
       preparedStates.set(key, prepared.state);
     }
@@ -170,8 +264,16 @@ export class MemorySystemV2 {
     // 1. Persist the raw batch before rebuilding derived evidence.
     await this.storage.saveRawEvents(preparedEvents);
 
-    for (const state of preparedStates.values()) {
-      if (state) await this.storage.saveMemoryState(state);
+    for (const [key, state] of preparedStates.entries()) {
+      if (!state) continue;
+      const relevantEvents = preparedEvents.filter((event) =>
+        event.userId === state?.userId && event.wordId === state?.wordId
+      );
+      const persistedEvents = (await Promise.all([...new Set(relevantEvents.map(event => event.localDate))]
+        .map(date => this.storage.getRawEventsByDate(state.userId, state.wordId, date)))).flat();
+      const corrected = applyPersistedClickQuality(state, persistedEvents);
+      preparedStates.set(key, corrected);
+      if (corrected) await this.storage.saveMemoryState(corrected);
     }
 
     // 2. Collect each affected user + word + date combination.
@@ -188,8 +290,19 @@ export class MemorySystemV2 {
         event.wordId,
         event.localDate
       );
-      const dailyEvidence = batchAggregateDailyEvidence(persistedEvents).get(event.wordId);
+      let dailyEvidence = batchAggregateDailyEvidence(persistedEvents).get(event.wordId);
       if (!dailyEvidence) continue;
+
+      const previousDaily = await this.storage.getDailyEvidence(event.userId, event.wordId, event.localDate);
+      const currentState = preparedStates.get(`${event.userId}:${event.wordId}`);
+      const hasHistoricalReview = Boolean(previousDaily?.finalizedAt)
+        || Boolean(currentState?.fsrsReviews.some(review => getLocalDateInTimeZone(new Date(review.review), this.timezone) === event.localDate));
+      if (hasHistoricalReview && previousDaily) {
+        const articles = new Map(previousDaily.articleEvidence.map(row => [row.articleId, row]));
+        for (const row of dailyEvidence.articleEvidence) articles.set(row.articleId,
+          preserveHistoricalArticleEvidence(articles.get(row.articleId), row));
+        dailyEvidence = aggregateDailyEvidence([...articles.values()])!;
+      }
 
       // 4. Persist the complete daily and per-article evidence.
       await this.storage.saveDailyEvidence(dailyEvidence);
@@ -197,6 +310,7 @@ export class MemorySystemV2 {
         await this.storage.saveArticleEvidence(articleEvidence);
       }
     }
+    for (const group of groups.values()) await this.refreshVerificationWord(group[0].userId, group[0].wordId);
   }
 
   /**
@@ -206,6 +320,8 @@ export class MemorySystemV2 {
   async finalizeHistoricalDates(userId: string, userTimezone: string): Promise<void> {
     // Also recovers an interrupted import, even when some days were already marked finalized.
     await refreshUserJournals(this.storage, userId, userTimezone, new Date());
+    const verificationWords = [...new Set((await readVerificationHistory(this.storage, userId)).map(attempt => attempt.wordId))];
+    for (const wordId of verificationWords) await this.refreshVerificationWord(userId, wordId);
     // 1. 获取所有未结算的每日词据
     const unfinalizedEvidences = await this.storage.getUnfinalizedDailyEvidence(userId);
 
@@ -396,6 +512,60 @@ export class MemorySystemV2 {
     }
 
     return dueWords;
+  }
+
+  /**
+   * Return words that have at least one effective passive exposure but have not
+   * entered FSRS yet. These are confirmation targets, not due reviews.
+   */
+  async getConfirmationWords(
+    userId: string,
+    currentTime: Date = new Date(),
+    limit?: number,
+    userTimezone: string = getSystemTimeZone(),
+  ): Promise<WordProficiencyView[]> {
+    const [allProficiency, memoryStates] = await Promise.all([
+      this.getAllWordProficiency(userId, currentTime),
+      this.storage.getAllMemoryStates(userId),
+    ]);
+    const stateByWord = new Map(memoryStates.map((state) => [state.wordId, state]));
+    const today = getLocalDateInTimeZone(currentTime, userTimezone);
+    const confirmationWords = allProficiency.filter((proficiency) => {
+      if (proficiency.isIntroduced !== true) return false;
+      const state = stateByWord.get(proficiency.wordId);
+      if (!state || state.fsrsReviews.length > 0) return false;
+      const profile = rmeProfileForState(state);
+      const hasEffectiveExposure = profile.successfulExposureCount > 0
+        && profile.exposureHistory.some(
+          (exposure) => exposure.isValid && exposure.quality >= 0.8,
+        );
+      if (!hasEffectiveExposure || hasSufficientPassiveRecallEvidence(state)) return false;
+      const anchorAt = Date.parse(profile.lastEffectiveExposureAt ?? '');
+      const lastDay = profile.lastEffectiveLocalDate
+        ?? (Number.isFinite(anchorAt) ? getLocalDateInTimeZone(new Date(anchorAt), userTimezone) : null);
+      return classifyExposure({ now: currentTime, isRecommendation: true, isConfirmation: true,
+        localDate: today, previousLocalDate: lastDay, userTimezone,
+        lastExposureAt: profile.lastExposureAt, lastEffectiveExposureAt: profile.lastEffectiveExposureAt,
+        firstUnconfirmedExposureAt: profile.firstUnconfirmedExposureAt,
+      }).isValid;
+    });
+
+    confirmationWords.sort((left, right) => {
+      const opportunityDelta = (right.opportunityScore ?? 0) - (left.opportunityScore ?? 0);
+      if (opportunityDelta !== 0) return opportunityDelta;
+      const leftState = stateByWord.get(left.wordId);
+      const rightState = stateByWord.get(right.wordId);
+      const leftAt = Date.parse(rmeProfileForState(leftState ?? null).lastEffectiveExposureAt ?? '');
+      const rightAt = Date.parse(rmeProfileForState(rightState ?? null).lastEffectiveExposureAt ?? '');
+      return (Number.isFinite(leftAt) ? leftAt : Number.POSITIVE_INFINITY)
+        - (Number.isFinite(rightAt) ? rightAt : Number.POSITIVE_INFINITY)
+        || left.wordId.localeCompare(right.wordId);
+    });
+
+    if (limit !== undefined) {
+      return limit > 0 ? confirmationWords.slice(0, Math.floor(limit)) : [];
+    }
+    return confirmationWords;
   }
 
   /**

@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, Copy, Globe, Sparkles, Volume2, X } from 'lucide-react';
 import type { GrammarExplanation } from '../types';
+import { DictionarySenseGroups } from './DictionarySenseGroups';
 
 export interface WordCardPanelProps {
   open: boolean;
@@ -125,43 +126,54 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
               </div>
             )}
 
-            {result.chineseTranslation && (
+            {!result.dictionaryRecord && result.chineseTranslation && (
               <section className="word-card-translation">
                 <span className="word-card-section__eyebrow">Chinese meaning</span>
                 <p>{result.chineseTranslation}</p>
               </section>
             )}
 
-            {result.definitionChinese && !result.chineseTranslation && (
+            {!result.dictionaryRecord && result.definitionChinese && !result.chineseTranslation && (
               <section className="word-card-section">
                 <span className="word-card-section__eyebrow">Chinese meaning</span>
                 <p className="word-card-copy">{result.definitionChinese}</p>
               </section>
             )}
 
-            <section className="word-card-section">
-              <span className="word-card-section__eyebrow">English definition</span>
-              {result.senses?.length ? (
-                <ol className="word-card-senses">
-                  {result.senses.map((sense, idx) => (
-                    <li key={idx} className="word-card-sense">
-                      <span className="word-card-sense__index">{idx + 1}</span>
-                      <div className="word-card-sense__body">
-                        <p>
-                          {sense.partOfSpeech && <span className="word-card-sense__pos">{sense.partOfSpeech}</span>}
-                          {sense.definition}
-                        </p>
-                        {sense.definitionZh && <p className="word-card-sense__translation">{sense.definitionZh}</p>}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="word-card-copy word-card-copy--strong">{result.definition}</p>
-              )}
-            </section>
+            {result.dictionaryRecord ? (
+              <DictionarySenseGroups record={result.dictionaryRecord} />
+            ) : (
+              <section className="word-card-section">
+                <span className="word-card-section__eyebrow">English definition</span>
+                {result.senses?.length ? (
+                  <ol className="word-card-senses">
+                    {result.senses.map((sense, idx) => (
+                      <li key={idx} className="word-card-sense">
+                        <span className="word-card-sense__index">{idx + 1}</span>
+                        <div className="word-card-sense__body">
+                          <p>
+                            {sense.partOfSpeech && <span className="word-card-sense__pos">{sense.partOfSpeech}</span>}
+                            {sense.definition}
+                          </p>
+                          {sense.definitionZh && <p className="word-card-sense__translation">{sense.definitionZh}</p>}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="word-card-copy word-card-copy--strong">{result.definition}</p>
+                )}
+              </section>
+            )}
 
-            {result.grammarRules?.length > 0 && (
+            {result.readingOriginalSentence && (
+              <section className="word-card-section word-card-original-sentence">
+                <span className="word-card-section__eyebrow">阅读原句</span>
+                <p className="word-card-copy">{result.readingOriginalSentence}</p>
+              </section>
+            )}
+
+            {!result.dictionaryRecord && result.grammarRules?.length > 0 && (
               <section className="word-card-section">
                 <span className="word-card-section__eyebrow">Grammar and usage</span>
                 <ul className="word-card-bullet-list">
@@ -183,7 +195,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
               </section>
             )}
 
-            {result.collocations && result.collocations.length > 0 && (
+            {!result.dictionaryRecord && result.collocations && result.collocations.length > 0 && (
               <section className="word-card-section">
                 <span className="word-card-section__eyebrow">Common collocations</span>
                 <div className="word-card-chip-list">
@@ -209,7 +221,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
               </section>
             )}
 
-            {result.exampleSentences?.length > 0 && (
+            {!result.dictionaryRecord && result.exampleSentences?.length > 0 && (
               <section className="word-card-section">
                 <span className="word-card-section__eyebrow">Examples</span>
                 <ol className="word-card-examples">

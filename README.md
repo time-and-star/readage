@@ -4,6 +4,8 @@
 
 详细设计见 **[DESIGN.md](./DESIGN.md)**。
 
+单词、复习和文章朗读共用可切换的语音模块：默认使用设备英语声音，也可接入本机 Kokoro 或其他兼容语音服务。阅读页可选择英音/美音、语速和停止播放，配置见 **[朗读与 TTS 接入](docs/tts.md)**。
+
 ## 功能范围（MVP）
 
 | 页面 | 能力 |
@@ -47,6 +49,7 @@ GEMINI_API_KEY=your_key_here
 # STEP_REALTIME_MODEL=stepaudio-2.5-realtime
 # STEP_REALTIME_URL=wss://api.stepfun.com/step_plan/v1/realtime
 # LLM_PROVIDER=step
+# READING_VERIFICATION_PROVIDER=deepseek # optional: step / deepseek / gemini; defaults to LLM_PROVIDER
 ```
 
 ```bash
@@ -56,6 +59,8 @@ npm run start:local
 打开 http://localhost:3000。Windows 也可双击 `start-local.cmd`。保持服务进程运行；首次安装插件可打开 `/extension-setup.html`，下载 ZIP 并按页面指引加载。
 
 `npm start` 是生产模式，仍要求配置生产访问凭证；个人本机使用请选 `npm run start:local`。AI 供应商密钥无效或订阅到期时，请在本机更新 `.env` 并重启，不要把密钥发到聊天中。
+
+阅读完成并保存曝光记录后，通过 `/api/tutor` 的 `after_reading` 将完整文章及最多 120 个相关词的掌握摘要交给教学 agent。agent 先决定是否出题、核对哪个词、目的和难度，再调用三选一出题能力。题目仍采用「英文＋中文」选项，展示为可选卡片，不自动展开。刚学或刚查的词可作当次理解练习，答案只保存为练习记录，不增加长期记忆证据；延迟验证仍需距离最近学习至少 24 小时。返回决策和题目在服务端、客户端分别校验；服务不可用时回退固定题库，agent 主动决定跳过时不会强行补题。答过的句子保存在本地用于去重。密钥保留在服务端，完整文章最长 120,000 字符；超过限额时不会截取部分文章冒充完整分析。
 
 ## 学习数据：浏览器本地（多访客）
 

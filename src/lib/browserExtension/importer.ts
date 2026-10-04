@@ -4,6 +4,8 @@ import { getLocalDateInTimeZone } from '../memoryV2/dateUtils';
 import { parseLookupBatch } from './protocol';
 import { eventKey, replayWordJournal, type TimedWordEvent, type WordJournal } from './replay';
 import type { LearningEvent } from '../../types';
+import { mergeExposureSnapshot } from '../memoryV2/rawEventPersistence';
+import { readVerificationHistory } from '../memoryV2/verificationMemory';
 
 const journalKey = (userId: string, wordId: string) => `extension-journal:${JSON.stringify([userId, wordId])}`;
 const indexKey = (userId: string) => `extension-journal-index:${userId}`;
@@ -26,7 +28,8 @@ export async function readExternalLearningActivity(storage: MemoryStorage, userI
 
 /** Write-ahead journal: a crash at any derived write is repaired by replay. */
 export async function persistJournal(storage: MemoryStorage, journal: WordJournal, timezone: string, now: Date) {
-  const result = replayWordJournal(journal, timezone, now);
+  const verifications = (await readVerificationHistory(storage, journal.userId)).filter(attempt => attempt.wordId === journal.wordId);
+  const result = replayWordJournal(journal, timezone, now, verifications);
   for (const evidence of result.daily) {
     for (const article of evidence.articleEvidence) await storage.saveArticleEvidence(article);
     await storage.saveDailyEvidence(evidence);
@@ -56,8 +59,9 @@ export async function appendJournalEvents(storage: MemoryStorage, events: TimedW
   const existing = new Map(journal.events.map(event => [eventKey(event), event]));
   for (const event of events) {
     const prior = existing.get(eventKey(event));
-    if (prior && JSON.stringify(prior) !== JSON.stringify(event)) throw new Error('查词记录标识冲突。');
-    existing.set(eventKey(event), event);
+    const updated = prior ? mergeExposureSnapshot(prior, event) : null;
+    if (prior && !updated && JSON.stringify(prior) !== JSON.stringify(event)) throw new Error('查词记录标识冲突。');
+    existing.set(eventKey(event), updated ?? event);
   }
   journal = { ...journal, events: [...existing.values()] };
   const index = await storage.getMeta<string[]>(indexKey(userId)) ?? [];

@@ -95,7 +95,9 @@ const entry = await dictionary.lookup("studies");
 
 ## 从源数据重建
 
-`sources/` 目录（不随 npm 包发布）保存生成原料：
+原始发行包不包含生成原料。主仓库的 `scripts/dictionary/` 提供从当前 `vendor/nextword-local-dictionary/data/dictionary.pack` 提取、报告、固定样板名单和重打包的流程；运行入口见主仓库 `docs/dictionary-unification.md`。提取出来的原始底稿只读保存，修订不写回底稿。
+
+如果另有源数据目录，可按下列约定保存生成原料：
 
 - `ecdict.csv` — ECDICT 源数据
 - `ecdict-definition-zh.jsonl` — 中文双语定义原料
@@ -104,13 +106,15 @@ const entry = await dictionary.lookup("studies");
 - `word-families.jsonl` — 词族原料
 - `overrides.jsonl` — 人工优化覆盖词条
 
-更新任一原料后重新生成数据包与校验清单：
+在主仓库更新底稿后重新生成数据包与校验清单：
 
 ```bash
-npm run build:data
+npm run dictionary:extract
+npm run dictionary:report
+npm run dictionary:sample
+npm run dictionary:validate
+npm run dictionary:pack
 ```
-
-也可以分步执行 `npm run build:pack` 和 `npm run build:manifest`。
 
 ## 许可
 

@@ -9,6 +9,8 @@ import {
 } from './store';
 import { loadMagazineLemmaIndex } from './lemmaIndex';
 import { getSyncStatus, runMagazineSync, type SyncOptions } from './sync';
+import { hydrateMagazineMedia } from './mediaUpgrade';
+import { resolveArticleImage } from './assets';
 
 
 interface SyncRequestError extends Error {
@@ -17,6 +19,11 @@ interface SyncRequestError extends Error {
 
 interface CatalogArticleRequestError extends Error {
   code: 'INVALID_ARTICLE_CATALOG_REQUEST';
+}
+
+function publicFailure(code: string, error: unknown, fallback: string) {
+  console.error(`[magazines:${code}]`, error);
+  return { ok: false, error: { code, message: fallback } };
 }
 
 function invalidSyncRequest(message: string): SyncRequestError {
@@ -113,6 +120,16 @@ export function parseSyncRequest(body: unknown): SyncOptions {
 export function createMagazineRouter(): Router {
   const router = Router();
 
+  router.get('/assets/:name', async (req, res) => {
+    const file = await resolveArticleImage(req.params.name);
+    if (!file) return res.sendStatus(404);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.sendFile(file, (error) => {
+      if (error && !res.headersSent) res.sendStatus(404);
+    });
+  });
+
   router.get('/sources', async (_req, res) => {
     try {
       const index = await loadIndex();
@@ -128,8 +145,7 @@ export function createMagazineRouter(): Router {
         })),
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ ok: false, error: { code: 'CATALOG_FAILED', message } });
+      res.status(500).json(publicFailure('CATALOG_FAILED', err, '文章目录暂时不可用，请稍后重试。'));
     }
   });
 
@@ -141,8 +157,7 @@ export function createMagazineRouter(): Router {
       if (source) issues = issues.filter((i) => i.sourceId === source);
       res.json({ ok: true, lastSyncAt: index.lastSyncAt, issues });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ ok: false, error: { code: 'ISSUES_FAILED', message } });
+      res.status(500).json(publicFailure('ISSUES_FAILED', err, '期刊列表暂时不可用，请稍后重试。'));
     }
   });
 
@@ -159,8 +174,7 @@ export function createMagazineRouter(): Router {
       }
       res.json({ ok: true, issue: payload.issue, articles: payload.articles });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ ok: false, error: { code: 'ISSUE_FAILED', message } });
+      res.status(500).json(publicFailure('ISSUE_FAILED', err, '期刊内容暂时不可用，请稍后重试。'));
     }
   });
 
@@ -177,14 +191,13 @@ export function createMagazineRouter(): Router {
           error: { code: error.code, message: error.message },
         });
       }
-      const message = error instanceof Error ? error.message : String(error);
-      res.status(500).json({ ok: false, error: { code: 'ARTICLE_CATALOG_FAILED', message } });
+      res.status(500).json(publicFailure('ARTICLE_CATALOG_FAILED', error, '文章目录暂时不可用，请稍后重试。'));
     }
   });
 
   router.get('/articles/:articleId', async (req, res) => {
     try {
-      const articleId = decodeURIComponent(req.params.articleId);
+      const articleId = req.params.articleId;
       const article = await loadArticle(articleId);
       if (!article) {
         return res.status(404).json({
@@ -192,10 +205,9 @@ export function createMagazineRouter(): Router {
           error: { code: 'NOT_FOUND', message: `Article not found: ${articleId}` },
         });
       }
-      res.json({ ok: true, article });
+      res.json({ ok: true, article: await hydrateMagazineMedia(article) });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ ok: false, error: { code: 'ARTICLE_FAILED', message } });
+      res.status(500).json(publicFailure('ARTICLE_FAILED', err, '文章暂时不可用，请稍后重试。'));
     }
   });
 
@@ -218,11 +230,7 @@ export function createMagazineRouter(): Router {
         articles: result.articles,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({
-        ok: false,
-        error: { code: 'RECOMMENDATION_POOL_FAILED', message },
-      });
+      res.status(500).json(publicFailure('RECOMMENDATION_POOL_FAILED', err, '推荐内容暂时不可用，请稍后重试。'));
     }
   });
 
@@ -244,11 +252,7 @@ export function createMagazineRouter(): Router {
         index,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({
-        ok: false,
-        error: { code: 'LEMMA_INDEX_FAILED', message },
-      });
+      res.status(500).json(publicFailure('LEMMA_INDEX_FAILED', err, '推荐索引暂时不可用，请稍后重试。'));
     }
   });
 
@@ -290,7 +294,10 @@ export function createMagazineRouter(): Router {
       const statusCode = code === 'SYNC_IN_PROGRESS' ? 409 : code === 'INVALID_SYNC_REQUEST' ? 400 : 500;
       res.status(statusCode).json({
         ok: false,
-        error: { code, message: e.message || 'Sync failed' },
+        error: {
+          code,
+          message: statusCode >= 500 ? '同步暂时失败，请稍后重试。' : e.message || 'Sync failed',
+        },
       });
     }
   });

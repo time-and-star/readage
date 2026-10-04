@@ -12,7 +12,6 @@ export function installExtensionBridge(store: MemoryV2Store): () => void {
     void (async () => {
       try {
         const events = parseLookupBatch(message.events);
-        if (!navigator.locks) throw new Error('此页面需要安全连接才能同步，请使用 HTTPS 或 localhost。');
         const ids = await store.importExtensionLookups(events);
         window.postMessage({ channel: EXTENSION_CHANNEL, type: 'ACK', requestId: message.requestId, ids }, location.origin);
       } catch (error) {

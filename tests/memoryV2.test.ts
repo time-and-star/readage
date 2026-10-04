@@ -34,6 +34,7 @@ import { MemorySystemV2 } from '../src/lib/memoryV2/memorySystem';
 import type { MemoryStorage } from '../src/lib/memoryV2/storage';
 import { createEmptyRmeProfile, recordExposure } from '../src/lib/memoryV4';
 import { prepareRmeEvent } from '../src/lib/memoryV2/rmeV4Bridge';
+import { calculateFsrsForgettingCurve } from '../src/lib/fsrs';
 
 describe('Memory V2.2 - Evidence Aggregation', () => {
   it('场景 A: 同一文章多次未点击 → 只形成一条文章级 Good 候选', () => {
@@ -300,8 +301,7 @@ describe('Memory V2.2 - Memory Score Calculation', () => {
     // S = 10 天, t = 10 天 → R = 0.9
     assert.ok(Math.abs(calculateRetention(10, 10) - 0.9) < 0.01);
 
-    // S = 10 天, t = 20 天 → R = 0.81
-    assert.ok(Math.abs(calculateRetention(20, 10) - 0.81) < 0.01);
+    assert.equal(calculateRetention(20, 10), calculateFsrsForgettingCurve(20, 10));
   });
 
   it('计算长期掌握度调节因子 M(S)', () => {
@@ -389,7 +389,7 @@ describe('Memory V2.2 - FSRS Integration', () => {
     assert.equal(updatedState.fsrsReviews[0].rating, 1); // Again = 1
   });
 
-  it('waits for passive success across different articles and dates before Good', () => {
+  it('waits for passive success across dates while allowing the same article again', () => {
     const exposure = (
       state: WordMemoryState,
       articleId: string,
@@ -442,10 +442,10 @@ describe('Memory V2.2 - FSRS Integration', () => {
     state = finalizeDailyEvidence(state, daily('article-b', '2026-07-24'), 'user1', 'UTC')!;
     assert.equal(state.fsrsReviews.length, 0, 'a second article on the same day is still weak');
 
-    state = exposure(state, 'article-b', '2026-07-25', '2026-07-25T14:00:00Z');
-    state = finalizeDailyEvidence(state, daily('article-b', '2026-07-25'), 'user1', 'UTC')!;
-    assert.equal(state.fsrsReviews.length, 1);
-    assert.equal(state.fsrsReviews[0].rating, 3);
+    state = exposure(state, 'article-a', '2026-07-25', '2026-07-25T14:00:00Z');
+    state = finalizeDailyEvidence(state, daily('article-a', '2026-07-25'), 'user1', 'UTC')!;
+    assert.equal(state.fsrsReviews.length, 0, 'repeated reading still does not verify recognition');
+    assert.equal(state.lastReview, null);
   });
 
   it('场景 E: 跨天两个 Good → 分别形成两次 FSRS review', () => {
@@ -743,6 +743,27 @@ describe('Memory V2.2 - Batch event persistence', () => {
       ['article-A', 'article-B'],
     );
   });
+
+  it('keeps click failure evidence when a batch contains click before exposure', async () => {
+    const storage = new EvidenceStorageFake();
+    const system = new MemorySystemV2(storage as unknown as MemoryStorage);
+    const first = exposureEvent({
+      articleId: 'article-A',
+      occurrenceId: 'article-A:p0:w0:constraint',
+      occurredAt: '2026-07-24T10:00:00Z',
+    });
+
+    await system.recordBatchEvents([
+      { ...first, eventType: 'click', occurredAt: '2026-07-24T10:00:01Z' },
+      first,
+    ]);
+
+    const state = await storage.getMemoryState('user1', 'constraint');
+    const evidence = await storage.getDailyEvidence('user1', 'constraint', '2026-07-24');
+    assert.equal(evidence?.clickedOccurrenceCount, 1);
+    assert.equal(evidence?.pendingGrade, 'Again');
+    assert.equal(state?.rme?.exposureHistory[0]?.quality, 0);
+  });
 });
 
 describe('RME-V4 - storage bridge', () => {
@@ -784,7 +805,27 @@ describe('RME-V4 - storage bridge', () => {
     assert.equal(state?.rme?.exposureHistory[0]?.quality, 0);
   });
 
-  it('does not turn a repeated article into a scheduled valid exposure after an invalid first view', () => {
+  it('keeps RME failure evidence when a click arrives before its exposure', async () => {
+    const storage = new EvidenceStorageFake();
+    const system = new MemorySystemV2(storage as unknown as MemoryStorage);
+    const first = exposureEvent({
+      articleId: 'article-A',
+      occurrenceId: 'article-A:p0:w0:constraint',
+      occurredAt: '2026-07-24T10:00:00Z',
+    });
+
+    await system.recordEvent({ ...first, eventType: 'click', occurredAt: '2026-07-24T10:00:01Z' });
+    await system.recordEvent(first);
+
+    const state = await storage.getMemoryState('user1', 'constraint');
+    const evidence = await storage.getDailyEvidence('user1', 'constraint', '2026-07-24');
+    assert.equal(evidence?.clickedOccurrenceCount, 1);
+    assert.equal(evidence?.pendingGrade, 'Again');
+    assert.equal(state?.rme?.exposureHistory[0]?.occurrenceId, first.occurrenceId);
+    assert.equal(state?.rme?.exposureHistory[0]?.quality, 0);
+  });
+
+  it('counts a repeated article again when it is read on a later local day', () => {
     const firstEvent = exposureEvent({
       articleId: 'article-A',
       occurrenceId: 'article-A:p0:w0:constraint',
@@ -803,12 +844,45 @@ describe('RME-V4 - storage bridge', () => {
       ...firstEvent,
       occurrenceId: 'article-A:p1:w0:constraint',
       occurredAt: '2026-07-26T10:00:00Z',
+      localDate: '2026-07-26',
       isRecommendation: true,
     });
 
-    assert.equal(repeated.event.rmeExposureKind, 'scheduled');
-    assert.equal(repeated.event.rmeIsValid, false);
+    assert.equal(repeated.event.rmeExposureKind, 'confirmation');
+    assert.equal(repeated.event.rmeIsValid, true);
     assert.equal(repeated.state?.rme?.exposureHistory.length, 2);
-    assert.equal(repeated.state?.rme?.successfulExposureCount, 0);
+    assert.equal(repeated.state?.rme?.successfulExposureCount, 1);
+  });
+
+  it('surfaces effective pre-FSRS words in a separate confirmation queue', async () => {
+    const storage = new EvidenceStorageFake();
+    const system = new MemorySystemV2(storage as unknown as MemoryStorage);
+
+    await system.recordEvent(exposureEvent({
+      articleId: 'article-A',
+      occurrenceId: 'article-A:p0:w0:constraint',
+      occurredAt: '2026-07-24T10:00:00Z',
+    }));
+    await system.recordEvent({
+      ...exposureEvent({
+        articleId: 'article-B',
+        occurrenceId: 'article-B:p0:w0:constraint',
+        occurredAt: '2026-07-25T11:00:00Z',
+      }),
+      localDate: '2026-07-25',
+    });
+
+    const sameDay = await system.getConfirmationWords(
+      'user1',
+      new Date('2026-07-25T12:00:00Z'),
+    );
+    assert.equal(sameDay.length, 0);
+
+    const confirmation = await system.getConfirmationWords(
+      'user1',
+      new Date('2026-07-26T12:00:00Z'),
+    );
+    assert.deepEqual(confirmation.map((word) => word.wordId), ['constraint']);
+    assert.equal((await system.getDueWords('user1', new Date('2026-07-26T12:00:00Z'))).length, 0);
   });
 });

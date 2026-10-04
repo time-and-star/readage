@@ -1,0 +1,32 @@
+{
+  "format": "dictionary-batch-source.v1",
+  "batchId": "batch-001",
+  "source": {
+    "path": "data/dictionary/source/ecdict.csv",
+    "sha256": "eeb7ef4ac67d30f781eb78a4da2278dcb1f925e4d04db9aaffe8d62db0772db1",
+    "rows": 770611
+  },
+  "sourcePack": {
+    "path": "vendor/nextword-local-dictionary/data/dictionary.pack",
+    "sha256": "85b7bc6fe7084f23d78487ae8e2b0bcd587b2e55e6943be3fc7e0704dd3dab60",
+    "bytes": 113174358
+  },
+  "enhanced": {
+    "path": "data/dictionary/source/enhanced.jsonl",
+    "sha256": "b045a63a29be9ddb145d2fd55cb8994c9014ca5b5431b056c732cfbde63bb9dd",
+    "words": 116448
+  },
+  "sampleList": {
+    "path": "data/dictionary/sample-words.json",
+    "sha256": "6bbec5d19374379e3052d71b857b53598bc7a5b8b884828658deebf2d57879f8",
+    "words": 50
+  },
+  "curatedRevisions": {
+    "path": "data/dictionary/revisions/curated-50.jsonl",
+    "sha256": "0c62acb915ff087905fa0746d2cf29942373ffba7762c18b4d0d983e5e3af45d",
+    "words": 50
+  },
+  "publishedBatches": [],
+  "selectionRule": "one canonical source row per eligible lemma; exclude sample words and published revisions; exclude pure word-form rows; ascending numeric frq then alphabetical; freeze the first N",
+  "wordListHash": "22001f9092bb08da33bd9e228ce15f8971982e2b3ab552af441bb3ebda24e986"
+}

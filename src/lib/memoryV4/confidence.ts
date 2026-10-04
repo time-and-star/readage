@@ -3,6 +3,7 @@ import type {
   RmeMemoryProfile,
   RmeMemoryStage,
 } from './types';
+import { calculateFsrsForgettingCurve } from '../fsrs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const clamp = (value: number, min = 0, max = 1): number =>
@@ -14,9 +15,18 @@ export function calculateFsrsRetention(
 ): number {
   if (!fsrs.lastReview || !Number.isFinite(fsrs.stabilityDays) || fsrs.stabilityDays <= 0) return 0;
   const reviewedAt = new Date(fsrs.lastReview).getTime();
-  if (!Number.isFinite(reviewedAt)) return 0;
+  if (!Number.isFinite(reviewedAt) || !Number.isFinite(now.getTime())) return 0;
   const elapsedDays = Math.max(0, now.getTime() - reviewedAt) / DAY_MS;
-  return Math.pow(0.9, elapsedDays / fsrs.stabilityDays);
+  return calculateFsrsForgettingCurve(elapsedDays, fsrs.stabilityDays);
+}
+
+export function calculateRecentExposureFrequency(profile: RmeMemoryProfile, now: Date): number {
+  const windowStart = now.getTime() - 7 * DAY_MS;
+  if (!Number.isFinite(windowStart)) return 0;
+  return clamp(profile.exposureHistory.filter((item) => {
+    const timestamp = Date.parse(item.occurredAt);
+    return item.isValid && timestamp >= windowStart && timestamp <= now.getTime();
+  }).length / 3);
 }
 
 export function calculateConfidence(
@@ -29,16 +39,13 @@ export function calculateConfidence(
 
   const historySuccess = profile.successfulExposureCount / totalOutcomes;
   const fsrsRetention = calculateFsrsRetention(fsrs, now);
-  const validRecent = profile.exposureHistory.filter((item) => item.isValid).slice(-5);
+  const validRecent = profile.exposureHistory.filter((item) =>
+    item.isValid && Date.parse(item.occurredAt) <= now.getTime()
+  ).slice(-5);
   const recentQuality = validRecent.length === 0
-    ? 0
+    ? 1 // Legacy FSRS review counters have no paragraph quality history.
     : validRecent.reduce((sum, item) => sum + item.quality, 0) / validRecent.length;
-  const windowStart = now.getTime() - 7 * DAY_MS;
-  const recentFrequency = clamp(
-    profile.exposureHistory.filter((item) => item.isValid && new Date(item.occurredAt).getTime() >= windowStart).length / 3,
-  );
-
-  return clamp(historySuccess * fsrsRetention * recentQuality * recentFrequency) * 100;
+  return clamp(historySuccess * fsrsRetention * recentQuality) * 100;
 }
 
 export function stageFromConfidence(confidence: number): RmeMemoryStage {

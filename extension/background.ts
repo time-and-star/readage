@@ -4,6 +4,7 @@ import type { DictionaryEntry } from '../src/lib/dictionaryClient';
 
 interface Settings { origin: string; enabled: boolean; sites: string[] }
 interface PendingLookup { origin: string; event: LookupEvent; tabId?: number }
+const DICTIONARY_CACHE_VERSION = 'dictionary.v2';
 const defaults: Settings = { origin: DEFAULT_SERVICE_ORIGIN, enabled: true, sites: [] };
 let writes: Promise<unknown> = Promise.resolve();
 function serialize<T>(work: () => Promise<T>): Promise<T> {
@@ -15,27 +16,67 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : '
 const pattern = (origin: string) => `${origin}/*`;
 const permitted = (origin: string) => chrome.permissions.contains({ origins: [pattern(origin)] });
 
-async function reconcileScripts() {
+let scriptChanges: Promise<unknown> = Promise.resolve();
+function reconcileScripts(previous?: Settings): Promise<void> {
+  const result = scriptChanges.then(() => updateScripts(previous), () => updateScripts(previous));
+  scriptChanges = result.catch(() => {});
+  return result;
+}
+
+async function updateScripts(previous?: Settings) {
   const config = await settings();
   const desired: Array<{ id: string; matches: string[]; js: string[]; runAt: 'document_idle'; allFrames: false }> = [];
   if (await permitted(config.origin)) desired.push({ id: 'app-bridge', matches: [pattern(config.origin)], js: ['bridge.js'], runAt: 'document_idle', allFrames: false });
-  for (const [index, origin] of config.sites.entries()) {
+  for (const origin of [...new Set(config.sites)]) {
     if (config.enabled && origin !== config.origin && await permitted(origin)) {
-      desired.push({ id: `lookup-${index}`, matches: [pattern(origin)], js: ['content.js'], runAt: 'document_idle', allFrames: false });
+      // Site IDs stay stable when another site is removed or the list is reordered.
+      desired.push({ id: `lookup-${(await sourcePageId(origin)).slice(4)}`, matches: [pattern(origin)], js: ['content.js'], runAt: 'document_idle', allFrames: false });
     }
   }
   const old = await chrome.scripting.getRegisteredContentScripts();
-  if (old.length) await chrome.scripting.unregisterContentScripts({ ids: old.map(row => row.id) });
-  if (desired.length) await chrome.scripting.registerContentScripts(desired);
-  for (const script of desired) {
+  const same = (registered: typeof old[number], script: typeof desired[number]) =>
+    JSON.stringify(registered.matches) === JSON.stringify(script.matches)
+    && JSON.stringify(registered.js) === JSON.stringify(script.js)
+    && (registered.runAt ?? 'document_idle') === script.runAt && (registered.allFrames ?? false) === script.allFrames;
+  const stale = old.filter(registered => (registered.id === 'app-bridge' || registered.id.startsWith('lookup-'))
+    && !desired.some(script => script.id === registered.id && same(registered, script)));
+  const added = desired.filter(script => !old.some(registered => registered.id === script.id && same(registered, script)));
+  if (stale.length) await chrome.scripting.unregisterContentScripts({ ids: stale.map(row => row.id) });
+  if (added.length) await chrome.scripting.registerContentScripts(added);
+  for (const script of added) {
     for (const tab of await chrome.tabs.query({ url: script.matches[0] })) {
-      if (tab.id) await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: script.js }).catch(() => {});
+      if (tab.id != null) await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: script.js }).catch(() => {});
     }
+  }
+  // Unregistering a script only affects future documents. Existing cards need a
+  // message to close immediately, including when a site is removed from the list.
+  const origins = new Set([...config.sites, config.origin, ...(previous?.sites ?? []), ...(previous ? [previous.origin] : [])]);
+  for (const origin of origins) {
+    const enabled = config.enabled && origin !== config.origin && config.sites.includes(origin) && await permitted(origin);
+    const tabs = await chrome.tabs.query({ url: pattern(origin) }).catch(() => []);
+    await Promise.all(tabs.filter(tab => tab.id != null).map(tab => chrome.tabs.sendMessage(tab.id!,
+      { type: 'SETTINGS_CHANGED', enabled }, { frameId: 0 }).catch(() => {})));
   }
 }
 
-async function fetchEntry(origin: string, word: string): Promise<DictionaryEntry | null> {
-  const key = `dictionary:${origin}:${word}`;
+const dictionaryRequests = new Map<string, Promise<DictionaryEntry | null>>();
+function fetchEntry(origin: string, word: string): Promise<DictionaryEntry | null> {
+  const requestKey = `${origin}:${word}`;
+  const active = dictionaryRequests.get(requestKey);
+  if (active) return active;
+  const request = loadEntry(origin, word).finally(() => { dictionaryRequests.delete(requestKey); });
+  dictionaryRequests.set(requestKey, request);
+  return request;
+}
+
+async function dictionaryJson(response: Response) {
+  if (!response.ok) throw new Error(`词典服务返回错误（HTTP ${response.status}），请检查主应用服务。`);
+  try { return await response.json(); }
+  catch { throw new Error('主应用返回的内容不是词典数据，请检查连接地址。'); }
+}
+
+async function loadEntry(origin: string, word: string): Promise<DictionaryEntry | null> {
+  const key = `dictionary:${DICTIONARY_CACHE_VERSION}:${origin}:${word}`;
   const cached = (await chrome.storage.local.get(key))[key];
   if (cached?.entry) return cached.entry as DictionaryEntry;
   if (!await permitted(origin)) throw new Error('请在插件设置中连接主应用并授权访问。');
@@ -45,12 +86,14 @@ async function fetchEntry(origin: string, word: string): Promise<DictionaryEntry
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: [word] }),
       signal: AbortSignal.timeout(8_000), redirect: 'error', credentials: 'omit' });
   } catch { throw new Error('词典服务暂不可用。请启动主应用服务；已缓存的词仍可查询。'); }
-  const body = await response.json();
-  if (!response.ok || body?.ok !== true || !Array.isArray(body.results)) throw new Error('词典服务返回异常，请稍后重试。');
+  const body = await dictionaryJson(response);
+  if (body?.ok !== true || !Array.isArray(body.results) || body.results.length !== 1) throw new Error('词典服务返回异常，请稍后重试。');
   const entry = body.results[0] as DictionaryEntry | null;
   if (!entry) return null;
   if (!normalizeSelectedWord(entry.lemma || word) || !Array.isArray(entry.basicMeaningsZh)
-    || !Array.isArray(entry.definitionsEn) || typeof entry.definitionEn !== 'string') throw new Error('词典结果格式不正确。');
+    || entry.basicMeaningsZh.some(meaning => typeof meaning !== 'string')
+    || !Array.isArray(entry.definitionsEn) || entry.definitionsEn.some(sense => !sense || typeof sense.definition !== 'string')
+    || typeof entry.definitionEn !== 'string') throw new Error('词典结果格式不正确。');
   await serialize(async () => {
     await chrome.storage.local.set({ [key]: { entry, savedAt: Date.now() } });
     const all = await chrome.storage.local.get(null);
@@ -63,7 +106,7 @@ async function fetchEntry(origin: string, word: string): Promise<DictionaryEntry
 async function queryWord(message: any, sender: ExtensionSender) {
   const config = await settings();
   const page = sender.url && new URL(sender.url);
-  if (!config.enabled || !page || sender.frameId !== 0 || !sender.tab?.id
+  if (!config.enabled || !page || page.origin === config.origin || sender.frameId !== 0 || !sender.tab?.id
     || !config.sites.includes(page.origin) || !await permitted(page.origin)) throw new Error('请先在插件中为此网站启用查词。');
   const word = normalizeSelectedWord(message.word);
   if (!word) throw new Error('请选择单个英文单词。');
@@ -83,48 +126,90 @@ async function queryWord(message: any, sender: ExtensionSender) {
 }
 
 let syncing: Promise<void> | null = null;
+let syncOrigin: string | null = null;
 let syncAgain = false;
+type SyncState = 'idle' | 'syncing' | 'waiting_for_app' | 'permission_required' | 'error';
+async function saveSyncStatus(origin: string, changes: { state: SyncState; error: string | null; lastSyncedAt?: string }) {
+  await serialize(async () => {
+    const key = `sync:${origin}`;
+    const previous = (await chrome.storage.local.get(key))[key];
+    await chrome.storage.local.set({ [key]: { ...previous, ...changes } });
+  });
+}
+
 function syncPending(): Promise<void> {
   if (syncing) { syncAgain = true; return syncing; }
   syncing = (async () => {
-    const config = await settings();
-    if (!await permitted(config.origin)) return;
-    const tabs = await chrome.tabs.query({ url: pattern(config.origin) });
-    if (!tabs.length) return;
+    do { syncAgain = false; await syncQueue(); } while (syncAgain);
+  })().finally(() => {
+    syncing = null; syncOrigin = null;
+  });
+  return syncing;
+}
+
+async function syncQueue() {
+  const config = await settings();
+  syncOrigin = config.origin;
+  try {
     const all = await chrome.storage.local.get(null);
     const keys = Object.keys(all).filter(key => key.startsWith(prefix(config.origin)));
+    if (!keys.length) { await saveSyncStatus(config.origin, { state: 'idle', error: null }); return; }
+    if (!await permitted(config.origin)) {
+      await saveSyncStatus(config.origin, { state: 'permission_required', error: '请连接并授权学习应用后同步，记录已保留。' });
+      return;
+    }
+    const tabs = await chrome.tabs.query({ url: pattern(config.origin) });
+    if (!tabs.length) {
+      await saveSyncStatus(config.origin, { state: 'waiting_for_app', error: '打开学习应用后，待同步记录会自动保存。' });
+      return;
+    }
+    await saveSyncStatus(config.origin, { state: 'syncing', error: null });
     for (let offset = 0; offset < keys.length; offset += MAX_SYNC_BATCH) {
       const batchKeys = keys.slice(offset, offset + MAX_SYNC_BATCH);
       const batch: LookupEvent[] = batchKeys.map(key => parseLookupEvent(all[key].event));
       let ack: { ids?: string[]; error?: string } | undefined;
       for (const tab of tabs) {
-        if (!tab.id) continue;
+        if (tab.id == null) continue;
         try { ack = await chrome.tabs.sendMessage(tab.id, { type: 'IMPORT', origin: config.origin, events: batch }, { frameId: 0 }); }
         catch { continue; }
-        if (ack?.ids || ack?.error) break;
+        if (Array.isArray(ack?.ids) || ack?.error) break;
       }
-      if (!ack?.ids || ack.error || batch.some(event => !ack!.ids!.includes(event.id))) {
-        await chrome.storage.local.set({ [`sync:${config.origin}`]: { error: ack?.error || '主应用尚未就绪，记录已保留。' } });
+      if (!Array.isArray(ack?.ids) || ack.error || batch.some(event => !ack!.ids!.includes(event.id))) {
+        await saveSyncStatus(config.origin, { state: 'error', error: typeof ack?.error === 'string'
+          ? ack.error : '学习应用尚未就绪，记录已保留，将自动重试。' });
         return;
       }
       // Only remove this exact acknowledged batch. New lookups remain queued.
       await serialize(async () => {
         await chrome.storage.local.remove(batchKeys);
-        await chrome.storage.local.set({ [`sync:${config.origin}`]: { lastSyncedAt: new Date().toISOString(), error: null } });
       });
+      await saveSyncStatus(config.origin, { state: 'idle', lastSyncedAt: new Date().toISOString(), error: null });
       for (const key of batchKeys) {
         const item = all[key] as PendingLookup;
-        if (item.tabId) await chrome.tabs.sendMessage(item.tabId, { type: 'LOOKUP_SYNCED', lookupId: item.event.id }, { frameId: 0 }).catch(() => {});
+        if (item.tabId != null) await chrome.tabs.sendMessage(item.tabId, { type: 'LOOKUP_SYNCED', lookupId: item.event.id }, { frameId: 0 }).catch(() => {});
       }
     }
-  })().catch(async error => {
-    const config = await settings();
-    await chrome.storage.local.set({ [`sync:${config.origin}`]: { error: errorText(error) } }).catch(() => {});
-  }).finally(() => {
-    syncing = null;
-    if (syncAgain) { syncAgain = false; void syncPending(); }
-  });
-  return syncing;
+  } catch (error) {
+    await saveSyncStatus(config.origin, { state: 'error', error: errorText(error) }).catch(() => {});
+  }
+}
+
+async function status() {
+  const config = await settings();
+  const [all, serviceGranted, tabs] = await Promise.all([
+    chrome.storage.local.get(null), permitted(config.origin), chrome.tabs.query({ url: pattern(config.origin) }),
+  ]);
+  const pending = Object.keys(all).filter(key => key.startsWith(prefix(config.origin))).length;
+  const active = Boolean(syncing && syncOrigin === config.origin);
+  const saved = all[`sync:${config.origin}`] ?? {};
+  const state: SyncState = active ? 'syncing' : !pending ? 'idle' : !serviceGranted ? 'permission_required'
+    : !tabs.length ? 'waiting_for_app' : saved.error ? 'error' : saved.state === 'syncing' ? 'error' : 'idle';
+  const error = state === 'permission_required' ? '请连接并授权学习应用后同步，记录已保留。'
+    : state === 'waiting_for_app' ? '打开学习应用后，待同步记录会自动保存。'
+    : state === 'error' ? saved.error || '上次同步尚未完成，记录已保留，请重试。' : null;
+  return { ok: true, settings: config, pending,
+    otherPending: Object.keys(all).filter(key => key.startsWith('lookup:') && !key.startsWith(prefix(config.origin))).length,
+    serviceGranted, appOpen: tabs.length > 0, syncing: active, sync: { ...saved, state, error } };
 }
 
 async function handle(message: any, sender: ExtensionSender): Promise<unknown> {
@@ -142,35 +227,39 @@ async function handle(message: any, sender: ExtensionSender): Promise<unknown> {
   if (!isPopup) throw new Error('此页面不能访问插件设置或同步记录。');
   if (message.type === 'SET_ENABLED') {
     await serialize(async () => chrome.storage.local.set({ settings: { ...await settings(), enabled: message.enabled === true } }));
-    await reconcileScripts();
+    await reconcileScripts(config);
     return { ok: true };
   }
-  if (message.type === 'STATUS') {
-    const all = await chrome.storage.local.get(null);
-    return { ok: true, settings: config, pending: Object.keys(all).filter(key => key.startsWith(prefix(config.origin))).length,
-      otherPending: Object.keys(all).filter(key => key.startsWith('lookup:') && !key.startsWith(prefix(config.origin))).length,
-      sync: all[`sync:${config.origin}`] ?? null };
-  }
+  if (message.type === 'STATUS') return status();
   if (message.type === 'SAVE_SETTINGS') {
     const origin = normalizeServiceOrigin(message.origin);
     if (!await permitted(origin)) throw new Error('未获得主应用访问权限。');
     await serialize(async () => chrome.storage.local.set({ settings: { ...await settings(), origin, enabled: message.enabled === true } }));
-    await reconcileScripts(); void syncPending(); return { ok: true };
+    await reconcileScripts(config); void syncPending(); return { ok: true };
   }
   if (message.type === 'ENABLE_SITE') {
     const url = new URL(message.url);
     if (!['https:', 'http:'].includes(url.protocol) || !await permitted(url.origin)) throw new Error('此网站尚未授权。');
     await serialize(async () => { const current = await settings();
       await chrome.storage.local.set({ settings: { ...current, sites: [...new Set([...current.sites, url.origin])] } }); });
-    await reconcileScripts(); return { ok: true };
+    await reconcileScripts(config); return { ok: true };
   }
-  if (message.type === 'SYNC') { await syncPending(); return { ok: true }; }
+  if (message.type === 'DISABLE_SITE') {
+    const url = new URL(message.url);
+    if (!['https:', 'http:'].includes(url.protocol)) throw new Error('此页面不支持查词。');
+    await serialize(async () => { const current = await settings();
+      await chrome.storage.local.set({ settings: { ...current, sites: current.sites.filter(origin => origin !== url.origin) } }); });
+    await reconcileScripts(config); return { ok: true };
+  }
+  if (message.type === 'SYNC') { await syncPending(); return status(); }
   if (message.type === 'CHECK') {
     if (!await permitted(config.origin)) throw new Error('请先保存并授权主应用地址。');
-    const response = await fetch(`${config.origin}/api/dictionary/health`, {
-      signal: AbortSignal.timeout(8_000), redirect: 'error', credentials: 'omit' });
-    const body = await response.json();
-    if (!response.ok || body?.dictionary?.available !== true) throw new Error('词典服务尚未就绪，请检查主应用服务。');
+    let response: Response;
+    try { response = await fetch(`${config.origin}/api/dictionary/health`, {
+      signal: AbortSignal.timeout(8_000), redirect: 'error', credentials: 'omit' }); }
+    catch { throw new Error('无法连接学习应用。请启动主应用服务后重试。'); }
+    const body = await dictionaryJson(response);
+    if (body?.dictionary?.available !== true) throw new Error('词典服务尚未就绪，请检查主应用服务。');
     return { ok: true };
   }
   throw new Error('未知操作。');

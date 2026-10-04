@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { X, Volume2, CheckCircle2, RotateCcw, Award } from 'lucide-react';
 import { ReviewWord } from '../types';
+import { useSpeech } from '../lib/speech/useSpeech';
+import { SpeechFeedback } from './SpeechControls';
 
 interface TargetedReviewModalProps {
   reviewWords: ReviewWord[];
@@ -16,6 +18,7 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
   onMasterWord,
   onStartContextualReview,
 }) => {
+  const speech = useSpeech();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [completed, setCompleted] = useState(false);
@@ -23,6 +26,7 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
   const currentWord = reviewWords[currentIndex];
 
   const handleNext = (mastered: boolean) => {
+    speech.stop();
     if (currentWord && mastered) {
       onMasterWord(currentWord.id);
     }
@@ -36,15 +40,12 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
   };
 
   const handleSpeak = (text: string) => {
-    if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
-      window.speechSynthesis.speak(utterance);
-    }
+    speech.speak(text);
   };
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+      <SpeechFeedback state={speech.state} onStop={speech.stop} floating />
       <div className="bg-[#FAF8F3] border border-[#E0DBCF] w-full max-w-md rounded-2xl shadow-2xl p-6 relative">
         <button
           onClick={onClose}

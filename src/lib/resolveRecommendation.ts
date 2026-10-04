@@ -373,8 +373,14 @@ export async function resolveRecommendationArticle(
   const recommendationMode = reviewWords.length > 0 ? 'review' : 'normal';
   const isUsableRecommendation = (article: Article): boolean =>
     isRecommendationArticleWithinBounds(article, profile, { mode: recommendationMode });
-  // Never re-recommend pieces the user already opened (history) or saw in this feed.
-  const excluded = collectExcludedArticleIds(excludeArticleIds, history);
+  // Normal recommendations stay fresh. Targeted review can reopen a history
+  // article so the same text can provide valid evidence on a later local day.
+  const allowHistoryReread = reviewWords.length > 0;
+  const excluded = collectExcludedArticleIds(
+    excludeArticleIds,
+    history,
+    !allowHistoryReread,
+  );
   const expandedExcludeIds = Array.from(excluded);
   const timing: Partial<RecommendationTiming> = {};
 
@@ -471,7 +477,13 @@ export async function resolveRecommendationArticle(
 
   onPhase?.('library');
   emitRecPhase('library');
-  const libraryArticle = libraryFallback(library, history, excluded);
+  const libraryArticle = libraryFallback(
+    library,
+    history,
+    excluded,
+    undefined,
+    allowHistoryReread,
+  );
   if (libraryArticle && isUsableRecommendation(libraryArticle)) {
     const totalMs = Date.now() - started;
     onTiming?.({
@@ -517,7 +529,13 @@ export async function resolveRecommendationArticle(
       throw error;
     }
     // Last-ditch: re-check library in case history/status changed mid-flight.
-    const finalFallback = libraryFallback(library, history, excluded);
+    const finalFallback = libraryFallback(
+      library,
+      history,
+      excluded,
+      undefined,
+      allowHistoryReread,
+    );
     if (finalFallback && isUsableRecommendation(finalFallback)) {
       const totalMs = Date.now() - started;
       onTiming?.({

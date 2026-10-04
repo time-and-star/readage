@@ -43,6 +43,7 @@ function proficiency(wordId: string): WordProficiencyView {
 
 function installMemorySystemStub(options: {
   dueWords: WordProficiencyView[];
+  confirmationWords?: WordProficiencyView[];
   allProficiency: WordProficiencyView[];
   onGetDueWords?: (limit: number) => void;
 }): void {
@@ -50,6 +51,9 @@ function installMemorySystemStub(options: {
     async getDueWords(_userId: string, _now: Date, limit: number) {
       options.onGetDueWords?.(limit);
       return options.dueWords;
+    },
+    async getConfirmationWords() {
+      return options.confirmationWords ?? [];
     },
     async getAllWordProficiency() {
       return options.allProficiency;
@@ -209,6 +213,32 @@ describe('MemoryV2RecommendationAdapter targeted review', () => {
     assert.deepEqual(requestedLimits, [10]);
   });
 
+  it('allows a same-article reread for confirmation targets', async () => {
+    const target = {
+      ...proficiency('target'),
+    };
+    installMemorySystemStub({
+      dueWords: [],
+      confirmationWords: [target],
+      allProficiency: [target],
+    });
+
+    const recommendations = await createMemoryV2Adapter().recommendForReview(
+      [article('already-seen', 'target'), article('new-context', 'target')],
+      [],
+      5,
+    );
+
+    assert.deepEqual(recommendations.map((item) => item.articleId), ['already-seen', 'new-context']);
+
+    const explicitRecommendations = await createMemoryV2Adapter().recommendForReview(
+      [article('already-seen', 'target'), article('new-context', 'target')],
+      ['target'],
+      5,
+    );
+    assert.deepEqual(explicitRecommendations.map((item) => item.articleId), ['already-seen', 'new-context']);
+  });
+
   it('keeps the legacy numeric targetReviewCount API compatible', async () => {
     const requestedLimits: number[] = [];
     installMemorySystemStub({
@@ -264,7 +294,7 @@ describe('MemoryV2RecommendationAdapter targeted review', () => {
     );
   });
 
-  it('never returns a Completed article even if it is the only review-word hit', async () => {
+  it('keeps Completed articles out of normal recommendations but allows a targeted reread', async () => {
     installMemorySystemStub({
       dueWords: [],
       allProficiency: [proficiency('target')],
@@ -273,7 +303,7 @@ describe('MemoryV2RecommendationAdapter targeted review', () => {
     const selected = await memoryV2RecommendationProvider(
       {
         topic: '',
-        reviewWords: ['target'],
+        reviewWords: [],
         excludeArticleIds: [],
       },
       [
@@ -285,8 +315,21 @@ describe('MemoryV2RecommendationAdapter targeted review', () => {
       ]
     );
 
-    // Completed hit must be skipped; fall through may pick nothing or non-completed.
+    // Normal recommendations still skip completed history.
     assert.notEqual(selected?.id, 'done-target');
+
+    const reread = await memoryV2RecommendationProvider(
+      {
+        topic: '',
+        reviewWords: ['target'],
+        excludeArticleIds: [],
+      },
+      [
+        article('done-target', 'target', 'Completed'),
+        article('fresh-other', 'other'),
+      ],
+    );
+    assert.equal(reread?.id, 'done-target');
   });
 
   it('never returns an article listed in excludeArticleIds', async () => {

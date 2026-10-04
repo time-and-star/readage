@@ -6,6 +6,7 @@
  */
 
 import { WordMemoryState, MemoryScoreParams, DEFAULT_MS_PARAMS } from './types';
+import { calculateFsrsForgettingCurve } from '../fsrs';
 
 /**
  * 计算当前回忆概率 R(t, S)
@@ -16,12 +17,7 @@ import { WordMemoryState, MemoryScoreParams, DEFAULT_MS_PARAMS } from './types';
  * @returns 0-1 之间的回忆概率
  */
 export function calculateRetention(daysSinceReview: number, stability: number): number {
-  if (stability <= 0) return 0;
-  if (daysSinceReview <= 0) return 1;
-
-  // FSRS 标准遗忘曲线: R = 0.9^(t/S)
-  const retention = Math.pow(0.9, daysSinceReview / stability);
-  return Math.max(0, Math.min(1, retention));
+  return calculateFsrsForgettingCurve(daysSinceReview, stability);
 }
 
 /**

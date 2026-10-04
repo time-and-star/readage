@@ -124,6 +124,23 @@ export interface ArticleLevelRating {
   estimatedWordCount?: number;
 }
 
+/** A binary asset placed between text paragraphs without changing their indices. */
+export interface ArticleMedia {
+  src: string;
+  alt?: string;
+  caption?: string;
+  /** Zero-based paragraph index; -1 places the image before the first paragraph. */
+  afterParagraphIndex: number;
+}
+
+export interface ArticleSourceDocument {
+  format: 'pdf';
+  /** Local source URL; original pages are rendered only when requested. */
+  src: string;
+  pageNumber: number;
+  pageCount: number;
+}
+
 export interface Article {
   id: string;
   title: string;
@@ -131,6 +148,9 @@ export interface Article {
   date: string;
   status: ArticleStatus;
   content: string[];
+  /** Optional document images in source order. An empty array means extraction was completed. */
+  media?: ArticleMedia[];
+  sourceDocument?: ArticleSourceDocument;
   keyWords?: string[];
   source?: ArticleSource;
   level?: string;
@@ -142,6 +162,12 @@ export interface Article {
   embeddedReviewWords?: string[];
   magazineIssueId?: string;
   magazineSourceId?: MagazineSourceId;
+  /** Shared by every article parsed from one imported file. */
+  importBatchId?: string;
+  /** File name shown as this import's shelf title. */
+  importBatchTitle?: string;
+  /** File kind used by the shelf card. */
+  importBatchFormat?: 'epub' | 'pdf' | 'docx' | 'html' | 'text';
   /**
    * Chinese translation per paragraph, aligned with `content` indices.
    * Filled by the import module in the background after store.
@@ -280,6 +306,98 @@ export interface GrammarExplanation {
   collocations?: Array<{ en: string; zh: string }>;
   /** Words in the same family (strong derivations first). */
   relatedWords?: string[];
+  /** Canonical dictionary record used by the shared word-card renderer. */
+  dictionaryRecord?: DictionaryRecord;
+  /** The sentence selected in the article; never presented as a curated example. */
+  readingOriginalSentence?: string;
+}
+
+export type DictionaryReviewStatus = 'reviewed' | 'needs-review' | 'unreviewed';
+export type DictionarySourceKind = 'ECDICT' | 'manual' | 'unknown';
+export type DictionaryAuthoringMethod = 'model-manual' | 'pack-import' | 'unknown';
+
+export interface DictionarySourceRef {
+  kind: DictionarySourceKind;
+  label?: string;
+  detail?: string;
+  status: 'confirmed' | 'unknown';
+}
+
+export interface DictionaryExample {
+  id: string;
+  en: string;
+  zh?: string;
+  source: DictionarySourceRef;
+  reviewStatus: DictionaryReviewStatus;
+}
+
+export interface DictionaryCollocation {
+  en: string;
+  zh?: string;
+  source: DictionarySourceRef;
+  reviewStatus: DictionaryReviewStatus;
+}
+
+export interface DictionarySense {
+  id: string;
+  definitionEn: string;
+  definitionZh?: string;
+  definitionZhCandidates?: string[];
+  usageLabels: string[];
+  sortOrder: number;
+  examples: DictionaryExample[];
+  collocations: DictionaryCollocation[];
+  grammarNotes: string[];
+  source: DictionarySourceRef[];
+  reviewStatus: DictionaryReviewStatus;
+}
+
+export interface DictionaryPartOfSpeechGroup {
+  id: string;
+  partOfSpeech: string;
+  usageLabels: string[];
+  senses: DictionarySense[];
+  sortOrder: number;
+}
+
+export interface DictionaryPhrase {
+  id: string;
+  phrase: string;
+  partOfSpeech?: string;
+  definitionEn?: string;
+  definitionZh?: string;
+  examples: DictionaryExample[];
+  source: DictionarySourceRef[];
+  reviewStatus: DictionaryReviewStatus;
+}
+
+export interface DictionaryEditInfo {
+  source: DictionarySourceRef[];
+  revisionVersion: string;
+  /**
+   * Provenance of the entry's text. `model-manual` means a person/model wrote
+   * the senses and examples by hand; only that method may be published in a
+   * reviewed batch. Base-pack rows stay `pack-import`.
+   */
+  authoringMethod?: DictionaryAuthoringMethod;
+  reviewStatus: DictionaryReviewStatus;
+  changeNote?: string;
+}
+
+export interface DictionaryRecord {
+  schemaVersion: string;
+  query: string;
+  lemma: string;
+  phonetic: string;
+  phonetics: Array<{ label: string; text: string }>;
+  wordForms: Array<{ label: string; value: string }>;
+  wordFamily: string[];
+  cefrLevel: string | null;
+  tags: string[];
+  partOfSpeechGroups: DictionaryPartOfSpeechGroup[];
+  phrases: DictionaryPhrase[];
+  supplementaryChinese: string[];
+  edit: DictionaryEditInfo;
 }
 
 export interface TranslationResult {
@@ -346,6 +464,8 @@ export type TutorIntent =
   | 'recommend_article'
   | 'rewrite_article'
   | 'rate_article'
+  | 'reading_verification'
+  | 'after_reading'
   | 'discuss';
 
 /** Full-article translate: one Chinese string per English paragraph (same length). */
@@ -363,6 +483,12 @@ export interface TutorRequest {
   targetLanguage?: string;
   topic?: string;
   reviewWords?: string[];
+  /** Previously read English contexts excluded from new verification questions. */
+  verificationContexts?: string[];
+  articleTitle?: string;
+  learnerWords?: ReadingLearnerWord[];
+  learningSummary?: ReadingLearnerSummary;
+  allowImmediatePractice?: boolean;
   level?: string;
   history?: ChatMessage[];
   /** 1-based paragraph index when translating one paragraph during import. */
@@ -374,6 +500,37 @@ export interface TutorRequest {
    * Model must return the same number of Chinese translations.
    */
   paragraphs?: string[];
+}
+
+/** Bounded learning evidence shared with the reading agent, never a raw user journal. */
+export interface ReadingLearnerWord {
+  wordId: string;
+  inArticle: boolean;
+  eligibleDelayed: boolean;
+  memoryScore: number | null;
+  confidence: number | null;
+  exposureCount: number;
+  reviewCount: number;
+  lastSeenAt: string | null;
+  lastAssistedAt: string | null;
+  lastReviewAt: string | null;
+  lastOutcome?: 'recognized' | 'incorrect' | 'uncertain' | 'guessed' | 'skipped';
+  lastOutcomePurpose?: 'delayed_verification' | 'immediate_practice';
+  recentContext?: string;
+}
+
+export interface ReadingLearnerSummary {
+  trackedWordCount: number;
+  articleWordCount: number;
+  eligibleDelayedCount: number;
+}
+
+export interface ReadingAgentDecision {
+  action: 'ask' | 'skip';
+  reasonZh: string;
+  wordId?: string;
+  purpose?: 'delayed_verification' | 'immediate_practice';
+  level?: string;
 }
 
 export interface TutorSuccessResponse<T> {

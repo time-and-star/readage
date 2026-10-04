@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "dictionary.v2",
+  "query": "",
+  "lemma": "",
+  "phonetic": "",
+  "phonetics": [],
+  "wordForms": [],
+  "wordFamily": [],
+  "cefrLevel": null,
+  "tags": [],
+  "partOfSpeechGroups": [],
+  "phrases": [],
+  "supplementaryChinese": [],
+  "edit": {
+    "source": [
+      {
+        "kind": "manual",
+        "label": "curated-revision",
+        "status": "confirmed"
+      }
+    ],
+    "revisionVersion": "batch-001.v1",
+    "authoringMethod": "model-manual",
+    "reviewStatus": "draft",
+    "changeNote": ""
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "format": "dictionary-revisions.v1",
+  "schemaVersion": "dictionary.v2",
+  "contentVersion": "dictionary-content.v2",
+  "authoringMethod": "model-manual",
+  "sourceHistory": "The bundled pack records ECDICT and project enhancements; edits lost from the pack are marked unknown rather than inferred.",
+  "reviewedSampleCount": 50,
+  "sampleList": "data/dictionary/sample-words.json",
+  "revisionFile": "data/dictionary/revisions/curated-50.jsonl",
+  "revisionTemplate": "data/dictionary/revisions/revision-template.json",
+  "batchesDir": "data/dictionary/revisions/batches",
+  "batches": [
+    {
+      "batchId": "batch-001",
+      "status": "reviewing",
+      "size": 2000,
+      "wordListHash": "22001f9092bb08da33bd9e228ce15f8971982e2b3ab552af441bb3ebda24e986",
+      "revisionCount": 2000,
+      "createdAt": "2026-09-10T09:24:28.544Z",
+      "publishedAt": null
+    }
+  ]
+}

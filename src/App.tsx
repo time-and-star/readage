@@ -56,6 +56,7 @@ import {
   getCachedMagazineRecommendationPool,
 } from './lib/magazineRecommendationPool';
 import { fetchMagazineLemmaIndex } from './lib/magazineLemmaIndex';
+import { getNextImportedArticle } from './lib/userLibrary';
 import {
   getArticleImportQueue,
   needsImportEnrichment,
@@ -87,11 +88,14 @@ import { BookOpen, BarChart3, History, Library } from 'lucide-react';
 import {
   DEFAULT_REVIEW_QUEUE_LIMIT,
   useDueWords,
-  useProficiencyStats,
+  useConfirmationWords,
   useAllWordProficiency,
   useMemoryStorageError,
+  useMemoryLifecycle,
   useExternalLearningActivity,
 } from './lib/memoryV2/hooks';
+import { getCanonicalLearningCollections } from './lib/learningWordProficiency';
+import type { WordProficiencyView } from './lib/memoryV2/memorySystem';
 
 function emptySession(articleId: string): ArticleSession {
   return {
@@ -190,10 +194,32 @@ export default function App() {
     normalizeArticleSessions
   );
   // Memory V2.2: 使用 Hooks 替代 proficiency 状态
-  const { dueWords, loading: dueWordsLoading } = useDueWords(DEFAULT_REVIEW_QUEUE_LIMIT);
-  const { stats, loading: statsLoading } = useProficiencyStats();
-  const { proficiencies, loading: proficienciesLoading } = useAllWordProficiency();
+  const { dueWords: rawDueWords, loading: dueWordsLoading } = useDueWords(DEFAULT_REVIEW_QUEUE_LIMIT);
+  const { confirmationWords: rawConfirmationWords } = useConfirmationWords(DEFAULT_REVIEW_QUEUE_LIMIT);
+  const { proficiencies: rawProficiencies, loading: rawProficienciesLoading } = useAllWordProficiency();
+  const [canonicalMemory, setCanonicalMemory] = useState<{
+    proficiencies: WordProficiencyView[];
+    dueWords: WordProficiencyView[];
+    confirmationWords: WordProficiencyView[];
+  }>({ proficiencies: [], dueWords: [], confirmationWords: [] });
+  const [canonicalMemoryLoading, setCanonicalMemoryLoading] = useState(true);
+  useEffect(() => {
+    let current = true;
+    setCanonicalMemoryLoading(true);
+    void getCanonicalLearningCollections(rawProficiencies, rawDueWords, rawConfirmationWords)
+      .then((collections) => { if (current) setCanonicalMemory(collections); })
+      .catch(() => {
+        // Keep saved learning progress available during a dictionary outage.
+        if (current) setCanonicalMemory({ proficiencies: rawProficiencies,
+          dueWords: rawDueWords, confirmationWords: rawConfirmationWords });
+      })
+      .finally(() => { if (current) setCanonicalMemoryLoading(false); });
+    return () => { current = false; };
+  }, [rawProficiencies, rawDueWords, rawConfirmationWords]);
+  const { proficiencies, dueWords, confirmationWords } = canonicalMemory;
+  const proficienciesLoading = rawProficienciesLoading || canonicalMemoryLoading;
   const memoryStorageError = useMemoryStorageError();
+  const memoryLifecycle = useMemoryLifecycle();
   const persistenceError = usePersistenceError();
   const externalActivity = useExternalLearningActivity();
 
@@ -231,6 +257,7 @@ export default function App() {
   /** Last article opened in the reading tab — survives nav switches away from /read/:id. */
   const [lastReadingArticleId, setLastReadingArticleId] = useState<string | null>(() => readReadingBookmark()?.articleId ?? null);
   const [showEnterArticle, setShowEnterArticle] = useState(false);
+  const [fileImportNotice, setFileImportNotice] = useState<string | null>(null);
   const importQueueSnapshot = useArticleImportQueue();
 
   const selectBoundedRecommendationFallback = (
@@ -247,6 +274,7 @@ export default function App() {
       cefrRecommendationProfile,
       { mode: reviewWords.length > 0 ? 'review' : 'normal', checkCefr: true },
     ),
+    reviewWords.length > 0,
   );
 
   const navigate = (nextRoute: AppRoute, options: NavigationOptions = {}) => {
@@ -615,15 +643,23 @@ export default function App() {
     () => dueWords.map(w => w.wordId),
     [dueWords]
   );
+  const reviewLemmas = useMemo(
+    () => Array.from(new Set([
+      ...dueLemmas,
+      ...confirmationWords.map((word) => word.wordId),
+    ])).slice(0, DEFAULT_REVIEW_QUEUE_LIMIT),
+    [confirmationWords, dueLemmas]
+  );
 
   const bands = useMemo(
-    () => ({
-      introduced: stats?.introducedCount || 0,
-      learning: stats?.learningCount || 0,
-      mastered: stats?.masteredCount || 0,
-      due: stats?.dueCount || 0,
-    }),
-    [stats]
+    () => proficiencies.reduce((counts, word) => {
+      if (word.isIntroduced) counts.introduced += 1;
+      else if (word.level === 4) counts.mastered += 1;
+      else counts.learning += 1;
+      if (!word.isIntroduced && new Date(word.nextReview).getTime() <= reviewClock) counts.due += 1;
+      return counts;
+    }, { introduced: 0, learning: 0, mastered: 0, due: 0 }),
+    [proficiencies, reviewClock]
   );
 
   const trackedLemmas = useMemo(
@@ -777,11 +813,16 @@ export default function App() {
           ? 'recommend'
           : 'history');
 
+    if (article.importBatchId) {
+      ingestArticle(article, { open: true, source });
+      return;
+    }
+
     if (!options?.continueFeed) {
       resetRecommendationFeed();
       recommendationContextRef.current = {
         topic: options?.topic ?? 'English Idioms & Daily Practice',
-        reviewWords: options?.reviewWords ?? dueLemmas.slice(0, 5),
+        reviewWords: options?.reviewWords ?? reviewLemmas,
       };
       updateRecommendationFeed(startRecommendationFeed(article.id));
       updateRecommendationArticles([article]);
@@ -1105,12 +1146,12 @@ export default function App() {
   };
 
   const handleRecommendForMe = () => {
-    const reviewWords = dueLemmas.slice(0, 5);
+    const reviewWords = reviewLemmas;
     void startRecommendationReading('English Idioms & Daily Practice', reviewWords);
   };
 
   const handleStartTargetedReview = () => {
-    const words = dueLemmas.slice(0, 5);
+    const words = reviewLemmas;
     void startRecommendationReading(
       `Contextual review of: ${words.join(', ') || 'core vocabulary'}`,
       words
@@ -1125,7 +1166,7 @@ export default function App() {
     }
     void startRecommendationReading(
       'English Idioms & Daily Practice',
-      dueLemmas.slice(0, 5)
+      reviewLemmas
     );
   };
 
@@ -1178,11 +1219,19 @@ export default function App() {
     void prefetchNextRecommendationArticle();
   };
 
-  const handleAddNewCustomArticle = (newArticle: Article) => {
+  const handleAddImportedArticles = (articles: Article[], notice?: string) => {
+    if (articles.length === 0) return;
     setShowEnterArticle(false);
-    // Manual import: store + open immediately; import module enriches in background.
+    setFileImportNotice(notice || null);
+    const [first, ...rest] = articles;
+    for (const article of rest) {
+      ingestArticle(
+        { ...article, source: article.source || 'user_input' },
+        { open: false, source: 'manual' }
+      );
+    }
     beginReadingSession(
-      { ...newArticle, source: newArticle.source || 'user_input' },
+      { ...first, source: first.source || 'user_input' },
       { source: 'manual' }
     );
   };
@@ -1265,8 +1314,10 @@ export default function App() {
   const isRecommendationReading = Boolean(
     recommendationFeed.status === 'active'
     && activeArticle
+    && !activeArticle.importBatchId
     && recommendationFeed.seenArticleIds.includes(activeArticle.id)
   );
+  const nextImportedArticle = activeArticle ? getNextImportedArticle(activeArticle, history) : undefined;
   const continuousReadingArticles = useMemo(() => {
     if (!isRecommendationReading) return undefined;
     const current = activeArticle || recommendationArticles[0];
@@ -1328,10 +1379,10 @@ export default function App() {
   }, [readingPreference.level]);
   const appNavigation = (
     <nav
-      className="w-full max-w-full flex items-center justify-center text-xs font-medium text-[#5B544C]"
+      className="app-navigation w-full max-w-full flex items-center justify-center text-xs font-medium text-[#5B544C]"
       aria-label="Primary navigation"
     >
-      <div className="nav-scroll-x flex items-center gap-0.5 sm:gap-1.5 px-0.5">
+      <div className="app-navigation__track nav-scroll-x flex items-center gap-0.5 sm:gap-1.5 px-0.5">
         {(
           [
             { id: 'library' as const, label: 'Library', icon: Library },
@@ -1357,14 +1408,14 @@ export default function App() {
               }
               navigate({ kind: id });
             }}
-            className={`tap-target min-h-10 px-2.5 py-2 sm:min-h-0 sm:px-2.5 sm:py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 shrink-0 ${
+            className={`app-navigation__item tap-target min-h-10 px-2.5 py-2 sm:min-h-0 sm:px-2.5 sm:py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 shrink-0 ${
               isCurrent
                 ? 'bg-white text-[#C35E37] shadow-2xs font-semibold'
                 : 'hover:bg-[#E4DFD5] active:bg-[#E0DBCF]'
             }`}
           >
             <Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-            <span className="hidden sm:inline">{label}</span>
+            <span className="app-navigation__label">{label}</span>
           </button>
           );
         })}
@@ -1404,6 +1455,20 @@ export default function App() {
           {memoryStorageError}
         </div>
       )}
+      {memoryLifecycle.error && (
+        <div role="alert" className="bg-red-50 border-b border-red-200 text-center text-sm text-red-900 py-2 px-3 flex items-center justify-center gap-3 flex-wrap">
+          <span>学习记忆系统暂时不可用：{memoryLifecycle.error}</span>
+          {memoryLifecycle.retryable && (
+            <button
+              type="button"
+              className="rounded border border-red-300 bg-white px-2.5 py-1 text-xs font-semibold hover:bg-red-100"
+              onClick={() => { void memoryLifecycle.retry().catch(() => undefined); }}
+            >
+              重试
+            </button>
+          )}
+        </div>
+      )}
       {(persistenceError || externalActivity.error) && (
         <div role="alert" className="bg-amber-50 border-b border-amber-200 p-3 text-sm text-amber-900">
           {persistenceError || externalActivity.error}
@@ -1414,6 +1479,15 @@ export default function App() {
       {isRewriting && (
         <div className="bg-[#FCE7F3] border-b border-[#FBCFE8] text-center text-xs text-[#9D174D] py-2 font-medium px-3">
           {rewriteProgress || '正在按等级改写文章…'}
+        </div>
+      )}
+
+      {fileImportNotice && (
+        <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] text-center text-xs text-[#075985] py-2 font-medium px-3">
+          <span>{fileImportNotice}</span>
+          <button type="button" className="ml-3 underline" onClick={() => setFileImportNotice(null)}>
+            关闭
+          </button>
         </div>
       )}
 
@@ -1482,7 +1556,12 @@ export default function App() {
             difficultyFeedback={readingPreference.feedback[activeArticle.id]}
             onDifficultyFeedback={rating => setReadingPreference(previous => applyDifficultyFeedback(previous,
               activeArticle.id, activeArticle.levelRating?.level || activeArticle.level, rating))}
-            onNextArticle={startRecommendationFromEntry}
+            onNextArticle={activeArticle.importBatchId
+              ? nextImportedArticle ? () => beginReadingSession(nextImportedArticle, { source: 'manual' }) : undefined
+              : startRecommendationFromEntry}
+            nextArticleLabel={activeArticle.importBatchId
+              ? activeArticle.importBatchFormat === 'pdf' ? '下一页正文' : '下一章'
+              : undefined}
             navigation={appNavigation}
             continuousArticles={continuousReadingArticles}
             importJob={importQueueSnapshot.jobs.find((j) => j.articleId === activeArticle.id) ?? null}
@@ -1605,11 +1684,10 @@ export default function App() {
       {showEnterArticle && (
         <EnterArticleModal
           onClose={() => setShowEnterArticle(false)}
-          onSubmitCustomArticle={handleAddNewCustomArticle}
+          onSubmitCustomArticles={handleAddImportedArticles}
         />
       )}
 
     </div>
   );
 }
-

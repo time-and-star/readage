@@ -29,7 +29,7 @@ test('My Learning renders real metric labels and honest empty states', () => {
   assert.doesNotMatch(html, /英语测试|重新测试|尚未定级|cefr-profile-heading/);
   assert.match(html, /新引入词/);
   assert.match(html, /学习中/);
-    assert.match(html, /较熟悉词/);
+  assert.match(html, /较熟悉词/);
   assert.match(html, /正式到期复习/);
   assert.match(html, /连续学习天数/);
   assert.match(html, /近 7 天学习事件/);
@@ -51,6 +51,24 @@ test('My Learning renders real metric labels and honest empty states', () => {
     'learning metrics should appear before the expandable data explanation',
   );
   assert.doesNotMatch(html, /演示固定值|中位示意/);
+});
+
+test('My Learning keeps the overview concise and secondary explanations collapsed', () => {
+  const html = renderToStaticMarkup(React.createElement(MyLearningScreen, baseProps));
+  const defaultContent = html.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '');
+
+  assert.match(defaultContent, /学习概览/);
+  assert.match(defaultContent, /待复习 <strong[^>]*>3<\/strong> 词/);
+  assert.match(defaultContent, /开始复习/);
+  assert.match(defaultContent, /导出词汇表/);
+  assert.match(defaultContent, /导出备份/);
+  assert.match(defaultContent, /导入备份/);
+  assert.match(defaultContent, /安装查词插件/);
+  assert.match(defaultContent, /学习数据保存在本机浏览器/);
+  assert.doesNotMatch(defaultContent, /较熟悉词|学习中 \(L1|近 7 天|词汇等级|CSV|JSON/);
+  assert.doesNotMatch(html, /A little|My learning|复习，让词汇留下来|在新的语境中/);
+  assert.match(html, /<summary[^>]*>学习详情<\/summary>/);
+  assert.doesNotMatch(html, /<details[^>]*\bopen(?:=|>)/);
 });
 
 test('My Learning exposes completion status and targeted-review loading state', () => {

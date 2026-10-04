@@ -35,7 +35,7 @@ export function ReadAgeBrand({
     <span className={`inline-flex items-center gap-2.5 ${className}`}>
       <ReadAgeLogo className={logoClassName} />
       <span
-        className={`font-serif text-lg font-semibold tracking-[-0.02em] ${
+        className={`font-display text-lg font-semibold tracking-[-0.035em] ${
           textTone === 'inverse' ? 'text-[#F1EADB]' : 'text-[#2B2723]'
         } ${nameClassName}`}
       >

@@ -8,6 +8,7 @@ import {
   LOCAL_BACKUP_FORMAT,
   LOCAL_BACKUP_VERSION,
   validateLocalDataBackup,
+  importLocalDataBackup,
 } from '../src/lib/localDataBackup';
 
 class MemoryStorage implements Storage {
@@ -91,4 +92,33 @@ test('validateLocalDataBackup accepts v1 payload and rejects foreign formats', (
       }),
     /不支持的备份版本/
   );
+});
+
+test('import restores the previous localStorage namespace when replacement fails', async () => {
+  const storage = new MemoryStorage();
+  storage.setItem('english-ai:v2:articles', 'old');
+  let writes = 0;
+  const originalSetItem = storage.setItem.bind(storage);
+  storage.setItem = (key, value) => {
+    writes += 1;
+    if (writes === 2) throw new Error('quota');
+    originalSetItem(key, value);
+  };
+  Object.defineProperty(globalThis, 'window', { value: { localStorage: storage }, configurable: true });
+
+  await assert.rejects(
+    importLocalDataBackup({
+      format: LOCAL_BACKUP_FORMAT,
+      version: LOCAL_BACKUP_VERSION,
+      localStorage: {
+        'english-ai:v2:articles': 'new',
+        'english-ai:v2:events': 'new-events',
+      },
+      indexedDb: null,
+    }),
+    /quota/
+  );
+  assert.equal(storage.getItem('english-ai:v2:articles'), 'old');
+  assert.equal(storage.getItem('english-ai:v2:events'), null);
+  delete (globalThis as { window?: unknown }).window;
 });

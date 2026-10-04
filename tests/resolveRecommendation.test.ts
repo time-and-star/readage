@@ -205,7 +205,7 @@ describe('resolveRecommendationArticle chain', () => {
     let receivedExclude: string[] = [];
 
     const resolved = await resolveRecommendationArticle(
-      { topic: 'Idioms', reviewWords: ['x'], excludeArticleIds: ['feed-seen'] },
+      { topic: 'Idioms', reviewWords: [], excludeArticleIds: ['feed-seen'] },
       {
         library: [seenInHistory, fresh],
         history: [seenInHistory],
@@ -232,6 +232,27 @@ describe('resolveRecommendationArticle chain', () => {
     assert.ok(receivedExclude.includes('already-read'));
     assert.ok(receivedExclude.includes('feed-seen'));
     assert.equal(resolved?.article.id, 'fresh-local');
+  });
+
+  it('allows targeted review to reopen a completed history article', async () => {
+    const reread = article('already-read', 'Completed');
+    const resolved = await resolveRecommendationArticle(
+      { topic: 'Idioms', reviewWords: ['x'], excludeArticleIds: [] },
+      {
+        library: [reread],
+        history: [reread],
+        useFullCatalog: false,
+        localProvider: async (request) =>
+          request.excludeArticleIds.includes('already-read') ? null : reread,
+        libraryFallback: () => null,
+        aiPost: async () => {
+          throw new Error('AI should not run when a review reread is available');
+        },
+      }
+    );
+
+    assert.equal(resolved?.source, 'local_memory');
+    assert.equal(resolved?.article.id, 'already-read');
   });
 
   it('ranks the full lemma catalog then hydrates only the winning article', async () => {

@@ -13,6 +13,7 @@ import type {
 } from './types';
 import type { MemoryStorage } from './storage';
 import { LocalStorageMemoryStorage } from './localStorageImpl';
+import { mergeRawEvents } from './rawEventPersistence';
 
 const DB_NAME = 'english-ai-memory-v2';
 const DB_VERSION = 1;
@@ -146,7 +147,7 @@ export class IndexedDbMemoryStorage implements MemoryStorage {
         const existing = (await requestToPromise(
           store.get(key)
         )) as { key: string; events: RawWordEvent[] } | undefined;
-        const merged = [...(existing?.events ?? []), ...batch];
+        const merged = mergeRawEvents(existing?.events ?? [], batch);
         store.put({ key, events: merged });
       }
     });

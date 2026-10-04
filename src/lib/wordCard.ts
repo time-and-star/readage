@@ -1,6 +1,7 @@
 import type { GrammarExplanation } from '../types';
 import { postTutor, TutorApiError } from './tutorClient';
 import { lookupDictionaryWord, toDictionaryWordCard } from './dictionaryClient';
+import { isEnglishWord, normalizeEnglishSurface } from './englishTokens';
 
 export interface WordCardRequest {
   selectedText: string;
@@ -19,10 +20,11 @@ export function createWordCardRequest(
   wordOrPhrase: string,
   contextSentence = '',
 ): WordCardRequest | null {
-  const selectedText = wordOrPhrase
-    .replace(/[^a-zA-Z\s']/g, '')
+  const selectedText = normalizeEnglishSurface(wordOrPhrase)
+    .replace(/[^a-zA-Z\s'-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+    .replace(/^[^a-zA-Z]+|[^a-zA-Z]+$/g, '')
     .slice(0, WORD_CARD_MAX_SELECTED_TEXT);
   if (!selectedText) return null;
   return {
@@ -44,8 +46,9 @@ export async function fetchWordCard(
   request: WordCardRequest,
   options: FetchWordCardOptions = {},
 ): Promise<GrammarExplanation> {
-  const cacheKey = `english-ai:v2:word-card:${request.selectedText.toLowerCase()}`;
-  const singleWord = /^[a-z]+(?:['-][a-z]+)*$/i.test(request.selectedText);
+  // Old cards may contain headwords chosen by unverified suffix stemming.
+  const cacheKey = `english-ai:v4:word-card:${request.selectedText.toLowerCase()}`;
+  const singleWord = isEnglishWord(request.selectedText);
   if (options.signal?.aborted) throw new Error('Lookup cancelled');
   if (singleWord) {
     try {
@@ -64,7 +67,7 @@ export async function fetchWordCard(
         const card = toDictionaryWordCard(entry);
         try {
           if (typeof localStorage !== 'undefined') {
-            const keys = Object.keys(localStorage).filter(key => key.startsWith('english-ai:v2:word-card:'));
+            const keys = Object.keys(localStorage).filter(key => key.startsWith('english-ai:v4:word-card:'));
             if (!keys.includes(cacheKey) && keys.length >= 500) {
               for (const key of keys.slice(0, keys.length - 499)) localStorage.removeItem(key);
             }

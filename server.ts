@@ -21,15 +21,24 @@ import {
 } from './src/lib/articleValidation';
 import { validateTutorRequest } from './src/lib/tutorValidation';
 import { createMagazineRouter } from './server/magazines/routes';
+import { createTtsRouter } from './server/tts/routes';
+import { parseUserImportFile, readImportFilename, UserImportError, USER_IMPORT_MAX_BYTES } from './server/import/parseUserFile';
+import { renderPdfSourcePage, resolvePdfSource } from './server/documents/pdfSource';
+import { resolveDocumentImage } from './server/documents/assets';
 import { startMagazineScheduler } from './server/magazines/scheduler';
 import {
   buildDictionaryExplanation,
+  getDictionaryContentVersion,
   getDictionaryHealth,
   isDictionaryExplainFirstEnabled,
   isSingleWordQuery,
   lookupDictionaryWord,
   lookupDictionaryWords,
 } from './server/dictionary/service';
+import { resolveDictionaryLearningWordIds } from './server/dictionary/learningWordIds';
+import { generateReadingVerification, readingVerificationProvider, READING_VERIFICATION_SERVER_BUDGET_MS,
+  type VerificationDictionaryHint } from './server/readingVerification';
+import { runAfterReadingAgent, AFTER_READING_SERVER_BUDGET_MS } from './server/tutorAgent';
 import {
   attachStepRealtimeProxy,
   authorizeSensitiveRequest,
@@ -85,6 +94,7 @@ const requireSensitiveApiAccess: express.RequestHandler = (req, res, next) => {
 
 /** Large tutor/import payloads are capped before expensive processing. */
 app.use(express.json({ limit: '2mb' }));
+app.use('/api/tts', createTtsRouter(requireSensitiveApiAccess));
 app.use('/api/magazines/sync', requireSensitiveApiAccess);
 app.use('/api/magazines', createMagazineRouter());
 app.get('/api/realtime/status', (_req, res) => {
@@ -112,14 +122,94 @@ app.get('/api/import/backfill-results', (_req, res) => {
     }
     return res.json({ ok: true, results, updatedAt });
   } catch (error) {
+    console.error('[backfill-results] read failed', error);
     return res.status(500).json({
       ok: false,
       error: {
         code: 'BACKFILL_READ_FAILED',
-        message: error instanceof Error ? error.message : 'Failed to read backfill results',
+        message: '导入补全结果暂时不可用，请稍后重试。',
       },
     });
   }
+});
+
+/**
+ * Whole-file import. EPUB/PDF/HTML use the magazine parsers and the same
+ * furniture, navigation, and short-chapter cleaning. TXT keeps a short lesson
+ * after that cleaning.
+ */
+const importFileBody: express.RequestHandler = (req, res, next) => {
+  express.raw({ type: () => true, limit: USER_IMPORT_MAX_BYTES })(req, res, (error: unknown) => {
+    if (!error) return next();
+    const status = typeof error === 'object' && error !== null && 'status' in error && error.status === 413
+      ? 413
+      : 400;
+    return res.status(status).json({
+      ok: false,
+      error: {
+        code: status === 413 ? 'FILE_TOO_LARGE' : 'IMPORT_FAILED',
+        message: status === 413
+          ? '文件超过 64MB，和杂志导入的大小上限相同。'
+          : '文件无法读取。',
+      },
+    });
+  });
+};
+
+app.post(
+  '/api/import/file',
+  requireSensitiveApiAccess,
+  importFileBody,
+  async (req, res) => {
+    try {
+      const header = req.header('x-import-filename');
+      const filename = readImportFilename(header);
+      const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const parsed = await parseUserImportFile(buffer, filename);
+      return res.json({ ok: true, ...parsed });
+    } catch (error) {
+      if (error instanceof UserImportError) {
+        const status = error.code === 'FILE_TOO_LARGE' ? 413 : 400;
+        return res.status(status).json({
+          ok: false,
+          error: { code: error.code, message: error.message },
+        });
+      }
+      console.error('[import-file] parse failed', error);
+      return res.status(400).json({
+        ok: false,
+        error: { code: 'IMPORT_FAILED', message: '文件解析失败，请使用 DOCX、EPUB、PDF、HTML 或 TXT。' },
+      });
+    }
+  }
+);
+
+app.get('/api/import/images/:name', requireSensitiveApiAccess, async (req, res) => {
+  const file = await resolveDocumentImage(req.params.name);
+  if (!file) return res.sendStatus(404);
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  return res.sendFile(file);
+});
+
+app.get('/api/import/documents/:name/pages/:page', requireSensitiveApiAccess, async (req, res) => {
+  try {
+    if (!/^[1-9]\d{0,3}$/.test(req.params.page)) return res.sendStatus(404);
+    const file = await renderPdfSourcePage(req.params.name, Number(req.params.page));
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.sendFile(file);
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: { message: error instanceof Error ? error.message : '原页无法读取。' } });
+  }
+});
+
+app.get('/api/import/documents/:name', requireSensitiveApiAccess, async (req, res) => {
+  const file = await resolvePdfSource(req.params.name);
+  if (!file) return res.sendStatus(404);
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  return res.sendFile(file);
 });
 
 /** When present, client import queue should not auto-resume (server-side backfill owns Step quota). */
@@ -162,7 +252,28 @@ app.post('/api/dictionary/lookup', async (req, res) => {
     });
   }
   const results = await lookupDictionaryWords(words);
-  return res.json({ ok: true, results });
+  return res.json({ ok: true, version: getDictionaryContentVersion(), schemaVersion: 'dictionary.v2', results });
+});
+
+// Compact payload for passive reading and recommendation catalogs. A failure
+// stays retryable so it cannot silently create a different word record.
+app.post('/api/dictionary/lemmas', async (req, res) => {
+  const words = req.body?.words;
+  if (!Array.isArray(words) || !words.length || words.length > DICTIONARY_LOOKUP_MAX_WORDS
+    || words.some((word: unknown) => typeof word !== 'string' || !word.trim() || word.length > 80)) {
+    return res.status(400).json({ ok: false, error: {
+      code: 'INVALID_REQUEST',
+      message: `words must contain 1–${DICTIONARY_LOOKUP_MAX_WORDS} non-empty strings of at most 80 characters.`,
+    } });
+  }
+  try {
+    const lemmas = await resolveDictionaryLearningWordIds(words);
+    return res.json({ ok: true, version: getDictionaryContentVersion(), lemmas });
+  } catch {
+    return res.status(503).json({ ok: false, error: {
+      code: 'DICTIONARY_UNAVAILABLE', message: 'Learning-word dictionary is unavailable.',
+    } });
+  }
 });
 
 // Never let unmatched /api/* fall through to Vite SPA (which returns HTML and breaks res.json())
@@ -270,8 +381,8 @@ const RECOMMEND_ARTICLE_SERVER_TIMEOUT_MS = 14_000;
 export type GenerateJsonOptions = {
   signal?: AbortSignal;
   timeoutMs?: number;
-  /** OpenAI-compatible provider override for a specific task. */
-  provider?: StepProvider;
+  /** Provider override for a specific task. */
+  provider?: StepProvider | 'gemini';
   model?: string;
   /** Step Plan reasoning_effort: low | medium | high. */
   reasoningEffort?: StepReasoningEffort;
@@ -311,6 +422,8 @@ function tutorTimeoutMs(intent: TutorRequest['intent']): number {
   if (Number.isFinite(configured) && configured === 0) return 0;
   if (Number.isFinite(configured) && configured > 0) return Math.min(configured, 24 * 60 * 60_000);
   if (intent === 'recommend_article') return 20_000;
+  if (intent === 'reading_verification') return READING_VERIFICATION_SERVER_BUDGET_MS;
+  if (intent === 'after_reading') return AFTER_READING_SERVER_BUDGET_MS;
   // Full-article DeepSeek work is uncapped by default. The caller may still
   // cancel by disconnecting, or set TUTOR_REQUEST_TIMEOUT_MS explicitly.
   if (intent === 'translate_article' || intent === 'rewrite_article') return 0;
@@ -356,9 +469,13 @@ async function generateJson<T>(
     }
 
     const useDeepSeek = options.provider === 'deepseek';
-    const useStep = !useDeepSeek && LLM_PROVIDER === 'step' && isStepChatConfigured();
+    const useStep = !useDeepSeek && options.provider !== 'gemini'
+      && (options.provider === 'step' || LLM_PROVIDER === 'step') && isStepChatConfigured();
     if (useDeepSeek && !isDeepSeekConfigured()) {
       throw new Error('DEEPSEEK_API_KEY is missing.');
+    }
+    if (options.provider === 'step' && !isStepChatConfigured()) {
+      throw new Error('STEP_API_KEY is missing.');
     }
     if (useStep || useDeepSeek) {
       const fullPrompt = `${prompt}
@@ -371,7 +488,7 @@ ${schemaHintForStep(responseSchema)}`;
         signal,
         // Prefer caller's budget (e.g. translate_article 3min) over stepChat's 60s default.
         timeoutMs: options.timeoutMs,
-        provider: options.provider,
+        provider: useDeepSeek ? 'deepseek' : 'step',
         model: options.model,
         reasoningEffort: options.reasoningEffort,
       });
@@ -509,6 +626,36 @@ ${delimit('context_sentence', request.contextSentence)}
 Return a concise bilingual analysis with phonetics, expression type, English definition, Chinese explanation, usage rules, and two examples.`;
   const explanation = await generateJson<GrammarExplanation>(prompt, grammarSchema);
   return { ...explanation, source: 'ai' };
+}
+
+async function handleReadingVerification(request: TutorRequest) {
+  const provider = readingVerificationProvider(process.env.READING_VERIFICATION_PROVIDER);
+  let hints: VerificationDictionaryHint[] = [];
+  try {
+    const entries = await lookupDictionaryWords(request.reviewWords ?? []);
+    hints = entries.flatMap((entry, index) => entry ? [{
+      wordId: request.reviewWords![index],
+      meanings: entry.partOfSpeechGroups.flatMap(group => group.senses.map(sense => ({
+        en: sense.definitionEn.slice(0, 250), zh: sense.definitionZh.slice(0, 250),
+        partOfSpeech: group.usageLabels.join('/'),
+      }))).slice(0, 4),
+    }] : []);
+  } catch { /* A dictionary outage must not prevent model-backed checks. */ }
+  return generateReadingVerification(request,
+    (prompt, schema) => generateJson<unknown>(prompt, schema,
+      { provider, ...(provider === 'deepseek' ? { model: getDeepSeekTranslateModel() } : {}),
+        timeoutMs: READING_VERIFICATION_SERVER_BUDGET_MS, reasoningEffort: 'low' }), hints);
+}
+
+async function handleAfterReading(request: TutorRequest) {
+  const provider = readingVerificationProvider(process.env.READING_VERIFICATION_PROVIDER);
+  return runAfterReadingAgent(request, {
+    decide: (prompt, schema) => generateJson<unknown>(prompt, schema, {
+      provider, ...(provider === 'deepseek' ? { model: getDeepSeekTranslateModel() } : {}),
+      timeoutMs: 12_000, reasoningEffort: 'low',
+    }),
+    meaningChoice: handleReadingVerification,
+  });
 }
 
 /** Article enrichment LLM: DeepSeek V4 Flash with thinking disabled. */
@@ -909,6 +1056,10 @@ app.post('/api/tutor', requireSensitiveApiAccess, async (req, res) => {
       switch (request.intent) {
       case 'explain':
         return res.json({ ok: true, intent: request.intent, result: await handleExplain(request) });
+      case 'reading_verification':
+        return res.json({ ok: true, intent: request.intent, result: await handleReadingVerification(request) });
+      case 'after_reading':
+        return res.json({ ok: true, intent: request.intent, result: await handleAfterReading(request) });
       case 'translate':
         return res.json({ ok: true, intent: request.intent, result: await handleTranslate(request) });
       case 'translate_article':
@@ -976,7 +1127,8 @@ app.post('/api/tutor', requireSensitiveApiAccess, async (req, res) => {
       return res.status(503).json({ ok: false, error: publicFailure });
     }
     const code = err.code || (err.message.includes('required') ? 'INVALID_REQUEST' : 'TUTOR_FAILED');
-    const status = code === 'INVALID_REQUEST' ? 400 : code === 'ARTICLE_VALIDATION_FAILED' ? 422 : 500;
+    const status = code === 'INVALID_REQUEST' ? 400
+      : code === 'ARTICLE_VALIDATION_FAILED' || code === 'READING_VERIFICATION_INVALID' ? 422 : 500;
     console.error(`[tutor:${request.intent}]`, err);
     return res.status(status).json({
       ok: false,

@@ -15,8 +15,11 @@ import {
   diversifyRecommendations,
 } from './memoryV2/recommendation';
 import { memoryV2 } from './memoryV2/hooks';
-import { getNewLemmas } from './readingExposure';
+import { extractLearningUnits } from './readingExposure';
+import { getArticleLearningTerms } from './readingLearningTerms';
 import { toLemma } from './proficiency';
+import { resolveLearningWordIds } from './dictionaryClient';
+import { getCanonicalWordProficiencyMap } from './learningWordProficiency';
 import type { WordProficiencyView } from './memoryV2/memorySystem';
 import {
   projectBandsOntoCatalog,
@@ -34,14 +37,10 @@ import {
  */
 function extractLemmasFromArticle(article: Article): string[] {
   const allLemmas = new Set<string>();
-  const exposedSet = new Set<string>();
+  const terms = getArticleLearningTerms(article);
 
   for (const paragraph of article.content) {
-    const newLemmas = getNewLemmas(paragraph, exposedSet);
-    newLemmas.forEach(lemma => {
-      allLemmas.add(lemma);
-      exposedSet.add(lemma);
-    });
+    for (const unit of extractLearningUnits(paragraph, terms)) allLemmas.add(unit.wordId);
   }
 
   return Array.from(allLemmas);
@@ -50,11 +49,28 @@ function extractLemmasFromArticle(article: Article): string[] {
 /**
  * 将文章库转换为候选文章列表
  */
-function convertToArticleCandidates(articles: Article[]): ArticleCandidate[] {
-  return articles.map(article => ({
+async function convertToArticleCandidates(articles: Article[]): Promise<ArticleCandidate[]> {
+  const candidates = articles.map(article => ({
     article,
     lemmas: extractLemmasFromArticle(article),
   }));
+  const surfaces = [...new Set(candidates.flatMap((candidate) => candidate.lemmas))];
+  const canonicalIds = await resolveRecommendationWordIds(surfaces);
+  const bySurface = new Map(surfaces.map((word, index) => [word, canonicalIds[index]]));
+  return candidates.map((candidate) => ({ ...candidate,
+    lemmas: [...new Set(candidate.lemmas.map((word) => bySurface.get(word) ?? word))],
+  }));
+}
+
+/** Ranking remains usable while the dictionary API is temporarily unavailable. */
+async function resolveRecommendationWordIds(words: readonly string[]): Promise<string[]> {
+  try { return await resolveLearningWordIds(words); }
+  catch { return words.map(toLemma); }
+}
+
+async function canonicalProficiencyMap(words: readonly WordProficiencyView[]): Promise<Map<string, WordProficiencyView>> {
+  try { return await getCanonicalWordProficiencyMap(words); }
+  catch { return new Map(words.map((word) => [toLemma(word.wordId), word])); }
 }
 
 function applyOpportunityRanking(
@@ -287,9 +303,7 @@ export class MemoryV2RecommendationAdapter {
     const userId = memoryV2.getUserId();
     const system = memoryV2.getSystem();
     const allProficiency = await system.getAllWordProficiency(userId);
-    const proficiencyMap = new Map(
-      allProficiency.map((p) => [p.wordId, p])
-    );
+    const proficiencyMap = await canonicalProficiencyMap(allProficiency);
 
     const filtered = applyHardFilters
       ? engine.filterCandidates(articleCandidates, proficiencyMap)
@@ -329,7 +343,7 @@ export class MemoryV2RecommendationAdapter {
     candidates: Article[],
     options: MemoryV2RecommendationOptions = {}
   ): Promise<RecommendationScore[]> {
-    const articleCandidates = convertToArticleCandidates(candidates);
+    const articleCandidates = await convertToArticleCandidates(candidates);
     return this.recommendCandidates(articleCandidates, options);
   }
 
@@ -357,8 +371,7 @@ export class MemoryV2RecommendationAdapter {
     const explicitTargetWords = Array.isArray(targetWordsOrCount)
       ? Array.from(
           new Set(
-            targetWordsOrCount
-              .map(toLemma)
+            (await resolveRecommendationWordIds(targetWordsOrCount))
               .filter(Boolean)
           )
         )
@@ -370,15 +383,35 @@ export class MemoryV2RecommendationAdapter {
         : 10;
 
     const allProficiency = await system.getAllWordProficiency(userId);
-    const proficiencyMap = new Map(
-      allProficiency.map(p => [p.wordId, p])
-    );
+    const proficiencyMap = await canonicalProficiencyMap(allProficiency);
 
     let priorityWords: WordProficiencyView[];
+    let confirmationWordsForRanking: WordProficiencyView[] = [];
+    const confirmationProvider = system as typeof system & {
+      getConfirmationWords?: (
+        userId: string,
+        currentTime: Date,
+        limit?: number,
+      ) => Promise<WordProficiencyView[]>;
+    };
     if (explicitTargetWords.length > 0) {
       // Explicit targets take precedence and must not trigger a due-word query.
+      // Refresh the confirmation metadata when available so an explicit target
+      // from the UI still avoids articles already used as effective contexts.
+      if (typeof confirmationProvider.getConfirmationWords === 'function') {
+        const confirmationWords = await confirmationProvider.getConfirmationWords(
+          userId,
+          new Date(),
+          explicitTargetWords.length,
+        );
+        const confirmationByWord = await canonicalProficiencyMap(confirmationWords);
+        confirmationWordsForRanking = explicitTargetWords
+          .map((wordId) => confirmationByWord.get(wordId))
+          .filter((word): word is WordProficiencyView => Boolean(word));
+      }
       priorityWords = explicitTargetWords.map(wordId => {
-        const existing = proficiencyMap.get(wordId);
+        const existing = confirmationWordsForRanking.find((word) => toLemma(word.wordId) === wordId)
+          ?? proficiencyMap.get(wordId);
         if (existing) return existing;
 
         // A requested word may not have memory state yet, but it is still a valid target.
@@ -395,19 +428,38 @@ export class MemoryV2RecommendationAdapter {
         return target;
       });
     } else {
-      // Preserve the legacy behavior when no concrete target set is supplied.
-      priorityWords = await system.getDueWords(userId, new Date(), targetReviewCount);
+      // Confirmation targets are pre-FSRS words and must be surfaced alongside
+      // due reviews without changing the meaning of getDueWords(). Keep the
+      // optional guard for older test/storage adapters that only implement the
+      // original review API.
+      const now = new Date();
+      const confirmationWords = typeof confirmationProvider.getConfirmationWords === 'function'
+        ? await confirmationProvider.getConfirmationWords(userId, now, targetReviewCount)
+        : [];
+      confirmationWordsForRanking = [...(await canonicalProficiencyMap(confirmationWords)).values()]
+        .map((word) => proficiencyMap.get(word.wordId) ?? word)
+        .filter((word) => word.isIntroduced);
+      const dueWords = await system.getDueWords(userId, now, targetReviewCount);
+      const canonicalDueWords = [...(await canonicalProficiencyMap(dueWords)).values()]
+        .map((word) => proficiencyMap.get(word.wordId) ?? word)
+        .filter((word) => !word.isIntroduced && new Date(word.nextReview) <= now);
+      const merged = new Map([...confirmationWordsForRanking, ...canonicalDueWords]
+        .map((word) => [word.wordId, word]));
+      priorityWords = [...merged.values()].slice(0, targetReviewCount);
     }
 
     if (priorityWords.length === 0) {
       return this.recommend(candidates, { limit });
     }
 
-    const articleCandidates = convertToArticleCandidates(candidates);
+    const articleCandidates = await convertToArticleCandidates(candidates);
+    // A reread of the same article on a later local day is valid evidence, so
+    // confirmation targets use the same article candidate pool as FSRS targets.
+    const reviewCandidates = articleCandidates;
     // Unique-hit schedule first (drops zero-hit articles).
     const reviewArticles = scheduleReviewArticles(
       priorityWords,
-      articleCandidates,
+      reviewCandidates,
       targetReviewCount
     );
 
@@ -518,7 +570,7 @@ export async function rankMagazineLemmaCandidates(
   if (reviewWords.length > 0) {
     // Prefer articles containing target review lemmas, then score.
     const target = new Set(
-      reviewWords.map(toLemma).filter(Boolean)
+      (await resolveRecommendationWordIds(reviewWords)).filter(Boolean)
     );
     const hitById = new Map<string, number>();
     const withTargets = filtered
@@ -581,11 +633,12 @@ export async function memoryV2RecommendationProvider(
   const { topic, reviewWords, excludeArticleIds } = request;
   const excluded = new Set(excludeArticleIds.filter(Boolean));
 
-  // Drop feed-session excludes and already-finished pieces so the same article
-  // is never re-served for review ranking.
+  // Keep normal recommendations fresh, while allowing a targeted review to
+  // reopen a completed article so a later-local-day reread can count.
+  const allowCompletedReread = reviewWords.length > 0;
   const candidates = articleLibrary.filter((article) => {
     if (!article?.id || excluded.has(article.id)) return false;
-    if (article.status === 'Completed') return false;
+    if (!allowCompletedReread && article.status === 'Completed') return false;
     return true;
   });
 
