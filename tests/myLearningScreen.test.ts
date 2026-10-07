@@ -7,10 +7,14 @@ import { MyLearningScreen } from '../src/components/MyLearningScreen';
 
 const baseProps = {
   onBack: () => undefined,
-  onStartTargetedReview: () => undefined,
+  onOpenRecommendedReading: () => undefined,
+  onOpenFlashcards: () => undefined,
+  onOpenReadingRecords: () => undefined,
+  onOpenDictionarySettings: () => undefined,
   onOpenArticle: () => undefined,
   articlesReadCount: 2,
   introducedWordsCount: 11,
+  learnedWordsCount: 24,
   masteredWordsCount: 8,
   learningWordsCount: 5,
   streakDaysCount: 4,
@@ -19,20 +23,21 @@ const baseProps = {
   proficiencies: [],
   proficienciesLoading: false,
   weakPointMetrics: [],
-  isTargetedReviewLoading: false,
   articleProgress: [],
 };
 
 test('My Learning renders real metric labels and honest empty states', () => {
   const html = renderToStaticMarkup(React.createElement(MyLearningScreen, baseProps));
   assert.match(html, /已完成文章/);
+  assert.match(html, /<button[^>]*aria-label="已完成 2 篇文章，查看文章与生词"/);
   assert.doesNotMatch(html, /英语测试|重新测试|尚未定级|cefr-profile-heading/);
-  assert.match(html, /新引入词/);
+  assert.match(html, /新词/);
   assert.match(html, /学习中/);
-  assert.match(html, /较熟悉词/);
-  assert.match(html, /正式到期复习/);
-  assert.match(html, /连续学习天数/);
-  assert.match(html, /近 7 天学习事件/);
+  assert.match(html, /较熟悉/);
+  assert.match(html, /正式回忆后已到期/);
+  assert.match(html, /连续天数/);
+  assert.match(html, /近 7 天记录/);
+  assert.doesNotMatch(html.replace(/<[^>]*>/g, ''), /新引入词|连续学习天数|L4|L1–L3/);
   assert.doesNotMatch(html, /\u5c1a\u672a\u53d1\u73b0\u660e\u786e\u8584\u5f31\u70b9/);
   assert.doesNotMatch(html, /weak-points-heading/);
   assert.match(html, /学习数据保存在本机浏览器/);
@@ -55,26 +60,57 @@ test('My Learning renders real metric labels and honest empty states', () => {
 
 test('My Learning keeps the overview concise and secondary explanations collapsed', () => {
   const html = renderToStaticMarkup(React.createElement(MyLearningScreen, baseProps));
-  const defaultContent = html.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '');
+  const defaultContent = html.replace(/<details\b[^>]*>([\s\S]*?)<\/details>/g, (_details, contents: string) => (
+    contents.match(/<summary\b[^>]*>[\s\S]*?<\/summary>/)?.[0] ?? ''
+  ));
 
   assert.match(defaultContent, /学习概览/);
-  assert.match(defaultContent, /待复习 <strong[^>]*>3<\/strong> 词/);
-  assert.match(defaultContent, /开始复习/);
-  assert.match(defaultContent, /导出词汇表/);
-  assert.match(defaultContent, /导出备份/);
-  assert.match(defaultContent, /导入备份/);
+  assert.match(defaultContent, /已学习<\/dt><dd><strong[^>]*>24<\/strong> 词/);
+  assert.match(defaultContent, /待复习<\/dt><dd><strong[^>]*>3<\/strong> 词/);
+  assert.match(defaultContent, /推荐阅读/);
+  assert.match(defaultContent, /词卡学习/);
+  assert.doesNotMatch(defaultContent, /每篇推荐文章只覆盖部分待复习词/);
+  assert.match(html, /每篇推荐文章只覆盖部分待复习词/);
+  assert.doesNotMatch(defaultContent, /开始复习|正在生成复习文章/);
+  assert.match(defaultContent, /词典设置/);
+  assert.match(defaultContent, /数据与备份/);
   assert.match(defaultContent, /安装查词插件/);
-  assert.match(defaultContent, /学习数据保存在本机浏览器/);
-  assert.doesNotMatch(defaultContent, /较熟悉词|学习中 \(L1|近 7 天|词汇等级|CSV|JSON/);
+  assert.doesNotMatch(defaultContent, /导出词汇表|导出备份|导入备份|学习数据保存在本机浏览器/);
+  assert.doesNotMatch(defaultContent, /较熟悉|学习中|近 7 天|熟悉度|CSV|JSON/);
   assert.doesNotMatch(html, /A little|My learning|复习，让词汇留下来|在新的语境中/);
-  assert.match(html, /<summary[^>]*>学习详情<\/summary>/);
+  assert.match(html, /<summary[^>]*>[\s\S]*?<span>学习详情<\/span>[\s\S]*?<\/summary>/);
   assert.doesNotMatch(html, /<details[^>]*\bopen(?:=|>)/);
 });
 
-test('My Learning exposes completion status and targeted-review loading state', () => {
+test('My Learning places reading and flashcards in one adjacent learning entry group', () => {
+  const html = renderToStaticMarkup(React.createElement(MyLearningScreen, baseProps));
+  const actions = html.match(/<div[^>]*role="group"[^>]*aria-label="学习入口"[^>]*>[\s\S]*?<\/div>/)?.[0] ?? '';
+
+  assert.match(actions, /<button[^>]*>推荐阅读<\/button><button[^>]*>词卡学习<\/button>/);
+  assert.equal(actions.match(/<button\b/g)?.length, 2);
+  assert.ok(html.indexOf('学习入口') < html.indexOf('学习详情'));
+});
+
+test('My Learning consolidates settings and utilities below learning content', () => {
+  const html = renderToStaticMarkup(React.createElement(MyLearningScreen, baseProps));
+  const utilities = html.match(/<section[^>]*aria-labelledby="learning-tools-heading"[\s\S]*?<\/section>/)?.[0] ?? '';
+
+  assert.ok(html.indexOf('词卡学习') < html.indexOf('学习详情'));
+  assert.ok(html.indexOf('学习详情') < html.indexOf('设置与工具'));
+  assert.ok(html.indexOf('设置与工具') < html.indexOf('词典设置'));
+  assert.match(utilities, /<button[^>]*>[\s\S]*?词典设置[\s\S]*?<\/button>/);
+  assert.match(utilities, /<a href="\/extension-setup.html"[^>]*>[\s\S]*?安装查词插件[\s\S]*?<\/a>/);
+  assert.match(utilities, /<details[^>]*><summary[^>]*>[\s\S]*?数据与备份[\s\S]*?<\/summary>[\s\S]*导出词汇表[\s\S]*导出备份[\s\S]*导入备份/);
+  assert.match(utilities, /aria-label="选择学习备份文件"/);
+  assert.match(utilities, /CSV 文件可用 Excel 打开/);
+  assert.match(utilities, /导入前会确认覆盖当前记录/);
+  assert.match(utilities, /阅读数据说明[\s\S]*词汇学习证据[\s\S]*主动调用 AI/);
+  assert.doesNotMatch(html.slice(0, html.indexOf('设置与工具')), /导出词汇表|导出备份|导入备份|安装查词插件|阅读数据说明/);
+});
+
+test('My Learning describes recorded words separately from mastery and article coverage', () => {
   const html = renderToStaticMarkup(React.createElement(MyLearningScreen, {
     ...baseProps,
-    isTargetedReviewLoading: true,
     weakPointMetrics: [{ skill: 'articles', issueCount: 2, severity: 65 }],
     articleProgress: [{
       article: {
@@ -93,7 +129,11 @@ test('My Learning exposes completion status and targeted-review loading state', 
 
   assert.match(html, /已完成/);
   assert.doesNotMatch(html, /articles · 2 次记录/);
-  assert.match(html, /正在生成复习文章/);
+  assert.match(html, /已学习指已有正式回忆记录的词/);
+  assert.match(html, /待复习仅计正式回忆后已到期且未暂停或移出的词/);
+  assert.match(html, /熟悉度是估计，不代表全部掌握/);
+  assert.match(html, /每篇推荐文章只覆盖部分待复习词/);
+  assert.match(html, /读完后仅更新实际学习的词/);
   assert.match(html, /disabled=""/);
   assert.doesNotMatch(html, /查词 4/);
   assert.doesNotMatch(html, /article-progress-heading/);

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import JSZip from 'jszip';
 import {
   parseUserImportFile,
+  parseUserImportPageQuery,
   readImportFilename,
   UserImportError,
 } from '../server/import/parseUserFile';
@@ -113,5 +114,37 @@ describe('user file import', () => {
       (error: unknown) => error instanceof UserImportError && error.code === 'INVALID_DOCX'
     );
     assert.equal(readImportFilename('..%2F..%2Fsecret.epub'), 'secret.epub');
+  });
+
+  it('retains short HTML lessons and reads all chapters beyond the first batch in stable order', async () => {
+    const html = Buffer.from(`<html><body>${Array.from({ length: 87 }, (_, i) => `<article><h1>Lesson ${i + 1}</h1><p>A short lesson about boats.</p></article>`).join('')}</body></html>`);
+    const first = await parseUserImportFile(html, 'lessons.html');
+    const tail = await parseUserImportFile(html, 'lessons.html', { offset: first.nextOffset! });
+    assert.equal(first.articles.length, 80);
+    assert.equal(first.totalCount, 87);
+    assert.equal(first.nextOffset, 80);
+    assert.equal(tail.offset, 80);
+    assert.equal(tail.nextOffset, null);
+    assert.equal(tail.sourceId, first.sourceId);
+    assert.match(first.sourceId, /^[a-f\d]{64}$/);
+    assert.deepEqual([...first.articles, ...tail.articles].map(article => article.title), Array.from({ length: 87 }, (_, i) => `Lesson ${i + 1}`));
+    const selected = await parseUserImportFile(html, 'lessons.html', { offset: 83, limit: 2 });
+    assert.deepEqual(selected.articles.map(article => article.title), ['Lesson 84', 'Lesson 85']);
+    assert.equal(selected.nextOffset, 85);
+    assert.equal(selected.omittedCount, 2);
+    await assert.rejects(parseUserImportFile(html, 'lessons.html', { offset: 87 }), /共有 87 篇/);
+  });
+
+  it('validates pagination query and propagates cancellation without parsing or saving', async () => {
+    assert.deepEqual(parseUserImportPageQuery({}), { offset: 0, limit: 80 });
+    assert.deepEqual(parseUserImportPageQuery({ offset: '80', limit: '20' }), { offset: 80, limit: 20 });
+    for (const query of [{ offset: '-1' }, { offset: ['1', '2'] }, { offset: '1.5' }, { limit: '81' }, { limit: '0' }, { offset: '99999999999999999999' }]) {
+      assert.throws(() => parseUserImportPageQuery(query), UserImportError);
+    }
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled import'));
+    await assert.rejects(parseUserImportFile(Buffer.from('Small lesson.'), 'lesson.txt', {
+      signal: controller.signal, saveImage: async () => assert.fail('Cancelled imports must not save assets.'),
+    }), /cancelled import/);
   });
 });

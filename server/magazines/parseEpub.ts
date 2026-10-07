@@ -13,6 +13,8 @@ export interface ParsedChapter {
 }
 
 export interface EpubParseOptions {
+  /** User imports can stop parsing when the requesting screen closes. */
+  signal?: AbortSignal;
   /** Inject an asset sink when importing into a different document store. */
   saveImage?: (buffer: Buffer) => Promise<string | null>;
   /** Personal books can retain short chapters; magazine imports keep their default cutoff. */
@@ -232,8 +234,11 @@ async function readZipText(zip: JSZip, filePath: string): Promise<string | null>
 }
 
 export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions = {}): Promise<ParsedChapter[]> {
+  options.signal?.throwIfAborted();
   const zip = await JSZip.loadAsync(buffer);
+  options.signal?.throwIfAborted();
   const container = await readZipText(zip, 'META-INF/container.xml');
+  options.signal?.throwIfAborted();
   if (!container) throw new Error('Invalid EPUB: missing META-INF/container.xml');
 
   const rootfileMatch = container.match(/full-path\s*=\s*["']([^"']+)["']/i);
@@ -242,6 +247,7 @@ export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions 
   if (!opfPath) throw new Error('Invalid EPUB: unsafe OPF path');
   const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/')) : '';
   const opf = await readZipText(zip, opfPath);
+  options.signal?.throwIfAborted();
   if (!opf) throw new Error(`Invalid EPUB: missing OPF ${opfPath}`);
 
   const idToHref = new Map<string, string>();
@@ -264,6 +270,7 @@ export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions 
   const attachMedia = async (chapter: ParsedChapter, html: string, htmlPath: string) => {
     chapter.media = [];
     for (const candidate of collectImagePositions(html, htmlPath, chapter.paragraphs)) {
+      options.signal?.throwIfAborted();
       const key = Object.keys(zip.files).find((name) => name.replace(/\\/g, '/').toLowerCase() === candidate.archivePath.toLowerCase());
       if (!key || zip.files[key].dir) continue;
       if (!savedImages.has(key)) {
@@ -272,6 +279,7 @@ export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions 
           if (declaredSize && (declaredSize > 12 * 1024 * 1024
             || imageBytes + declaredSize > 64 * 1024 * 1024)) return null;
           const data = await zip.files[key].async('nodebuffer');
+          options.signal?.throwIfAborted();
           imageBytes += data.length;
           // Bound extracted media independently of the compressed EPUB size.
           if (data.length > 12 * 1024 * 1024 || imageBytes > 64 * 1024 * 1024) return null;
@@ -279,6 +287,7 @@ export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions 
         })());
       }
       const src = await savedImages.get(key);
+      options.signal?.throwIfAborted();
       if (src) chapter.media.push({
         src,
         alt: candidate.alt,
@@ -289,14 +298,17 @@ export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions 
   };
   let index = 0;
   for (const id of spineIds) {
+    options.signal?.throwIfAborted();
     const href = idToHref.get(id);
     if (!href) continue;
     const fullPath = resolveEpubPath(opfDir, href);
     if (!fullPath || !/\.(x?html?|xml)$/i.test(fullPath)) continue;
     const html = await readZipText(zip, fullPath);
+    options.signal?.throwIfAborted();
     if (!html) continue;
 
     for (const document of splitHtmlDocuments(html)) {
+      options.signal?.throwIfAborted();
       const chapter = parseHtmlDocument(document, `Section ${index + 1}`, options.minWords);
       if (chapter) {
         await attachMedia(chapter, document, fullPath);
@@ -312,7 +324,9 @@ export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions 
       (filePath) => /\.(x?html?)$/i.test(filePath) && !zip.files[filePath].dir
     );
     for (let i = 0; i < htmlFiles.length; i += 1) {
+      options.signal?.throwIfAborted();
       const html = await zip.files[htmlFiles[i]].async('text');
+      options.signal?.throwIfAborted();
       for (const document of splitHtmlDocuments(html)) {
         const chapter = parseHtmlDocument(document, `Part ${i + 1}`, options.minWords);
         if (chapter) {

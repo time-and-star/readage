@@ -6,9 +6,9 @@
 import { MemorySystemV2 } from './memorySystem';
 import { withMemoryWriteLock } from '../browserExtension/memoryLock';
 import { LocalStorageMemoryStorage } from './localStorageImpl';
-import { createPreferredMemoryStorage } from './indexedDbImpl';
+import { createPreferredMemoryStorage, MemoryStorageMigrationError } from './indexedDbImpl';
 import type { MemoryStorage } from './storage';
-import type { MemoryExposureSignals, RawWordEvent, ReadingVerificationInput } from './types';
+import type { FlashcardReviewCorrectionInput, FlashcardReviewInput, MemoryExposureSignals, RawWordEvent, ReadingVerificationInput } from './types';
 import {
   getLocalDateInTimeZone,
   getSystemTimeZone,
@@ -51,7 +51,55 @@ function isQuotaError(error: unknown): boolean {
 }
 
 export class MemoryV2Store {
-  async recordVerification(input: ReadingVerificationInput): Promise<void> {
+  async updateFlashcardWords(wordIds: string[], action: 'pause' | 'resume' | 'remove') {
+    await this.ensureReady();
+    try {
+      const preferences = await withMemoryWriteLock(() => this.system.updateFlashcardWords(this.userId, wordIds, action));
+      this.storageError = null;
+      this.notifyFlashcardChange();
+      return preferences;
+    } catch (error) {
+      this.storageError = '词表调整暂未保存，请重试。';
+      this.bumpVersion();
+      throw error;
+    }
+  }
+  async saveFlashcardStudyPreferences(dailyNewWordLimit: number | null) {
+    await this.ensureReady();
+    try {
+      const preferences = await withMemoryWriteLock(() => this.system.saveFlashcardStudyPreferences(this.userId, dailyNewWordLimit));
+      this.storageError = null;
+      this.notifyFlashcardChange();
+      return preferences;
+    } catch (error) {
+      this.storageError = isQuotaError(error) ? '存储空间不足，词卡设置暂未保存。' : '词卡设置暂未保存，请重试。';
+      this.bumpVersion();
+      throw error;
+    }
+  }
+  async importFlashcardWords(canonicalWordIds: string[], existingCanonicalWordIds?: ReadonlyMap<string, string>) {
+    await this.ensureReady();
+    try {
+      const result = await withMemoryWriteLock(() => this.system.importFlashcardWords(this.userId,
+        canonicalWordIds, existingCanonicalWordIds, this.now()));
+      this.storageError = null;
+      this.notifyFlashcardChange();
+      return result;
+    } catch (error) {
+      this.storageError = isQuotaError(error) ? '存储空间不足，词表尚未完整导入，请重试。' : '词表尚未完整导入，请重试。';
+      this.notifyFlashcardChange();
+      throw error;
+    }
+  }
+  private notifyFlashcardChange(): void {
+    this.bumpVersion();
+    if (typeof BroadcastChannel !== 'undefined') {
+      const channel = new BroadcastChannel('readage-memory-changed');
+      channel.postMessage('changed');
+      channel.close();
+    }
+  }
+  async recordVerification(input: ReadingVerificationInput | FlashcardReviewInput): Promise<void> {
     await this.ensureReady();
     try {
       await withMemoryWriteLock(() => this.system.recordVerification(this.userId, input, this.now()));
@@ -64,6 +112,20 @@ export class MemoryV2Store {
       }
     } catch (error) {
       if (isQuotaError(error)) { this.storageError = '学习记录存储空间不足，确认结果暂未保存。'; this.bumpVersion(); }
+      throw error;
+    }
+  }
+  async correctFlashcardReview(input: FlashcardReviewCorrectionInput): Promise<void> {
+    await this.ensureReady();
+    try {
+      await withMemoryWriteLock(() => this.system.correctFlashcardReview(this.userId, input, this.now()));
+      this.storageError = null;
+      this.notifyFlashcardChange();
+    } catch (error) {
+      if (isQuotaError(error)) {
+        this.storageError = '学习记录存储空间不足，评分修改尚未完成，请重试。';
+        this.bumpVersion();
+      }
       throw error;
     }
   }
@@ -153,6 +215,13 @@ export class MemoryV2Store {
             const preferred = await withMemoryWriteLock(() => createPreferredMemoryStorage());
             this.system = new MemorySystemV2(preferred, undefined, this.timezone);
           } catch (error) {
+            if (error instanceof MemoryStorageMigrationError) {
+              this.ready = false;
+              this.status = 'degraded';
+              this.lifecycleError = error.message;
+              this.bumpVersion();
+              throw error;
+            }
             console.warn(
               'Preferred memory storage init failed; keeping constructor storage.',
               error

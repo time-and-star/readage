@@ -7,6 +7,7 @@ export interface CompactWordCard {
   partOfSpeech?: string;
   meaningZh?: string;
   definitionEn?: string;
+  originalText?: string;
 }
 
 const PARTS_OF_SPEECH: Record<string, string> = {
@@ -81,6 +82,8 @@ export function getCompactWordCard(result: GrammarExplanation, selectedText?: st
     phonetic: text(result.phonetic) || text(record?.phonetic) || undefined,
     ...(restoredFrom ? { restoredFrom } : {}),
   };
+  if (result.originalDictionaryContent?.plainText) return { ...base,
+    originalText: result.originalDictionaryContent.plainText.replace(/\s+/g, ' ').trim().slice(0, 240) };
 
   const canonicalSenses = Array.isArray(record?.partOfSpeechGroups)
     ? record.partOfSpeechGroups.flatMap(group => Array.isArray(group?.senses)

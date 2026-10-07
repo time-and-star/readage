@@ -11,6 +11,7 @@ import { loadMagazineLemmaIndex } from './lemmaIndex';
 import { getSyncStatus, runMagazineSync, type SyncOptions } from './sync';
 import { hydrateMagazineMedia } from './mediaUpgrade';
 import { resolveArticleImage } from './assets';
+import { loadMagazineGalleryPage, loadMagazineGalleryStream, parseGalleryStreamCursor } from './gallery';
 
 
 interface SyncRequestError extends Error {
@@ -19,6 +20,40 @@ interface SyncRequestError extends Error {
 
 interface CatalogArticleRequestError extends Error {
   code: 'INVALID_ARTICLE_CATALOG_REQUEST';
+}
+
+interface GalleryRequestError extends Error {
+  code: 'INVALID_GALLERY_REQUEST';
+}
+
+export function parseGalleryQuery(query: Record<string, unknown>): { offset: number; limit: number } {
+  const invalid = (message: string): never => {
+    const error = new Error(`Invalid gallery request: ${message}`) as GalleryRequestError;
+    error.code = 'INVALID_GALLERY_REQUEST';
+    throw error;
+  };
+  const number = (key: string, fallback: number): number => {
+    const value = query[key];
+    if (value === undefined) return fallback;
+    if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) invalid(`${key} must be a non-negative integer`);
+    const result = Number(value);
+    if (!Number.isSafeInteger(result)) invalid(`${key} is too large`);
+    return result;
+  };
+  const offset = number('offset', 0);
+  const requestedLimit = number('limit', 24);
+  if (requestedLimit < 1) invalid('limit must be positive');
+  return { offset, limit: Math.min(60, requestedLimit) };
+}
+
+export function parseGalleryStreamQuery(query: Record<string, unknown>): { cursor?: string; limit: number } {
+  const { limit } = parseGalleryQuery({ limit: query.limit ?? '12' });
+  const cursor = query.cursor;
+  if (cursor !== undefined && typeof cursor !== 'string') {
+    throw Object.assign(new Error('Invalid gallery request: cursor must be a single string'), { code: 'INVALID_GALLERY_REQUEST' });
+  }
+  parseGalleryStreamCursor(cursor as string | undefined);
+  return { cursor: cursor as string | undefined, limit: Math.min(24, limit) };
 }
 
 function publicFailure(code: string, error: unknown, fallback: string) {
@@ -119,6 +154,34 @@ export function parseSyncRequest(body: unknown): SyncOptions {
 
 export function createMagazineRouter(): Router {
   const router = Router();
+
+  router.get('/gallery/stream', async (req, res) => {
+    try {
+      const page = await loadMagazineGalleryStream(parseGalleryStreamQuery(req.query));
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json({ ok: true, ...page });
+    } catch (error) {
+      if ((error as GalleryRequestError).code === 'INVALID_GALLERY_REQUEST') {
+        res.status(400).json({ ok: false, error: { code: 'INVALID_GALLERY_REQUEST', message: '图片浏览参数无效，请重新打开画廊。' } });
+        return;
+      }
+      res.status(500).json(publicFailure('GALLERY_FAILED', error, '杂志图片暂时无法加载，请稍后重试。'));
+    }
+  });
+
+  router.get('/gallery', async (req, res) => {
+    try {
+      const page = await loadMagazineGalleryPage(parseGalleryQuery(req.query));
+      res.setHeader('Cache-Control', 'private, max-age=60');
+      res.json({ ok: true, ...page });
+    } catch (error) {
+      if ((error as GalleryRequestError).code === 'INVALID_GALLERY_REQUEST') {
+        res.status(400).json({ ok: false, error: { code: 'INVALID_GALLERY_REQUEST', message: '图片分页参数无效。' } });
+        return;
+      }
+      res.status(500).json(publicFailure('GALLERY_FAILED', error, '杂志图片暂时无法加载，请稍后重试。'));
+    }
+  });
 
   router.get('/assets/:name', async (req, res) => {
     const file = await resolveArticleImage(req.params.name);

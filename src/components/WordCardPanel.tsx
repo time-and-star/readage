@@ -1,8 +1,14 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, Copy, Globe, Sparkles, Volume2, X } from 'lucide-react';
 import type { GrammarExplanation } from '../types';
 import { DictionarySenseGroups } from './DictionarySenseGroups';
+import { DictionarySourceSections } from './DictionarySourceSections';
+import { DictionarySourceIssues } from './DictionarySourceIssues';
+import { WordCardInteractions } from './WordCardInteractions';
+import { WordCardText } from './WordCardText';
+import { isTopWordCard } from '../lib/wordCardInteractions';
+import { WordMemoryDetailsPanel } from './WordMemoryDetailsPanel';
 
 export interface WordCardPanelProps {
   open: boolean;
@@ -15,10 +21,13 @@ export interface WordCardPanelProps {
   onLookupRelated: (word: string) => void;
   onTranslate?: () => void;
   onCopy?: () => void;
+  onRetrySources?: () => void;
+  error?: string | null;
+  ancestorCardIds?: string[];
 }
 
 /**
- * Independent word-card drawer: dictionary-first explain results (and AI fallback).
+ * Independent word-card drawer for local dictionary entries.
  * Portaled to document.body so the translated reading root cannot clip it.
  */
 export const WordCardPanel: React.FC<WordCardPanelProps> = ({
@@ -31,7 +40,11 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
   onLookupRelated,
   onTranslate,
   onCopy,
+  onRetrySources,
+  error,
+  ancestorCardIds = [],
 }) => {
+  const scopeId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -49,14 +62,19 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
       role="dialog"
       aria-modal="true"
       aria-label="Word card"
+      data-word-card-dialog="true"
+      data-word-card-scopes={[...ancestorCardIds, scopeId].join(' ')}
+      style={{ zIndex: 60 + ancestorCardIds.length * 10 }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div className="word-card-dialog" ref={dialogRef} onKeyDown={event => {
+        if (!isTopWordCard(dialogRef.current?.parentElement ?? null)) return;
         if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
         if (event.key !== 'Tab') return;
-        const buttons = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], [tabindex="0"]') ?? [])];
+        const buttons = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], summary, [tabindex="0"]') ?? [])]
+          .filter(element => !element.closest('details:not([open])') || element.tagName === 'SUMMARY');
         const first = buttons[0]; const last = buttons[buttons.length - 1];
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -79,10 +97,18 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
               <Sparkles className="h-5 w-5 animate-pulse" />
             </div>
             <p className="word-card-state__title">Looking up</p>
-            <p className="word-card-state__copy">Checking the local dictionary first.</p>
+            <p className="word-card-state__copy">Querying the enabled local dictionaries.</p>
+          </div>
+        ) : error ? (
+          <div className="word-card-state" role="alert">
+            <p className="word-card-state__title">查询暂时不可用</p>
+            <p className="word-card-state__copy">{error}</p>
+            {onRetrySources && <button type="button" className="word-card-action" onClick={onRetrySources}>重试词典</button>}
           </div>
         ) : result ? (
           <div className="word-card-body">
+            <WordCardInteractions key={selectedText || result.wordOrPhrase} scopeId={scopeId} ancestorCardIds={ancestorCardIds}
+              word={result.wordOrPhrase} onSpeak={onSpeak}>
             <header className="word-card-hero">
               <div className="min-w-0">
                 <h3 className="word-card-hero__word">{result.wordOrPhrase}</h3>
@@ -93,7 +119,8 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
                   {result.tags?.map((tag) => <span key={tag} className="word-card-chip">{tag}</span>)}
                   {result.source && (
                     <span className="word-card-chip word-card-chip--source">
-                      {result.source === 'dictionary' ? 'Local dictionary' : 'AI explanation'}
+                      {result.source === 'dictionary' ? result.dictionarySources?.length
+                        ? `${result.dictionarySources.length} 本词典` : result.dictionaryRef?.dictionaryName || 'Local dictionary' : 'AI explanation'}
                     </span>
                   )}
                 </div>
@@ -126,21 +153,24 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
               </div>
             )}
 
-            {!result.dictionaryRecord && result.chineseTranslation && (
+            {!result.dictionarySources?.length && !result.dictionaryRecord && result.chineseTranslation && (
               <section className="word-card-translation">
                 <span className="word-card-section__eyebrow">Chinese meaning</span>
                 <p>{result.chineseTranslation}</p>
               </section>
             )}
 
-            {!result.dictionaryRecord && result.definitionChinese && !result.chineseTranslation && (
+            {!result.dictionarySources?.length && !result.dictionaryRecord && result.definitionChinese && !result.chineseTranslation && (
               <section className="word-card-section">
                 <span className="word-card-section__eyebrow">Chinese meaning</span>
                 <p className="word-card-copy">{result.definitionChinese}</p>
               </section>
             )}
 
-            {result.dictionaryRecord ? (
+            <DictionarySourceIssues issues={result.dictionarySourceIssues} misses={result.dictionarySourceMisses} onRetry={onRetrySources} />
+            {result.dictionarySources?.length ? (
+              <DictionarySourceSections sources={result.dictionarySources} onLookupRelated={onLookupRelated} />
+            ) : result.dictionaryRecord ? (
               <DictionarySenseGroups record={result.dictionaryRecord} />
             ) : (
               <section className="word-card-section">
@@ -153,7 +183,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
                         <div className="word-card-sense__body">
                           <p>
                             {sense.partOfSpeech && <span className="word-card-sense__pos">{sense.partOfSpeech}</span>}
-                            {sense.definition}
+                            <WordCardText text={sense.definition} />
                           </p>
                           {sense.definitionZh && <p className="word-card-sense__translation">{sense.definitionZh}</p>}
                         </div>
@@ -161,7 +191,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
                     ))}
                   </ol>
                 ) : (
-                  <p className="word-card-copy word-card-copy--strong">{result.definition}</p>
+                  <p className="word-card-copy word-card-copy--strong"><WordCardText text={result.definition} /></p>
                 )}
               </section>
             )}
@@ -169,46 +199,49 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
             {result.readingOriginalSentence && (
               <section className="word-card-section word-card-original-sentence">
                 <span className="word-card-section__eyebrow">阅读原句</span>
-                <p className="word-card-copy">{result.readingOriginalSentence}</p>
+                <p className="word-card-copy"><WordCardText text={result.readingOriginalSentence} /></p>
+                <button type="button" className="word-card-action" aria-label="朗读阅读原句" onClick={() => onSpeak(result.readingOriginalSentence!)}>
+                  <Volume2 className="h-4 w-4" aria-hidden="true" />朗读原句
+                </button>
               </section>
             )}
 
-            {!result.dictionaryRecord && result.grammarRules?.length > 0 && (
+            {!result.dictionarySources?.length && !result.dictionaryRecord && result.grammarRules?.length > 0 && (
               <section className="word-card-section">
                 <span className="word-card-section__eyebrow">Grammar and usage</span>
                 <ul className="word-card-bullet-list">
-                  {result.grammarRules.map((rule, idx) => <li key={idx}>{rule}</li>)}
+                  {result.grammarRules.map((rule, idx) => <li key={idx}><WordCardText text={rule} /></li>)}
                 </ul>
               </section>
             )}
 
-            {result.exchanges && result.exchanges.length > 0 && (
+            {!result.dictionarySources?.length && result.exchanges && result.exchanges.length > 0 && (
               <section className="word-card-section">
                 <span className="word-card-section__eyebrow">Word forms</span>
                 <div className="word-card-chip-list">
                   {result.exchanges.map((exchange, idx) => (
                     <span key={idx} className="word-card-chip word-card-chip--form">
-                      <span>{exchange.label}</span> {exchange.value}
+                      <span>{exchange.label}</span> <WordCardText text={exchange.value} />
                     </span>
                   ))}
                 </div>
               </section>
             )}
 
-            {!result.dictionaryRecord && result.collocations && result.collocations.length > 0 && (
+            {!result.dictionarySources?.length && !result.dictionaryRecord && result.collocations && result.collocations.length > 0 && (
               <section className="word-card-section">
                 <span className="word-card-section__eyebrow">Common collocations</span>
                 <div className="word-card-chip-list">
                   {result.collocations.map((collocation, idx) => (
                     <span key={idx} className="word-card-chip word-card-chip--collocation">
-                      {collocation.en}{collocation.zh && <span> · {collocation.zh}</span>}
+                      <WordCardText text={collocation.en} />{collocation.zh && <span> · {collocation.zh}</span>}
                     </span>
                   ))}
                 </div>
               </section>
             )}
 
-            {result.relatedWords && result.relatedWords.length > 0 && (
+            {!result.dictionarySources?.length && result.relatedWords && result.relatedWords.length > 0 && (
               <section className="word-card-section">
                 <span className="word-card-section__eyebrow">Related words</span>
                 <div className="word-card-chip-list">
@@ -221,19 +254,21 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
               </section>
             )}
 
-            {!result.dictionaryRecord && result.exampleSentences?.length > 0 && (
+            {!result.dictionarySources?.length && !result.dictionaryRecord && result.exampleSentences?.length > 0 && (
               <section className="word-card-section">
                 <span className="word-card-section__eyebrow">Examples</span>
                 <ol className="word-card-examples">
                   {result.exampleSentences.map((sentence, idx) => (
                     <li key={idx}>
                       <span className="word-card-example__index">{idx + 1}</span>
-                      <span>{sentence}</span>
+                      <WordCardText text={sentence} />
                     </li>
                   ))}
                 </ol>
               </section>
             )}
+            </WordCardInteractions>
+            <WordMemoryDetailsPanel key={result.wordOrPhrase} wordId={result.wordOrPhrase} />
           </div>
         ) : (
           <div className="word-card-state">

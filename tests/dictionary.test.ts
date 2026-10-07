@@ -1,5 +1,8 @@
-import { afterEach, describe, it } from 'node:test';
+import { after, afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   buildDictionaryExplanation,
   getDictionaryHealth,
@@ -10,6 +13,14 @@ import {
 } from '../server/dictionary/service';
 
 const originalExplainFirst = process.env.DICTIONARY_EXPLAIN_FIRST;
+// These compatibility checks exercise the native-first startup defaults,
+// independently of the user's persisted display order and enabled sources.
+const originalSettingsFile = process.env.DICTIONARY_SETTINGS_FILE;
+process.env.DICTIONARY_SETTINGS_FILE = path.join(tmpdir(), `readage-dictionary-test-${randomUUID()}.json`);
+after(() => {
+  if (originalSettingsFile === undefined) delete process.env.DICTIONARY_SETTINGS_FILE;
+  else process.env.DICTIONARY_SETTINGS_FILE = originalSettingsFile;
+});
 
 afterEach(() => {
   if (originalExplainFirst === undefined) delete process.env.DICTIONARY_EXPLAIN_FIRST;

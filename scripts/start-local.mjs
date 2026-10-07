@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import dotenv from 'dotenv';
+import { portOccupied, stopChild } from './local-process.mjs';
+export { stopChild } from './local-process.mjs';
 
 const filename = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(filename), '..');
@@ -27,29 +28,6 @@ async function probeHealth(baseUrl, signal) {
     clearTimeout(timer);
     signal?.removeEventListener('abort', onAbort);
   }
-}
-
-async function portOccupied(baseUrl) {
-  const address = new URL(baseUrl);
-  return new Promise(resolve => {
-    const socket = net.createConnection({ host: address.hostname, port: Number(address.port) });
-    const finish = occupied => { socket.destroy(); resolve(occupied); };
-    socket.setTimeout(1500, () => finish(true));
-    socket.once('connect', () => finish(true));
-    socket.once('error', () => finish(false));
-  });
-}
-
-export async function stopChild(child) {
-  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
-  await new Promise(resolve => {
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      resolve();
-    }, 3000);
-    child.once('exit', () => { clearTimeout(timer); resolve(); });
-    child.kill();
-  });
 }
 
 /** Start only the optional local engine. A reused service belongs to its original launcher. */
@@ -106,46 +84,113 @@ export async function ensureLocalKokoro({
   }
 }
 
+/** Windows kill() is abrupt: let the app clean its owned translation child over IPC first. */
+export async function stopLocalApp(child, { timeoutMs = 10_000, forceStop = stopChild } = {}) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  if (!child.connected || typeof child.send !== 'function') return forceStop(child);
+  let settle;
+  const done = new Promise(resolve => { settle = resolve; });
+  const exited = () => settle(false);
+  const failed = () => settle(true);
+  const timer = setTimeout(failed, timeoutMs);
+  child.once('exit', exited);
+  child.once('error', failed);
+  child.once('disconnect', failed);
+  try {
+    try { child.send({ type: 'readage:shutdown' }, error => { if (error) failed(); }); }
+    catch { failed(); }
+    if (await done) await forceStop(child);
+  } finally {
+    clearTimeout(timer);
+    child.removeListener('exit', exited);
+    child.removeListener('error', failed);
+    child.removeListener('disconnect', failed);
+  }
+}
+
+/** Optional engine startup and lifetime never decide the app's lifetime. Only owned children are stopped. */
+export async function runLocalApp({ launchApp, engines = [], signal, stopProcess = stopChild, stopApp = stopProcess, log = console.log, errorLog = console.error }) {
+  const controller = new AbortController();
+  let app;
+  const ownedEngines = [];
+  const engineListeners = [];
+  const startupTasks = [];
+  let onAppError;
+  let onAppExit;
+  let onAbort;
+  const forwardAbort = () => controller.abort(signal?.reason);
+  signal?.addEventListener('abort', forwardAbort, { once: true });
+  if (signal?.aborted) forwardAbort();
+  try {
+    if (controller.signal.aborted) return 0;
+    app = launchApp();
+    const appExit = new Promise((resolve, reject) => {
+      onAppError = reject;
+      onAppExit = code => resolve(controller.signal.aborted ? 0 : code ?? 1);
+      onAbort = () => resolve(0);
+      app.once('error', onAppError);
+      app.once('exit', onAppExit);
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+      if (app.exitCode !== null || app.signalCode !== null) onAppExit(app.exitCode);
+    });
+    for (const engine of engines) {
+      startupTasks.push(Promise.resolve().then(async () => {
+        if (controller.signal.aborted) return;
+        log(`${engine.name}正在独立启动；阅读和词卡可以先使用。`);
+        const { child } = await engine.start({ signal: controller.signal });
+        if (!child) return; // Reused services are owned by their original launcher.
+        ownedEngines.push(child);
+        if (controller.signal.aborted) return;
+        let warned = false;
+        const restartHint = engine.restartCommand ? `重试命令：${engine.restartCommand}。` : '稍后可单独重启该服务。';
+        const unavailable = () => {
+          if (warned || controller.signal.aborted) return;
+          warned = true;
+          errorLog(`${engine.name}服务已退出，阅读和词卡仍可使用。请查看模型日志。${restartHint}`);
+        };
+        child.once('error', unavailable); child.once('exit', unavailable);
+        engineListeners.push(() => { child.removeListener('error', unavailable); child.removeListener('exit', unavailable); });
+        if (child.exitCode !== null || child.signalCode !== null) unavailable();
+      }).catch(error => {
+        if (!controller.signal.aborted) errorLog(`${engine.name}暂不可用：${error?.message || error} 阅读和词卡仍可使用。${engine.restartCommand ? `重试命令：${engine.restartCommand}。` : '稍后可单独重启该服务。'}`);
+      }));
+    }
+    return await appExit;
+  } catch (error) {
+    if (controller.signal.aborted) return 0;
+    errorLog(error.message);
+    return 1;
+  } finally {
+    controller.abort(new Error('本地应用已停止。'));
+    signal?.removeEventListener('abort', forwardAbort);
+    controller.signal.removeEventListener('abort', onAbort);
+    if (onAppError) app?.removeListener('error', onAppError);
+    if (onAppExit) app?.removeListener('exit', onAppExit);
+    const appStopping = stopApp(app);
+    await Promise.allSettled(startupTasks);
+    engineListeners.forEach(remove => remove());
+    await Promise.all([appStopping, ...ownedEngines.map(child => stopProcess(child))]);
+  }
+}
+
 export async function startLocal() {
   dotenv.config({ path: path.join(root, '.env'), quiet: true });
   const controller = new AbortController();
-  let app;
-  let kokoro;
-  const onSignal = () => {
-    controller.abort(new Error('本地启动已停止。'));
-    app?.kill();
-  };
+  const onSignal = () => controller.abort(new Error('本地启动已停止。'));
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
   try {
-    if (process.env.TTS_LOCAL_ENGINE === 'kokoro-js') {
-      ({ child: kokoro } = await ensureLocalKokoro({ signal: controller.signal }));
-    }
-    if (controller.signal.aborted) return 0;
     console.log('ReadAge 本地模式：http://localhost:3000（保持此进程运行，网页和插件即可使用）');
-    // Run the server in this child directly so launcher shutdown also stops the app.
-    app = spawn(process.execPath, ['--import', 'tsx', path.join(root, 'server.ts')], {
-      cwd: root, stdio: 'inherit', windowsHide: true,
-      env: { ...process.env, NODE_ENV: 'development', HOST: '127.0.0.1', PORT: '3000', MAGAZINE_SYNC_ON_BOOT: 'false' },
+    // The server owns asynchronous HyMT startup and cleanup, avoiding two concurrent launchers.
+    if (process.env.TRANSLATION_LOCAL_ENGINE === 'hymt2') console.log('腾讯翻译由应用独立加载；模型未就绪时可以先阅读和学习词卡。');
+    return await runLocalApp({ signal: controller.signal, stopApp: stopLocalApp,
+      launchApp: () => spawn(process.execPath, ['--import', 'tsx', path.join(root, 'server.ts')], {
+        cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], windowsHide: true,
+        env: { ...process.env, NODE_ENV: 'development', HOST: '127.0.0.1', PORT: '3000', MAGAZINE_SYNC_ON_BOOT: 'false' },
+      }),
+      engines: process.env.TTS_LOCAL_ENGINE === 'kokoro-js' ? [{ name: 'Kokoro 朗读', start: ensureLocalKokoro, restartCommand: 'npm run tts:start' }] : [],
     });
-    const appExit = new Promise((resolve, reject) => {
-      app.once('error', reject);
-      app.once('exit', code => resolve(controller.signal.aborted ? 0 : code ?? 1));
-    });
-    if (!kokoro) return await appExit;
-    const engineExit = new Promise((_, reject) => {
-      const fail = () => reject(new Error('Kokoro 推理服务退出，本地应用已停止。请检查服务控制台后重新启动。'));
-      kokoro.once('error', fail);
-      kokoro.once('exit', fail);
-      if (kokoro.exitCode !== null || kokoro.signalCode !== null) fail();
-    });
-    return await Promise.race([appExit, engineExit]);
-  } catch (error) {
-    if (controller.signal.aborted) return 0;
-    console.error(error.message);
-    return 1;
   } finally {
-    await Promise.all([stopChild(app), stopChild(kokoro)]);
     process.removeListener('SIGINT', onSignal);
     process.removeListener('SIGTERM', onSignal);
   }

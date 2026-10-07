@@ -1,5 +1,8 @@
-import type { DictionaryRecord, GrammarExplanation } from '../types';
+import type { DictionaryRecord, DictionarySourceView, DictionarySourceIssue, DictionarySourceMiss, GrammarExplanation } from '../types';
 import { LearningWordIdResolver } from './learningWordIds';
+import { isDictionaryExampleVisible } from '../../packages/dictionary/compat/englishPresentation';
+import type { DictionaryDisplayRef, LearningTermRef } from '../../packages/dictionary/contracts';
+export { createDictionaryClient } from '../../packages/dictionary/client';
 
 export interface DictionaryDefinition {
   partOfSpeech: string;
@@ -9,6 +12,11 @@ export interface DictionaryDefinition {
 
 /** Client-safe dictionary payload. Canonical fields are optional for old API responses. */
 export interface DictionaryEntry {
+  learningTermRef?: LearningTermRef;
+  dictionaryRef?: DictionaryDisplayRef;
+  dictionarySources?: DictionarySourceView[];
+  dictionarySourceIssues?: DictionarySourceIssue[];
+  dictionarySourceMisses?: DictionarySourceMiss[];
   query: string;
   lemma: string;
   phonetic: string;
@@ -60,12 +68,18 @@ export function toDictionaryWordCard(entry: DictionaryEntry): GrammarExplanation
     : entry.definitionsEn.filter((sense) => sense.definition.trim());
   const firstSense = senses[0];
   const examples = entry.partOfSpeechGroups?.flatMap((group) => group.senses.flatMap((sense) =>
-    sense.examples.filter((example) => example.reviewStatus === 'reviewed').map((example) => example.en),
+    sense.examples.filter(isDictionaryExampleVisible).map((example) => example.en),
   )) ?? [];
   const groups = entry.partOfSpeechGroups?.length ? entry.partOfSpeechGroups : undefined;
   return {
+    learningTermRef: entry.learningTermRef,
+    dictionaryRef: entry.dictionaryRef,
+    dictionarySources: entry.dictionarySources,
+    originalDictionaryContent: entry.dictionarySources?.[0]?.originalContent,
+    dictionarySourceIssues: entry.dictionarySourceIssues,
+    dictionarySourceMisses: entry.dictionarySourceMisses,
     wordOrPhrase: entry.lemma || entry.query,
-    type: entry.partOfSpeech || 'unknown',
+    type: entry.partOfSpeech || (entry.dictionarySources?.[0]?.originalContent ? '' : 'unknown'),
     phonetic: entry.phonetic || undefined,
     definition: entry.definitionEn || firstSense?.definition || entry.basicMeaningsZh[0] || '',
     definitionChinese: firstSense?.definitionZh,
@@ -83,6 +97,17 @@ export function toDictionaryWordCard(entry: DictionaryEntry): GrammarExplanation
 }
 
 const DICTIONARY_LOOKUP_BATCH_SIZE = 50;
+
+/** Build a view from one source only, so its meanings cannot borrow another source's translation. */
+export function toDictionarySourceWordCard(source: DictionarySourceView): GrammarExplanation {
+  const record = source.record;
+  const senses = record.partOfSpeechGroups.flatMap(group => group.senses.map(sense => ({
+    partOfSpeech: group.partOfSpeech, definition: sense.definitionEn, definitionZh: sense.definitionZh })));
+  const meanings = [...senses.flatMap(sense => sense.definitionZh ? [sense.definitionZh] : []), ...record.supplementaryChinese];
+  const card = toDictionaryWordCard({ ...record, dictionaryRef: source.dictionaryRef, partOfSpeech: senses[0]?.partOfSpeech ?? '',
+    definitionEn: source.originalContent?.plainText ?? senses[0]?.definition ?? '', definitionsEn: senses, basicMeaningsZh: meanings });
+  return source.originalContent ? { ...card, type: '', originalDictionaryContent: source.originalContent } : card;
+}
 
 const learningWordIdResolver = new LearningWordIdResolver(async (words) => {
   const response = await fetch('/api/dictionary/lemmas', {
@@ -111,6 +136,12 @@ export function resolveLearningWordIds(words: readonly string[]): Promise<string
 /** Successful cards provide the same canonical mapping without another request. */
 export function rememberDictionaryLearningWordId(query: string, lemma: string): void {
   learningWordIdResolver.prime(query, lemma);
+}
+
+/** Evidence callers retain established mappings, even when a later response differs. */
+export async function resolveDictionaryLearningWordId(query: string, ref?: LearningTermRef): Promise<string> {
+  if (ref?.language === 'en' && ref.stableId) rememberDictionaryLearningWordId(query, ref.stableId);
+  return (await learningWordIdResolver.resolve([query]))[0];
 }
 
 function getErrorMessage(body: unknown, status: number): string {
@@ -149,12 +180,14 @@ async function fetchDictionaryWords(
     throw new Error(`Dictionary returned invalid JSON (${response.status}).`);
   }
 
-  if (!response.ok || !isSuccess(body)) {
+  if (!response.ok || !isSuccess(body) || body.results.length !== words.length) {
     throw new Error(getErrorMessage(body, response.status));
   }
 
   body.results.forEach((entry, index) => {
-    if (entry?.lemma) rememberDictionaryLearningWordId(words[index], entry.lemma);
+    if (entry?.learningTermRef?.language === 'en' && entry.learningTermRef.stableId) {
+      rememberDictionaryLearningWordId(words[index], entry.learningTermRef.stableId);
+    }
   });
   return body.results;
 }

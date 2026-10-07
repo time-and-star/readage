@@ -2,6 +2,9 @@
 import test from 'node:test';
 
 import {
+  flushPendingPersistentWrites,
+  updatePersistentValue,
+  readPersistentValue,
   normalizeArticleSessions,
   STORAGE_KEYS,
   readStorage,
@@ -130,4 +133,38 @@ test('normalizes parsed storage before it reaches application state', () => {
   );
 
   assert.equal(normalized, fallback);
+});
+
+test('backup flush waits for in-flight writes and refuses to omit failed pending records', async () => {
+  const storage = new MemoryStorage();
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  Object.defineProperty(globalThis, 'window', { value: { localStorage: storage }, configurable: true });
+  Object.defineProperty(globalThis, 'navigator', { value: { locks: { request: async (_: string, commit: () => Promise<unknown>) => {
+    await gate; return commit();
+  } } }, configurable: true });
+  try {
+    const write = updatePersistentValue('test:backup-flush', 0, value => value + 1);
+    assert.equal(readPersistentValue('test:backup-flush', 0), 1);
+    assert.equal(storage.getItem('test:backup-flush'), null);
+    let finished = false;
+    const flushing = flushPendingPersistentWrites().then(() => { finished = true; });
+    await Promise.resolve();
+    assert.equal(finished, false);
+    release!();
+    await Promise.all([write, flushing]);
+    assert.equal(storage.getItem('test:backup-flush'), '1');
+    const save = storage.setItem.bind(storage);
+    storage.setItem = () => { throw new Error('quota'); };
+    await assert.rejects(updatePersistentValue('test:backup-flush', 0, value => value + 1), /quota/);
+    await assert.rejects(flushPendingPersistentWrites(), /备份未导出/);
+    storage.setItem = save;
+    await flushPendingPersistentWrites();
+    assert.equal(storage.getItem('test:backup-flush'), '2');
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow); else Reflect.deleteProperty(globalThis, 'window');
+    if (previousNavigator) Object.defineProperty(globalThis, 'navigator', previousNavigator); else Reflect.deleteProperty(globalThis, 'navigator');
+  }
 });

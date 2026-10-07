@@ -1,10 +1,11 @@
 import { DEFAULT_SERVICE_ORIGIN, MAX_SYNC_BATCH, normalizeSelectedWord, normalizeServiceOrigin,
   parseLookupEvent, sourcePageId, type LookupEvent } from '../src/lib/browserExtension/protocol';
 import type { DictionaryEntry } from '../src/lib/dictionaryClient';
+import { DictionaryCatalogCache, dictionaryCacheKey, type CatalogSnapshot } from '../packages/dictionary/cache';
+import { createDictionaryClient } from '../packages/dictionary/client';
 
 interface Settings { origin: string; enabled: boolean; sites: string[] }
 interface PendingLookup { origin: string; event: LookupEvent; tabId?: number }
-const DICTIONARY_CACHE_VERSION = 'dictionary.v2';
 const defaults: Settings = { origin: DEFAULT_SERVICE_ORIGIN, enabled: true, sites: [] };
 let writes: Promise<unknown> = Promise.resolve();
 function serialize<T>(work: () => Promise<T>): Promise<T> {
@@ -60,6 +61,21 @@ async function updateScripts(previous?: Settings) {
 }
 
 const dictionaryRequests = new Map<string, Promise<DictionaryEntry | null>>();
+const catalogs = new Map<string, DictionaryCatalogCache>();
+function catalogFor(origin: string) {
+  let cache = catalogs.get(origin);
+  if (!cache) {
+    const storageKey = `dictionary-catalog:v1:${origin}`;
+    const client = createDictionaryClient({ baseUrl: origin });
+    cache = new DictionaryCatalogCache({
+      fetchCatalog: () => client.listSources(AbortSignal.timeout(2_000)),
+      async read() { return (await chrome.storage.local.get(storageKey))[storageKey] as CatalogSnapshot | undefined; },
+      async write(snapshot) { await chrome.storage.local.set({ [storageKey]: snapshot }); },
+    });
+    catalogs.set(origin, cache);
+  }
+  return cache;
+}
 function fetchEntry(origin: string, word: string): Promise<DictionaryEntry | null> {
   const requestKey = `${origin}:${word}`;
   const active = dictionaryRequests.get(requestKey);
@@ -76,10 +92,12 @@ async function dictionaryJson(response: Response) {
 }
 
 async function loadEntry(origin: string, word: string): Promise<DictionaryEntry | null> {
-  const key = `dictionary:${DICTIONARY_CACHE_VERSION}:${origin}:${word}`;
-  const cached = (await chrome.storage.local.get(key))[key];
-  if (cached?.entry) return cached.entry as DictionaryEntry;
   if (!await permitted(origin)) throw new Error('请在插件设置中连接主应用并授权访问。');
+  const catalog = await catalogFor(origin).get();
+  const keyFor = (version: string) => `dictionary:${origin}:${dictionaryCacheKey('en', version, word)}`;
+  const key = catalog ? keyFor(catalog.catalogVersion) : undefined;
+  const cached = key ? (await chrome.storage.local.get(key))[key] : undefined;
+  if (cached?.entry && !cached.entry.dictionarySourceIssues?.length) return cached.entry as DictionaryEntry;
   let response: Response;
   try {
     response = await fetch(`${origin}/api/dictionary/lookup`, { method: 'POST',
@@ -93,9 +111,28 @@ async function loadEntry(origin: string, word: string): Promise<DictionaryEntry 
   if (!normalizeSelectedWord(entry.lemma || word) || !Array.isArray(entry.basicMeaningsZh)
     || entry.basicMeaningsZh.some(meaning => typeof meaning !== 'string')
     || !Array.isArray(entry.definitionsEn) || entry.definitionsEn.some(sense => !sense || typeof sense.definition !== 'string')
-    || typeof entry.definitionEn !== 'string') throw new Error('词典结果格式不正确。');
-  await serialize(async () => {
-    await chrome.storage.local.set({ [key]: { entry, savedAt: Date.now() } });
+    || typeof entry.definitionEn !== 'string'
+    || entry.dictionarySourceMisses !== undefined && (!Array.isArray(entry.dictionarySourceMisses)
+      || entry.dictionarySourceMisses.some(source => !source || typeof source.dictionaryId !== 'string'
+        || typeof source.dictionaryName !== 'string'))
+    || entry.dictionarySourceIssues !== undefined && (!Array.isArray(entry.dictionarySourceIssues)
+      || entry.dictionarySourceIssues.some(issue => !issue || typeof issue.dictionaryId !== 'string'
+        || typeof issue.dictionaryName !== 'string' || typeof issue.message !== 'string'))) throw new Error('词典结果格式不正确。');
+  // Never derive learning evidence from whichever dictionary was selected for display.
+  if (!entry.learningTermRef?.stableId) {
+    const identityResponse = await fetch(`${origin}/api/dictionary/lemmas`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: [word] }),
+      signal: AbortSignal.timeout(8_000), redirect: 'error', credentials: 'omit' });
+    const identities = await dictionaryJson(identityResponse);
+    if (identities?.ok !== true || !Array.isArray(identities.lemmas) || identities.lemmas.length !== 1 || !normalizeSelectedWord(identities.lemmas[0])) {
+      throw new Error('学习标识暂不可用，请稍后重试。');
+    }
+    entry.learningTermRef = { language: 'en', kind: 'word', stableId: identities.lemmas[0] };
+  }
+  const actualKey = entry.dictionaryRef?.catalogVersion ? keyFor(entry.dictionaryRef.catalogVersion) : key;
+  if (entry.dictionaryRef?.catalogVersion) await catalogFor(origin).observeVersion(entry.dictionaryRef.catalogVersion, catalog?.catalogVersion);
+  if (!entry.dictionarySourceIssues?.length) await serialize(async () => {
+    if (actualKey) await chrome.storage.local.set({ [actualKey]: { entry, savedAt: Date.now() } });
     const all = await chrome.storage.local.get(null);
     const keys = Object.keys(all).filter(k => k.startsWith('dictionary:')).sort((a, b) => all[b].savedAt - all[a].savedAt);
     if (keys.length > 500) await chrome.storage.local.remove(keys.slice(500));
@@ -115,7 +152,9 @@ async function queryWord(message: any, sender: ExtensionSender) {
     sourceId: await sourcePageId(page.href) });
   const entry = await fetchEntry(config.origin, word);
   if (!entry) return { ok: true, entry: null };
-  lookup.lemma = normalizeSelectedWord(entry.lemma || word)!;
+  const identity = entry.learningTermRef;
+  if (identity?.language !== 'en' || !normalizeSelectedWord(identity.stableId)) throw new Error('学习标识暂不可用，请稍后重试。');
+  lookup.lemma = normalizeSelectedWord(identity.stableId)!;
   const key = prefix(config.origin) + lookup.id;
   await serialize(async () => {
     const prior = (await chrome.storage.local.get(key))[key] as PendingLookup | undefined;

@@ -21,12 +21,19 @@ class FakeUtterance {
   voice: SpeechSynthesisVoice | null = null;
   onend: (() => void) | null = null;
   onerror: ((event: { error: string }) => void) | null = null;
+  onstart: (() => void) | null = null;
+  onboundary: ((event: { name: string; charIndex: number }) => void) | null = null;
   constructor(public text: string) {}
 }
 class FakeAudio {
   src = '';
   onended: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  onplaying: (() => void) | null = null;
+  ontimeupdate: (() => void) | null = null;
+  onloadedmetadata: (() => void) | null = null;
+  duration = 8;
+  currentTime = 0;
   paused = false;
   loaded = false;
   play = async () => {};
@@ -48,7 +55,7 @@ function fixture(fetcher: typeof fetch = async () => config(), automatic = true)
     cancel: () => { cancelCount += 1; },
     speak: (utterance: FakeUtterance) => {
       utterances.push(utterance);
-      if (automatic) queueMicrotask(() => utterance.onend?.());
+      if (automatic) queueMicrotask(() => { utterance.onstart?.(); utterance.onend?.(); });
     },
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
@@ -60,7 +67,7 @@ function fixture(fetcher: typeof fetch = async () => config(), automatic = true)
     createAudio: () => {
       const audio = new FakeAudio();
       audios.push(audio);
-      if (automatic) audio.play = async () => { queueMicrotask(() => audio.onended?.()); };
+      if (automatic) audio.play = async () => { queueMicrotask(() => { audio.onplaying?.(); audio.onended?.(); }); };
       return audio as unknown as HTMLAudioElement;
     },
     createObjectURL: () => { const url = `blob:audio-${audios.length}`; liveURLs.add(url); return url; },
@@ -139,16 +146,74 @@ test('a click joins preparation and closing its owner cannot cancel foreground p
   const cancelPreparation = f.client.prepareText('Shared word.', { scope: 'reader' });
   await tick();
   const played = f.client.speakText('Shared word.', { scope: 'reader' });
-  await tick();
-  assert.equal(requests.length, 2, 'both HTTP subscribers can join one server job');
-  assert.equal(requests[0].aborted, false, 'the click must preserve the preparation already in progress');
   cancelPreparation();
-  assert.equal(requests[0].aborted, true);
-  assert.equal(requests[1].aborted, false);
+  await tick();
+  assert.equal(requests.length, 1, 'preparation and playback share one browser request');
+  assert.equal(requests[0].aborted, false, 'the click must preserve the preparation already in progress');
+  assert.equal(requests[0].aborted, false, 'closing preparation must keep the shared playback request alive');
   ready.resolve();
   assert.equal((await played).provider, 'openai-compatible');
   assert.equal(f.audios.length, 1);
   assert.equal(f.utterances.length, 0);
+});
+
+test('prepared audio and repeated playback reuse browser bytes with separate accent and speed keys', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const f = fixture(async (url, init) => {
+    if (url === '/api/tts/status') return config(true, 200, true);
+    bodies.push(JSON.parse(String(init?.body)));
+    return audioResponse();
+  });
+  f.client.prepareText('A ready sentence.');
+  await tick();
+  await f.client.speakText('A ready sentence.');
+  await f.client.speakText('A ready sentence.');
+  assert.equal(bodies.length, 1, 'prepared and replayed audio must not make another HTTP request');
+  await f.client.speakText('A ready sentence.', { lang: 'en-GB' });
+  await f.client.speakText('A ready sentence.', { rate: 0.9 });
+  assert.equal(bodies.length, 3);
+  assert.equal(f.audios.length, 4);
+  assert.equal(f.liveURLs.size, 0);
+});
+
+test('rapid repeated clicks share unfinished synthesis and only the last click plays', async () => {
+  const ready = deferred<void>();
+  let requests = 0;
+  const f = fixture(async url => {
+    if (url === '/api/tts/status') return config(true);
+    requests += 1;
+    await ready.promise;
+    return audioResponse();
+  });
+  const first = f.client.speakText('Same sentence.');
+  await tick();
+  const second = f.client.speakText('Same sentence.');
+  await tick();
+  assert.equal(requests, 1);
+  ready.resolve();
+  assert.equal((await first).cancelled, true);
+  assert.equal((await second).cancelled, false);
+  assert.equal(f.audios.length, 1);
+});
+
+test('browser audio cache evicts older entries and does not cache failed synthesis', async () => {
+  let requests = 0;
+  let failing = true;
+  const f = fixture(async url => {
+    if (url === '/api/tts/status') return config(true);
+    requests += 1;
+    if (failing) return new Response('{}', { status: 503 });
+    return audioResponse();
+  });
+  await f.client.speakText('Retry me.');
+  failing = false;
+  await f.client.speakText('Retry me.');
+  assert.equal(requests, 2);
+  for (let index = 0; index < 32; index += 1) await f.client.speakText(`Sentence ${index}.`);
+  await f.client.speakText('Sentence 31.');
+  assert.equal(requests, 34, 'recent audio remains cached');
+  await f.client.speakText('Retry me.');
+  assert.equal(requests, 35, 'least recently used audio is evicted');
 });
 
 test('switching preparation aborts stale work and a preparation failure stays silent', async () => {
@@ -270,6 +335,72 @@ test('remote playback sends selected pronunciation settings and releases every a
   assert.equal(f.liveURLs.size, 0);
   assert.equal(f.revokedURLs.length, 1);
   assert.ok(f.audios.every((audio) => audio.paused && audio.loaded && !audio.src));
+});
+
+test('remote word guide follows media time and clears on stop without re-rendering speech state for every word', async () => {
+  const f = fixture(async url => url === '/api/tts/status' ? config(true) : audioResponse(), false);
+  const played = f.client.speakText('First second third.', { scope: 'reader', target: { articleId: 'article', startOffset: 20 } });
+  await tick();
+  const audio = f.audios[0];
+  audio.onplaying?.();
+  assert.equal(f.client.getProgress().word?.text, 'First');
+  assert.deepEqual(f.client.getProgress().target, { articleId: 'article', startOffset: 20 });
+  assert.equal(f.client.getProgress().estimated, true);
+  const snapshot = f.client.getSnapshot();
+  audio.currentTime = 7.8;
+  audio.ontimeupdate?.();
+  assert.equal(f.client.getProgress().word?.text, 'third');
+  assert.equal(f.client.getSnapshot(), snapshot, 'word updates have a separate subscription');
+  audio.currentTime = 0;
+  audio.ontimeupdate?.();
+  assert.equal(f.client.getProgress().word?.start, 0);
+  f.client.stopSpeech('reader');
+  assert.deepEqual(f.client.getProgress(), {});
+  assert.equal(audio.ontimeupdate, null);
+  assert.equal((await played).cancelled, true);
+});
+
+test('device boundaries track exact source occurrences and stop removes stale boundary callbacks', async () => {
+  const f = fixture(undefined, false);
+  const played = f.client.speakText('Repeat repeat.', { scope: 'reader', target: { articleId: 'article', startOffset: 0 } });
+  await tick();
+  const utterance = f.utterances[0];
+  utterance.onstart?.();
+  utterance.onboundary?.({ name: 'word', charIndex: 7 });
+  assert.deepEqual(f.client.getProgress().word, { text: 'repeat', start: 7, end: 13 });
+  assert.equal(f.client.getProgress().estimated, false);
+  f.client.stopSpeech();
+  assert.equal(utterance.onboundary, null);
+  assert.deepEqual(f.client.getProgress(), {});
+  assert.equal((await played).cancelled, true);
+});
+
+test('word progress moves to the later occurrence across repeated chunks', async () => {
+  const f = fixture(async url => url === '/api/tts/status' ? config(true, 12) : audioResponse(), false);
+  const played = f.client.speakText('Repeat one. Repeat one. End.', { scope: 'reader', target: { articleId: 'article', startOffset: 0 } });
+  await tick();
+  f.audios[0].onplaying?.();
+  assert.equal(f.client.getProgress().word?.start, 0);
+  f.audios[0].onended?.();
+  await tick();
+  f.audios[1].onplaying?.();
+  assert.equal(f.client.getProgress().word?.start, 12);
+  f.client.stopSpeech();
+  assert.equal((await played).cancelled, true);
+});
+
+test('playback diagnostics preserve actual cache source and safe server timing values', async () => {
+  const f = fixture(async url => url === '/api/tts/status' ? config(true) : new Response('bytes', {
+    headers: { 'Content-Type': 'audio/wav', 'Server-Timing': 'tts-app;dur=260, tts-queue;dur=20, tts-infer;dur=210, tts-pre;dur=25, tts-encode;dur=1' },
+  }));
+  await f.client.speakText('Read me.');
+  const timing = f.client.getSnapshot().state.timing!;
+  assert.equal(timing.inferenceMs, 210);
+  assert.equal(timing.queueMs, 20);
+  assert.equal(timing.cache, 'none');
+  assert.ok(timing.firstPlaybackMs! >= timing.firstAudioMs!);
+  await f.client.speakText('Read me.');
+  assert.equal(f.client.getSnapshot().state.timing?.cache, 'browser');
 });
 
 test('the opening sentence starts playing while the following audio is still being generated', async () => {

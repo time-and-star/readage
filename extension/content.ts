@@ -1,5 +1,5 @@
 import { normalizeSelectedWord } from '../src/lib/browserExtension/protocol';
-import { toDictionaryWordCard, type DictionaryEntry } from '../src/lib/dictionaryClient';
+import { toDictionaryWordCard, toDictionarySourceWordCard, type DictionaryEntry } from '../src/lib/dictionaryClient';
 import { floatingPosition } from './floatingPosition';
 import { createLookupId } from './lookupId';
 
@@ -195,41 +195,64 @@ interface LookupResponse { ok: boolean; entry?: DictionaryEntry | null; error?: 
       if (model.phonetic) meta.append(textElement('span', model.phonetic, 'phonetic'));
       if (model.wordOrPhrase !== word) meta.append(textElement('span', `由 ${word} 还原`, 'query'));
       if (meta.childNodes.length) card.append(meta);
-      const senses = entry.partOfSpeechGroups?.length
-        ? entry.partOfSpeechGroups.flatMap(group => group.senses.map(sense => ({ partOfSpeech: group.partOfSpeech,
-          definition: sense.definitionEn, definitionZh: sense.definitionZh })))
-        : entry.definitionsEn;
-      const definitions = senses.filter(sense => sense.definition.trim() || sense.definitionZh?.trim());
-      const meanings = [...new Set(entry.basicMeaningsZh.map(cleanMeaning).filter(Boolean))];
-      const moreContent = document.createElement('div'); moreContent.className = 'more-content';
-      if (definitions.length) {
-        const first = definitions[0];
-        const list = document.createElement('ol'); list.className = 'senses primary-sense';
-        appendSense(list, { ...first, definitionZh: first.definitionZh || meanings[0] }); body.append(list);
-        if (definitions.length > 1) {
-          const more = document.createElement('ol'); more.className = 'senses'; more.start = 2;
-          let previousPartOfSpeech = first.partOfSpeech;
-          definitions.slice(1).forEach(sense => {
-            appendSense(more, sense, sense.partOfSpeech !== previousPartOfSpeech);
-            previousPartOfSpeech = sense.partOfSpeech;
-          });
-          moreContent.append(more);
-        }
-        const visibleMeanings = definitions.map(sense => cleanMeaning(sense.definitionZh ?? ''));
-        const extraMeanings = meanings.filter(item => item !== cleanMeaning(first.definitionZh || meanings[0] || '') && !visibleMeanings.includes(item));
-        if (extraMeanings.length) moreContent.append(textElement('p', extraMeanings.join('；'), 'meaning'));
-      } else {
-        const summary = meanings.slice(0, 2).join('；');
-        if (entry.partOfSpeech) body.append(textElement('span', entry.partOfSpeech, 'pos'));
-        if (summary) body.append(textElement('p', summary, 'meaning'));
-        if (model.definition && cleanMeaning(model.definition) !== summary) body.append(textElement('p', model.definition, 'definition'));
-        if (meanings.length > 2) moreContent.append(textElement('p', meanings.slice(2).join('；'), 'meaning'));
+      if (model.dictionarySourceMisses?.length) {
+        const names = model.dictionarySourceMisses.map(source => source.dictionaryName).join('、');
+        const notice = textElement('p', `${names}未收录此词。`, 'source-notice');
+        notice.setAttribute('role', 'status');
+        card.append(notice);
       }
-      model.exampleSentences.forEach(sentence => moreContent.append(textElement('blockquote', sentence, 'example')));
-      if (model.exchanges?.length) moreContent.append(textElement('p', model.exchanges.map(form => `${form.label} ${form.value}`).join(' · '), 'forms'));
-      if (moreContent.childNodes.length) {
-        const details = document.createElement('details');
-        details.append(textElement('summary', '更多'), moreContent); body.append(details);
+      if (model.dictionarySourceIssues?.length) {
+        const notice = document.createElement('div'); notice.className = 'source-notice'; notice.setAttribute('role', 'alert');
+        const names = model.dictionarySourceIssues.map(issue => issue.dictionaryName || issue.dictionaryId).join('、');
+        const retry = document.createElement('button'); retry.className = 'retry source-retry'; retry.textContent = '重试查询';
+        retry.addEventListener('click', () => { void startLookup(); });
+        notice.append(textElement('p', `${names} 暂时无法读取。其他词典的释义已显示。`), retry);
+        card.append(notice);
+      }
+      const sourceModels = entry.dictionarySources?.length ? entry.dictionarySources.map(toDictionarySourceWordCard) : [model];
+      for (const sourceModel of sourceModels) {
+        const sourceSection = document.createElement('details'); sourceSection.className = 'dictionary-source'; sourceSection.open = true;
+        const name = sourceModel.dictionaryRef?.dictionaryName ?? sourceModel.dictionaryRef?.dictionaryId ?? '词典';
+        sourceSection.append(textElement('summary', name, 'source-name'));
+        const sourceBody = document.createElement('div'); sourceBody.className = 'source-content';
+        if (sourceModel.wordOrPhrase !== model.wordOrPhrase) sourceBody.append(textElement('p', sourceModel.wordOrPhrase, 'query'));
+        const senses = sourceModel.senses ?? [];
+        const definitions = senses.filter(sense => sense.definition.trim() || sense.definitionZh?.trim());
+        const sourceRecord = sourceModel.dictionaryRecord;
+        const meanings = [...new Set((sourceRecord
+          ? [...sourceRecord.partOfSpeechGroups.flatMap(group => group.senses.flatMap(sense => sense.definitionZh ? [sense.definitionZh] : [])), ...sourceRecord.supplementaryChinese]
+          : [sourceModel.chineseTranslation ?? '']).map(cleanMeaning).filter(Boolean))];
+        const moreContent = document.createElement('div'); moreContent.className = 'more-content';
+        if (definitions.length) {
+          const first = definitions[0];
+          const list = document.createElement('ol'); list.className = 'senses primary-sense';
+          appendSense(list, { ...first, definitionZh: first.definitionZh || meanings[0] }); sourceBody.append(list);
+          if (definitions.length > 1) {
+            const more = document.createElement('ol'); more.className = 'senses'; more.start = 2;
+            let previousPartOfSpeech = first.partOfSpeech;
+            definitions.slice(1).forEach(sense => {
+              appendSense(more, sense, sense.partOfSpeech !== previousPartOfSpeech);
+              previousPartOfSpeech = sense.partOfSpeech;
+            });
+            moreContent.append(more);
+          }
+          const visibleMeanings = definitions.map(sense => cleanMeaning(sense.definitionZh ?? ''));
+          const extraMeanings = meanings.filter(item => item !== cleanMeaning(first.definitionZh || meanings[0] || '') && !visibleMeanings.includes(item));
+          if (extraMeanings.length) moreContent.append(textElement('p', extraMeanings.join('；'), 'meaning'));
+        } else {
+          const summary = meanings.slice(0, 2).join('；');
+          if (sourceModel.type) sourceBody.append(textElement('span', sourceModel.type, 'pos'));
+          if (summary) sourceBody.append(textElement('p', summary, 'meaning'));
+          if (sourceModel.definition && cleanMeaning(sourceModel.definition) !== summary) sourceBody.append(textElement('p', sourceModel.definition, 'definition'));
+          if (meanings.length > 2) moreContent.append(textElement('p', meanings.slice(2).join('；'), 'meaning'));
+        }
+        sourceModel.exampleSentences.forEach(sentence => moreContent.append(textElement('blockquote', sentence, 'example')));
+        if (sourceModel.exchanges?.length) moreContent.append(textElement('p', sourceModel.exchanges.map(form => `${form.label} ${form.value}`).join(' · '), 'forms'));
+        if (moreContent.childNodes.length) {
+          const details = document.createElement('details');
+          details.append(textElement('summary', '更多'), moreContent); sourceBody.append(details);
+        }
+        sourceSection.append(sourceBody); body.append(sourceSection);
       }
       recordStatus = textElement('p', synchronized ? '已同步' : '已保存', 'record-status');
       recordStatus.dataset.synced = String(synchronized); recordStatus.setAttribute('role', 'status'); card.append(body, recordStatus);
@@ -256,11 +279,12 @@ function cleanMeaning(text: string): string {
 }
 
 const popupStyles = `
+.dictionary-source{margin-top:0}.dictionary-source+.dictionary-source{margin-top:14px;padding-top:14px;border-top:1px solid #e9e8e1}.dictionary-source>.source-name{margin:0;padding:4px 0;color:#7b7d75;font-size:11px;font-weight:500}.dictionary-source[open]>.source-name{margin-bottom:8px}
 :host{color-scheme:light}*{box-sizing:border-box}button{font:500 13px/1.4 "Microsoft YaHei UI","Microsoft YaHei","Noto Sans SC","Segoe UI",sans-serif;cursor:pointer;border:0;transition:background .15s,color .15s}
 button:focus-visible,summary:focus-visible{outline:2px solid #c94b35;outline-offset:3px}
 .trigger{display:block;max-width:var(--popup-max-width,calc(100vw - 24px));overflow-wrap:anywhere;padding:9px 13px;border:1px solid #dddcd5;border-radius:5px;background:#fcfbf8;color:#222521;box-shadow:0 3px 12px #22252112}.trigger:hover{background:#f3f2ed}
 .card{font:14px/1.6 "Microsoft YaHei UI","Microsoft YaHei","Noto Sans SC","Segoe UI",sans-serif;color:#222521;background:#fcfbf8;border:1px solid #dddcd5;border-radius:6px;box-shadow:0 8px 24px #22252112;width:min(320px,var(--popup-max-width,calc(100vw - 24px)));max-height:var(--popup-max-height,calc(100vh - 24px));overflow:auto;overscroll-behavior:contain;padding:18px;overflow-wrap:anywhere;text-align:left}
-.entry-card{display:flex;flex-direction:column;overflow:hidden}.entry-card>.head,.entry-card>.meta,.entry-card>.record-status{flex-shrink:0}.entry-body{min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#dddcd5 transparent;padding-right:2px}
+.entry-card{display:flex;flex-direction:column;overflow:hidden}.entry-card>.head,.entry-card>.meta,.entry-card>.record-status,.entry-card>.source-notice{flex-shrink:0}.entry-body{min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#dddcd5 transparent;padding-right:2px}.source-notice{margin:8px 0 12px;padding:9px 10px;background:#f8efd9;border-radius:4px;color:#876340;font-size:11px;line-height:1.6}.source-notice .source-retry{margin-top:6px;padding:5px 8px;font-size:11px}
 .head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.dismiss{display:grid;place-items:center;flex-shrink:0;background:transparent;color:#7b7d75;font:300 21px/1 "Segoe UI",sans-serif;width:24px;height:28px;border-radius:4px}.dismiss:hover{color:#222521;background:#eeede7}
 h2{font:500 29px/1.15 Georgia,Cambria,serif;letter-spacing:-.035em;margin:0;color:#222521}p{margin:0}.query{font-size:10px;color:#7b7d75}.meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;margin:7px 0 13px;color:#7b7d75;font-size:12px}.phonetic{font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;font-size:12px}.head+.entry-body{margin-top:13px}.meaning{font-size:14px;line-height:1.65;margin:0 0 5px}
 .senses{margin:0;padding-left:18px}.senses li{padding-left:2px;margin-bottom:11px}.senses li:last-child{margin-bottom:0}.senses li::marker{font:500 10px "Segoe UI",sans-serif;color:#7b7d75}.pos{font:italic 12px/1.5 Georgia,Cambria,serif;color:#7b7d75;display:block;margin-bottom:3px}.sense-zh{font-size:14px;line-height:1.65;font-weight:400}.sense-en,.definition{color:#7b7d75;font-size:12px;line-height:1.6}.sense-en{margin-top:5px}.definition{margin-top:5px}.primary-sense{list-style:none;padding-left:0}.primary-sense li{padding-left:0}.primary-sense .pos{display:inline;margin-right:7px}.primary-sense .sense-zh{display:inline}.primary-sense .sense-en:first-child{margin-top:0}details{margin-top:10px}summary{cursor:pointer;color:#7b7d75;font-size:11px;padding:3px 0}summary:hover{color:#222521}details[open] summary{margin-bottom:9px}summary::marker{font-size:9px}.more-content>.meaning{margin-top:10px}

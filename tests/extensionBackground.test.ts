@@ -2,18 +2,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { buildSync } from 'esbuild';
+import { dictionaryCacheKey } from '../packages/dictionary/cache';
 
 const code = buildSync({ entryPoints: ['extension/background.ts'], bundle: true, write: false,
   format: 'iife', platform: 'browser', target: 'es2022', absWorkingDir: process.cwd() }).outputFiles[0].text;
 const origin = 'http://localhost:3000';
 const id = 'a'.repeat(32);
 const entry = { query: 'running', lemma: 'run', phonetic: '/rʌn/', cefrLevel: 'A1', partOfSpeech: 'verb',
+  learningTermRef: { language: 'en', kind: 'word', stableId: 'run' },
   basicMeaningsZh: ['跑'], definitionEn: 'Move quickly.', definitionsEn: [] };
 
 function harness() {
+  let displayedEntry: Record<string, any> = structuredClone(entry);
   const values: Record<string, any> = { settings: { origin, enabled: true, sites: ['https://example.com'] } };
   let receive: any; let fetches = 0; let online = true; let responseMode: 'success' | 'http' | 'json' | 'invalid' = 'success';
   let fetchGate: Promise<void> | null = null;
+  let lookupHandler: ((word: string) => Promise<void>) | undefined;
   const tabs: Array<{ id: number; url: string }> = [];
   const registered: any[] = [];
   const registrations: any[][] = []; const unregistrations: string[][] = []; const injections: any[] = [];
@@ -42,13 +46,17 @@ function harness() {
         messages.push({ tabId, message: structuredClone(message) });
         return message.type === 'IMPORT' ? importHandler(message) : { ok: true };
       } }, alarms: { onAlarm: event } };
-  const fetch = async (url: string) => {
-    fetches++; if (fetchGate) await fetchGate;
+  const fetch = async (url: string, options?: RequestInit) => {
+    if (!url.endsWith('/v1/sources')) fetches++;
+    const responseEntry = structuredClone(displayedEntry);
+    if (fetchGate) await fetchGate;
+    if (url.endsWith('/lookup') && lookupHandler) await lookupHandler(JSON.parse(options?.body as string).words[0]);
     if (!online) throw new Error('offline');
     return { ok: responseMode !== 'http', status: responseMode === 'http' ? 503 : 200, async json() {
       if (responseMode === 'json') throw new SyntaxError('Unexpected token <');
       if (responseMode === 'invalid') return { ok: true, results: [] };
-      return url.endsWith('/health') ? { dictionary: { available: true } } : { ok: true, results: [entry] };
+      if (url.endsWith('/v1/sources')) return { ok: true, catalog: { protocolVersion: 'dictionary-api.v1', catalogVersion: 'test-catalog.v1', defaultSource: 'native-reviewed', sources: [] } };
+      return url.endsWith('/health') ? { dictionary: { available: true } } : { ok: true, results: [responseEntry] };
     } };
   };
   vm.runInNewContext(code, { chrome, fetch, URL, crypto, TextEncoder, AbortSignal, console, Intl, Date, setTimeout, clearTimeout });
@@ -57,9 +65,24 @@ function harness() {
   const send = (message: unknown, sender = content) => new Promise<any>(resolve => receive(message, sender, resolve));
   return { values, send, content, popup, tabs, registered, registrations, unregistrations, injections, messages, denied,
     fetches: () => fetches, offline() { online = false; }, respondWith(mode: typeof responseMode) { responseMode = mode; },
+    displayHeadword(headword: string) { displayedEntry.lemma = headword; },
+    displayEntry(changes: Record<string, unknown>) { displayedEntry = { ...structuredClone(entry), ...changes }; },
+    onLookup(handler: typeof lookupHandler) { lookupHandler = handler; },
     onImport(handler: typeof importHandler) { importHandler = handler; },
     pauseRequests() { let release!: () => void; fetchGate = new Promise<void>(resolve => { release = resolve; }); return release; } };
 }
+
+test('extension evidence uses the independent identity when a displayed headword differs', async () => {
+  const h = harness(); h.displayHeadword('running');
+  const lookupId = crypto.randomUUID();
+  const result = await h.send({ type: 'LOOKUP', lookupId, word: 'running' });
+  assert.equal(result.entry.lemma, 'running');
+  assert.equal(h.values[`lookup:${origin}:${lookupId}`].event.lemma, 'run');
+  h.offline();
+  const repeatedId = crypto.randomUUID();
+  await h.send({ type: 'LOOKUP', lookupId: repeatedId, word: 'running' });
+  assert.equal(h.values[`lookup:${origin}:${repeatedId}`].event.lemma, 'run');
+});
 
 test('web pages cannot access settings or deliver synchronization messages', async () => {
   const h = harness();
@@ -86,6 +109,66 @@ test('repeated delivery of the same active query stays one queued record', async
   await Promise.all([h.send(message), h.send(message)]);
   assert.equal(h.fetches(), 1);
   assert.equal(Object.keys(h.values).filter(key => key.startsWith('lookup:')).length, 1);
+});
+
+test('a partial extension lookup names the failed source and retries without caching or duplicating evidence', async () => {
+  const h = harness();
+  const issues = [{ dictionaryId: 'wordnet', dictionaryName: 'WordNet 3.1', message: '暂时无法读取' }];
+  h.displayEntry({ dictionarySourceIssues: issues });
+  const lookupId = crypto.randomUUID();
+  const first = await h.send({ type: 'LOOKUP', lookupId, word: 'running' });
+  assert.equal(first.ok, true);
+  assert.deepEqual(first.entry.dictionarySourceIssues, issues);
+  assert.equal(Object.keys(h.values).filter(key => key.startsWith('dictionary:')).length, 0);
+  assert.equal(h.values[`lookup:${origin}:${lookupId}`].event.lemma, 'run');
+  h.displayEntry({ dictionarySourceIssues: [] });
+  const retried = await h.send({ type: 'LOOKUP', lookupId, word: 'running' });
+  assert.equal(retried.ok, true);
+  assert.equal(h.fetches(), 2);
+  assert.equal(Object.keys(h.values).filter(key => key.startsWith('lookup:')).length, 1);
+  assert.equal(Object.keys(h.values).filter(key => key.startsWith('dictionary:')).length, 1);
+  h.offline();
+  assert.equal((await h.send({ type: 'LOOKUP', lookupId: crypto.randomUUID(), word: 'running' })).ok, true);
+  assert.equal(h.fetches(), 2);
+});
+
+test('confirmed source misses are preserved in the extension cache without triggering retries', async () => {
+  const h = harness();
+  const misses = [{ dictionaryId: 'native-reviewed', dictionaryName: 'ReadAge 自编词典' }];
+  h.displayEntry({ dictionarySourceMisses: misses });
+  const first = await h.send({ type: 'LOOKUP', lookupId: crypto.randomUUID(), word: 'running' });
+  assert.equal(first.ok, true);
+  assert.deepEqual(first.entry.dictionarySourceMisses, misses);
+  const second = await h.send({ type: 'LOOKUP', lookupId: crypto.randomUUID(), word: 'running' });
+  assert.deepEqual(second.entry.dictionarySourceMisses, misses);
+  assert.equal(h.fetches(), 1);
+});
+
+test('a previously stored partial card is refreshed rather than reused as a complete offline result', async () => {
+  const h = harness();
+  const key = `dictionary:${origin}:${dictionaryCacheKey('en', 'test-catalog.v1', 'running')}`;
+  h.values[key] = { entry: { ...entry, dictionarySourceIssues: [{ dictionaryId: 'wordnet', dictionaryName: 'WordNet 3.1', message: 'unavailable' }] }, savedAt: 0 };
+  const result = await h.send({ type: 'LOOKUP', lookupId: crypto.randomUUID(), word: 'running' });
+  assert.equal(result.ok, true);
+  assert.equal(result.entry.dictionarySourceIssues, undefined);
+  assert.equal(h.fetches(), 1);
+  assert.equal(h.values[key].entry.dictionarySourceIssues, undefined);
+});
+
+test('an older in-flight response cannot roll the extension catalogue back after a newer lookup finishes', async () => {
+  const h = harness();
+  let start!: () => void; const started = new Promise<void>(resolve => { start = resolve; });
+  let finish!: () => void; const blocked = new Promise<void>(resolve => { finish = resolve; });
+  h.onLookup(async word => { if (word === 'running') { start(); await blocked; } });
+  h.displayEntry({ dictionaryRef: { catalogVersion: 'catalog-old' } });
+  const older = h.send({ type: 'LOOKUP', lookupId: crypto.randomUUID(), word: 'running' });
+  await started;
+  h.displayEntry({ dictionaryRef: { catalogVersion: 'catalog-new' } });
+  const newer = await h.send({ type: 'LOOKUP', lookupId: crypto.randomUUID(), word: 'walking' });
+  assert.equal(newer.ok, true);
+  finish(); assert.equal((await older).ok, true);
+  assert.equal(h.values[`dictionary-catalog:v1:${origin}`].catalog.catalogVersion, 'catalog-new');
+  assert.equal(Object.keys(h.values).filter(key => key.startsWith('lookup:')).length, 2);
 });
 
 test('failed new-word lookup creates no evidence and changing origins preserves the old queue', async () => {
@@ -238,4 +321,86 @@ test('dictionary connection failures give actionable text and never create evide
   const h = harness(); h.offline();
   const check = await h.send({ type: 'CHECK' }, h.popup);
   assert.equal(check.ok, false); assert.ok(check.error.includes('启动主应用服务'));
+});
+
+test('the extension card folds separate sources and retries a partial result with the same evidence ID', async () => {
+  const contentCode = buildSync({ entryPoints: ['extension/content.ts'], bundle: true, write: false,
+    format: 'iife', platform: 'browser', target: 'es2022', absWorkingDir: process.cwd() }).outputFiles[0].text;
+  const documentListeners = new Map<string, (event: any) => void>();
+  class ElementFixture {
+    className = ''; dataset: Record<string, string> = {}; parentElement: ElementFixture | null = null;
+    classList = { add: (...names: string[]) => { this.className = [this.className, ...names].join(' '); } };
+    childNodes: ElementFixture[] = []; attributes: Record<string, string> = {}; open = false;
+    style = { cssText: '', setProperty() {} }; listeners = new Map<string, () => void>();
+    private text = '';
+    constructor(readonly tagName: string) {}
+    set textContent(value: string) { this.text = value; }
+    get textContent(): string { return this.text + this.childNodes.map(child => child.textContent).join(''); }
+    append(...children: ElementFixture[]) { for (const child of children) { child.parentElement = this; this.childNodes.push(child); } }
+    attachShadow() { const root = new ElementFixture('shadow'); root.parentElement = this; this.childNodes.push(root); return root; }
+    setAttribute(name: string, value: string) { this.attributes[name] = value; }
+    addEventListener(name: string, handler: () => void) { this.listeners.set(name, handler); }
+    closest() { return null; }
+    getRootNode(): ElementFixture { return this.parentElement?.getRootNode() ?? this; }
+    focus() {}
+    getBoundingClientRect() { return { left: 100, top: 100, bottom: 120, width: 320, height: 220 }; }
+    remove() { if (this.parentElement) this.parentElement.childNodes = this.parentElement.childNodes.filter(child => child !== this); }
+    replaceWith(next: ElementFixture) {
+      if (!this.parentElement) return;
+      const parent = this.parentElement; next.parentElement = parent;
+      parent.childNodes[parent.childNodes.indexOf(this)] = next;
+    }
+    querySelector(selector: string): ElementFixture | null {
+      for (const child of this.childNodes) {
+        if (selector.split(',').some(part => part.startsWith('.') ? child.className.split(' ').includes(part.slice(1)) : child.tagName === part)) return child;
+        const found = child.querySelector(selector); if (found) return found;
+      }
+      return null;
+    }
+  }
+  const documentElement = new ElementFixture('html');
+  const paragraph = new ElementFixture('p'); documentElement.append(paragraph);
+  const selectedRange = { startContainer: paragraph, startOffset: 0, endContainer: paragraph, endOffset: 7,
+    cloneRange() { return this; }, getBoundingClientRect: () => ({ left: 100, top: 100, bottom: 120 }) };
+  const document = { contentType: 'text/html', documentElement, activeElement: null,
+    createElement: (tag: string) => new ElementFixture(tag),
+    addEventListener(name: string, handler: (event: any) => void) { documentListeners.set(name, handler); } };
+  const window: Record<string, any> = { addEventListener() {},
+    getSelection: () => ({ rangeCount: 1, anchorNode: paragraph, focusNode: paragraph, toString: () => 'running', getRangeAt: () => selectedRange }) };
+  window.top = window;
+  const source = (dictionaryId: string, dictionaryName: string, definitionEn: string, definitionZh?: string) => ({
+    dictionaryRef: { protocolVersion: 'dictionary-api.v1', dictionaryId, dictionaryName, entryId: 'run', contentVersion: 'v1',
+      catalogVersion: 'test-catalog.v1', fieldSources: {} },
+    record: { schemaVersion: 'dictionary.v2', query: 'running', lemma: 'run', phonetic: '', phonetics: [], wordForms: [],
+      wordFamily: [], cefrLevel: null, tags: [], supplementaryChinese: [], phrases: [],
+      partOfSpeechGroups: [{ id: 'group', partOfSpeech: 'verb', usageLabels: ['verb'], sortOrder: 0, senses: [{
+        id: 'sense', definitionEn, definitionZh, usageLabels: [], sortOrder: 0, examples: [], grammarNotes: [], collocations: [], source: [], reviewStatus: 'unreviewed',
+      }] }], edit: { source: [], revisionVersion: 'v1', reviewStatus: 'unreviewed', authoringMethod: 'pack-import' } },
+  });
+  const displayed = { ...entry, dictionarySources: [source('ecdict', 'ECDICT 内置词典', 'Move quickly.', '跑步'),
+    source('public-demo', 'Public dictionary', 'Travel swiftly.')],
+    dictionarySourceIssues: [{ dictionaryId: 'wordnet', dictionaryName: 'WordNet 3.1', message: '暂时无法读取' }] };
+  const queries: Array<{ type: string; lookupId?: string }> = [];
+  const chrome = { runtime: { id, onMessage: { addListener() {} }, async sendMessage(message: { type: string; lookupId?: string }) {
+    if (message.type === 'CONTENT_CHECK') return { ok: true };
+    queries.push(message); return { ok: true, entry: displayed };
+  } } };
+  vm.runInNewContext(contentCode, { chrome, window, document, Node: ElementFixture, Element: ElementFixture, HTMLElement: ElementFixture,
+    crypto, console, innerWidth: 1200, innerHeight: 800, requestAnimationFrame: () => 1, cancelAnimationFrame() {},
+    ResizeObserver: class { observe() {} disconnect() {} } });
+  const flush = () => new Promise<void>(resolve => setImmediate(resolve));
+  documentListeners.get('pointerup')!({ button: 0, target: paragraph, composedPath: () => [paragraph] });
+  await flush();
+  const trigger = documentElement.querySelector('.trigger'); assert.ok(trigger);
+  trigger.listeners.get('click')!(); await flush();
+  const body = documentElement.querySelector('.entry-body'); assert.ok(body);
+  assert.equal(body.childNodes.length, 2);
+  assert.ok(body.childNodes.every(section => section.tagName === 'details' && section.open));
+  assert.match(body.childNodes[0].textContent, /ECDICT 内置词典.*跑步/);
+  assert.match(body.childNodes[1].textContent, /Public dictionary.*Travel swiftly/);
+  assert.doesNotMatch(body.childNodes[1].textContent, /跑步/);
+  const notice = documentElement.querySelector('.source-notice'); assert.ok(notice);
+  assert.equal(notice.attributes.role, 'alert'); assert.match(notice.textContent, /WordNet 3\.1.*暂时无法读取/);
+  notice.querySelector('.source-retry')!.listeners.get('click')!(); await flush();
+  assert.equal(queries.length, 2); assert.equal(queries[0].lookupId, queries[1].lookupId);
 });

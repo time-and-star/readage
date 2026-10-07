@@ -12,6 +12,13 @@ import { memoryV2 } from '../src/lib/memoryV2/hooks';
 import type { Article } from '../src/types';
 import { seedCanonicalMemoryBaselines } from '../src/lib/canonicalMemoryBaseline';
 
+test('a later displayed card cannot replace an already confirmed learning mapping', async () => {
+  const resolver = new LearningWordIdResolver(async () => ['run']);
+  assert.deepEqual(await resolver.resolve(['running']), ['run']);
+  resolver.prime('running', 'running');
+  assert.deepEqual(await resolver.resolve(['running']), ['run']);
+});
+
 test('passive IDs match real successful dictionary lookups, preserving phrase units', async () => {
   const surfaces = ['running', 'books', 'studies', 'went', 'saw', 'over time', 'unknownzzzz'];
   const entries = await lookupDictionaryWords(surfaces);

@@ -1,7 +1,10 @@
 import type { GrammarExplanation } from '../types';
 import { postTutor, TutorApiError } from './tutorClient';
 import { lookupDictionaryWord, toDictionaryWordCard } from './dictionaryClient';
-import { isEnglishWord, normalizeEnglishSurface } from './englishTokens';
+import { isEnglishWord, normalizeEnglishLookupText } from '../../packages/dictionary/languages/englishSurface';
+import { dictionaryCatalogCache } from './dictionaryCatalog';
+import { DICTIONARY_CACHE_VERSION, dictionaryCacheKey } from '../../packages/dictionary/cache';
+import { AI_EXPLANATIONS_ENABLED } from './readingFeatures';
 
 export interface WordCardRequest {
   selectedText: string;
@@ -20,11 +23,7 @@ export function createWordCardRequest(
   wordOrPhrase: string,
   contextSentence = '',
 ): WordCardRequest | null {
-  const selectedText = normalizeEnglishSurface(wordOrPhrase)
-    .replace(/[^a-zA-Z\s'-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^[^a-zA-Z]+|[^a-zA-Z]+$/g, '')
+  const selectedText = normalizeEnglishLookupText(wordOrPhrase)
     .slice(0, WORD_CARD_MAX_SELECTED_TEXT);
   if (!selectedText) return null;
   return {
@@ -36,26 +35,28 @@ export function createWordCardRequest(
 export interface FetchWordCardOptions {
   articleId?: string;
   signal?: AbortSignal;
+  forceRefresh?: boolean;
 }
 
 /**
  * Single words use the dictionary and bounded local cache.
- * Phrases and dictionary misses use AI. Failures never fabricate a definition.
+ * AI explanations are temporarily disabled; dictionary misses remain explicit.
  */
 export async function fetchWordCard(
   request: WordCardRequest,
   options: FetchWordCardOptions = {},
 ): Promise<GrammarExplanation> {
-  // Old cards may contain headwords chosen by unverified suffix stemming.
-  const cacheKey = `english-ai:v4:word-card:${request.selectedText.toLowerCase()}`;
   const singleWord = isEnglishWord(request.selectedText);
   if (options.signal?.aborted) throw new Error('Lookup cancelled');
   if (singleWord) {
+    const catalog = await dictionaryCatalogCache.get(options.signal);
+    const cacheKeyFor = (version: string) => `english-ai:v6:word-card:${dictionaryCacheKey('en', version, request.selectedText.toLowerCase())}`;
+    const cacheKey = catalog ? cacheKeyFor(catalog.catalogVersion) : undefined;
     try {
-      const cached = typeof localStorage === 'undefined' ? null : localStorage.getItem(cacheKey);
+      const cached = typeof localStorage === 'undefined' || !cacheKey || options.forceRefresh ? null : localStorage.getItem(cacheKey);
       if (cached) {
         const card = JSON.parse(cached) as GrammarExplanation;
-        if (card.source === 'dictionary' && card.definition && card.wordOrPhrase) return card;
+        if (card.source === 'dictionary' && card.definition && card.wordOrPhrase && !card.dictionarySourceIssues?.length) return card;
       }
     } catch { /* A cache failure must not prevent a dictionary request. */ }
     const signal = options.signal
@@ -65,13 +66,15 @@ export async function fetchWordCard(
       const entry = await lookupDictionaryWord(request.selectedText, { signal });
       if (entry) {
         const card = toDictionaryWordCard(entry);
+        if (entry.dictionaryRef?.catalogVersion) await dictionaryCatalogCache.observeVersion(entry.dictionaryRef.catalogVersion, catalog?.catalogVersion);
+        const actualKey = entry.dictionaryRef?.catalogVersion ? cacheKeyFor(entry.dictionaryRef.catalogVersion) : cacheKey;
         try {
-          if (typeof localStorage !== 'undefined') {
-            const keys = Object.keys(localStorage).filter(key => key.startsWith('english-ai:v4:word-card:'));
-            if (!keys.includes(cacheKey) && keys.length >= 500) {
+          if (typeof localStorage !== 'undefined' && actualKey && !entry.dictionarySourceIssues?.length) {
+            const keys = Object.keys(localStorage).filter(key => key.startsWith('english-ai:v6:word-card:') && key.includes(DICTIONARY_CACHE_VERSION));
+            if (!keys.includes(actualKey) && keys.length >= 500) {
               for (const key of keys.slice(0, keys.length - 499)) localStorage.removeItem(key);
             }
-            localStorage.setItem(cacheKey, JSON.stringify(card));
+            localStorage.setItem(actualKey, JSON.stringify(card));
           }
         }
         catch { /* Optional cache; learning persistence is handled separately. */ }
@@ -81,6 +84,11 @@ export async function fetchWordCard(
       if (options.signal?.aborted) throw new Error('Lookup cancelled');
       throw new Error('词典暂时无法连接，请启动本地服务后重试。已缓存的单词仍可查询。');
     }
+  }
+  if (!AI_EXPLANATIONS_ENABLED) {
+    throw new Error(singleWord
+      ? '词典未收录此词，请检查拼写，或选中后点击“翻译”。'
+      : '请选中这段文字，点击“翻译”查看中文译文。');
   }
   try {
     const response = await postTutor<GrammarExplanation>(

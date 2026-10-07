@@ -16,6 +16,7 @@ import {
 } from './lib/proficiency';
 import { normalizeArticleSessions, STORAGE_KEYS, usePersistentState, usePersistenceError, retryPersistentWrites, mergeChatMessages } from './lib/storage';
 import { readReadingBookmark } from './lib/readingBookmark';
+import { summarizeWordLearningViews } from './lib/wordMemoryDetails';
 import { applyDifficultyFeedback, defaultReadingPreference, normalizeReadingPreference } from './lib/readingPreference';
 import {
   buildWeakPointMetrics,
@@ -27,6 +28,7 @@ import {
   toLocalDateKey,
 } from './lib/learningAnalytics';
 import { postTutor, RECOMMENDATION_INTERACTION_BUDGET_MS } from './lib/tutorClient';
+import { ON_DEMAND_TRANSLATION } from './lib/localTranslation';
 import {
   beginRecommendationPrefetch,
   consumeQueuedRecommendation,
@@ -57,6 +59,8 @@ import {
 } from './lib/magazineRecommendationPool';
 import { fetchMagazineLemmaIndex } from './lib/magazineLemmaIndex';
 import { getNextImportedArticle } from './lib/userLibrary';
+import { useMagazineReadingSequence } from './lib/useMagazineReadingSequence';
+import { MagazineReadingNavigation } from './components/MagazineReadingNavigation';
 import {
   getArticleImportQueue,
   needsImportEnrichment,
@@ -66,10 +70,15 @@ import {
 import { buildIntentionalLevelRating } from './lib/articleLevel';
 import { buildLevelRewriteArticle } from './lib/rewriteArticle';
 import { RecommendationEntryScreen } from './components/RecommendationEntryScreen';
+import { FlashcardReviewScreen } from './components/FlashcardReviewScreen';
 import { LandingPage } from './components/LandingPage';
 import { ReadingScreen } from './components/ReadingScreen';
 import { MyLearningScreen } from './components/MyLearningScreen';
-import { HistoryScreen } from './components/HistoryScreen';
+import { DictionarySettingsScreen } from './components/DictionarySettingsScreen';
+import { ReadingStudyScreen } from './components/ReadingStudyScreen';
+import { buildReadingStudyItems } from './lib/readingStudy';
+import { useReadingStudyEvidence } from './lib/useReadingStudyEvidence';
+import { useFlashcardLearningActivity } from './lib/useFlashcardLearningActivity';
 import { LibraryScreen } from './components/LibraryScreen';
 import { EnterArticleModal } from './components/EnterArticleModal';
 import {
@@ -80,11 +89,12 @@ import {
   buildAppPath,
   parseAppPath,
   readAppHistoryIndex,
+  readAppHistoryPreviousPath,
   resolveInitialAppRoute,
   withAppHistoryIndex,
   type AppRoute,
 } from './lib/appRoutes';
-import { BookOpen, BarChart3, History, Library } from 'lucide-react';
+import { BookOpen, BarChart3, Library } from 'lucide-react';
 import {
   DEFAULT_REVIEW_QUEUE_LIMIT,
   useDueWords,
@@ -196,7 +206,8 @@ export default function App() {
   // Memory V2.2: 使用 Hooks 替代 proficiency 状态
   const { dueWords: rawDueWords, loading: dueWordsLoading } = useDueWords(DEFAULT_REVIEW_QUEUE_LIMIT);
   const { confirmationWords: rawConfirmationWords } = useConfirmationWords(DEFAULT_REVIEW_QUEUE_LIMIT);
-  const { proficiencies: rawProficiencies, loading: rawProficienciesLoading } = useAllWordProficiency();
+  const { proficiencies: rawProficiencies, loading: rawProficienciesLoading,
+    error: proficienciesError, refresh: refreshProficiencies } = useAllWordProficiency();
   const [canonicalMemory, setCanonicalMemory] = useState<{
     proficiencies: WordProficiencyView[];
     dueWords: WordProficiencyView[];
@@ -222,6 +233,7 @@ export default function App() {
   const memoryLifecycle = useMemoryLifecycle();
   const persistenceError = usePersistenceError();
   const externalActivity = useExternalLearningActivity();
+  const flashcardActivity = useFlashcardLearningActivity();
 
   const [events, setEvents] = usePersistentState<LearningEvent[]>(STORAGE_KEYS.events, []);
   const [weakPoints, setWeakPoints] = usePersistentState<string[]>(STORAGE_KEYS.weakPoints, []);
@@ -254,8 +266,6 @@ export default function App() {
   const completedArticleIdsRef = useRef(
     new Set(history.filter((article) => article.status === 'Completed').map((article) => article.id))
   );
-  /** Last article opened in the reading tab — survives nav switches away from /read/:id. */
-  const [lastReadingArticleId, setLastReadingArticleId] = useState<string | null>(() => readReadingBookmark()?.articleId ?? null);
   const [showEnterArticle, setShowEnterArticle] = useState(false);
   const [fileImportNotice, setFileImportNotice] = useState<string | null>(null);
   const importQueueSnapshot = useArticleImportQueue();
@@ -284,7 +294,7 @@ export default function App() {
       const currentIndex = readAppHistoryIndex(window.history.state) ?? 0;
       const nextIndex = options.replace ? currentIndex : currentIndex + 1;
       window.history[method](
-        withAppHistoryIndex(window.history.state, nextIndex),
+        withAppHistoryIndex(window.history.state, nextIndex, options.replace ? undefined : window.location.pathname),
         '',
         nextPath,
       );
@@ -295,7 +305,7 @@ export default function App() {
   useEffect(() => {
     const handlePopState = () => {
       const nextRoute = parseAppPath(window.location.pathname);
-      if (window.location.pathname.replace(/\/+$/, '') === '/assessment') {
+      if (['/assessment', '/history', '/flashcards'].includes(window.location.pathname.replace(/\/+$/, ''))) {
         window.history.replaceState(window.history.state, '', buildAppPath(nextRoute));
       }
       setRoute(nextRoute);
@@ -305,7 +315,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const canonicalPath = buildAppPath(route);
+    const initialRoute = window.location.pathname.replace(/\/+$/, '') === '/history'
+      ? parseAppPath(window.location.pathname)
+      : route;
+    if (initialRoute !== route) setRoute(initialRoute);
+    const canonicalPath = buildAppPath(initialRoute);
     const currentIndex = readAppHistoryIndex(window.history.state) ?? 0;
     window.history.replaceState(
       withAppHistoryIndex(window.history.state, currentIndex),
@@ -520,7 +534,7 @@ export default function App() {
         console.warn('[import] backfill merge skipped', error);
       }
 
-      if (cancelled) return;
+      if (cancelled || ON_DEMAND_TRANSLATION) return;
 
       // Server-side backfill can pause client queue so Step concurrency is free.
       try {
@@ -634,10 +648,6 @@ export default function App() {
     [routedArticleId, history, recommendationArticles, recommendationLibrary, builtInLibrary]
   );
 
-  useEffect(() => {
-    if (activeArticle) setLastReadingArticleId(activeArticle.id);
-  }, [activeArticle]);
-
   // Memory V2.2: 使用 Hooks 数据
   const dueLemmas = useMemo(
     () => dueWords.map(w => w.wordId),
@@ -652,13 +662,7 @@ export default function App() {
   );
 
   const bands = useMemo(
-    () => proficiencies.reduce((counts, word) => {
-      if (word.isIntroduced) counts.introduced += 1;
-      else if (word.level === 4) counts.mastered += 1;
-      else counts.learning += 1;
-      if (!word.isIntroduced && new Date(word.nextReview).getTime() <= reviewClock) counts.due += 1;
-      return counts;
-    }, { introduced: 0, learning: 0, mastered: 0, due: 0 }),
+    () => summarizeWordLearningViews(proficiencies, new Date(reviewClock)),
     [proficiencies, reviewClock]
   );
 
@@ -676,12 +680,19 @@ export default function App() {
       clickCount: session?.clickCount ?? 0,
       discussionCount: session?.discussionCount ?? 0,
       hasSession: Boolean(session),
+      lastOpenedAt: session?.lastOpenedAt || article.lastOpenedAt,
     };
   }), [history, sessions]);
 
+  const studyEvidence = useReadingStudyEvidence(events, route.kind === 'learning-records');
+  const readingStudyItems = useMemo(
+    () => buildReadingStudyItems(articleProgress, studyEvidence.evidence, events, studyEvidence.aliases),
+    [articleProgress, studyEvidence.evidence, studyEvidence.aliases, events],
+  );
+
   const activityDateKeys = useMemo(
-    () => getLearningActivityDateKeys(learningDays, [...events, ...externalActivity.events], sessions, history),
-    [learningDays, events, sessions, history, externalActivity.events]
+    () => getLearningActivityDateKeys(learningDays, [...events, ...externalActivity.events, ...flashcardActivity.events], sessions, history),
+    [learningDays, events, sessions, history, externalActivity.events, flashcardActivity.events]
   );
   const streakDays = useMemo(
     () => calculateLearningStreak(activityDateKeys, new Date(reviewClock)),
@@ -689,8 +700,8 @@ export default function App() {
   );
   const completedArticleCount = useMemo(() => countCompletedArticles(history), [history]);
   const recentEventCount = useMemo(
-    () => countRecentLearningEvents([...events, ...externalActivity.events], new Date(reviewClock), 7),
-    [events, reviewClock, externalActivity.events]
+    () => countRecentLearningEvents([...events, ...externalActivity.events, ...flashcardActivity.events], new Date(reviewClock), 7),
+    [events, reviewClock, externalActivity.events, flashcardActivity.events]
   );
   const weakPointMetrics = useMemo(
     () => buildWeakPointMetrics(events, weakPoints),
@@ -746,7 +757,7 @@ export default function App() {
   ) => {
     const open = options?.open !== false;
     const source = options?.source ?? 'manual';
-    const needs = needsImportEnrichment(article);
+    const needs = !ON_DEMAND_TRANSLATION && needsImportEnrichment(article);
     const openedAt = new Date().toISOString();
 
     const withMeta: Article = {
@@ -776,7 +787,6 @@ export default function App() {
 
     if (open) {
       if (!options?.preserveRecommendationFeed) resetRecommendationFeed();
-      setLastReadingArticleId(withMeta.id);
       touchSession(withMeta.id, (session) => ({ ...session, lastOpenedAt: openedAt }));
       navigate({ kind: 'reading', articleId: withMeta.id });
       pushEvent('article_open', { articleId: withMeta.id });
@@ -792,18 +802,11 @@ export default function App() {
     }
   };
 
-  /**
-   * Open any article as the head of a recommendation continuous-reading feed
-   * (scroll-end / left-swipe advance to the next recommended piece).
-   */
+  /** Library/history articles retain their source's order. Recommendations start explicitly. */
   const beginReadingSession = (
     article: Article,
     options?: {
       source?: ImportJobSource;
-      /** When true, keep the current feed (advance path). */
-      continueFeed?: boolean;
-      topic?: string;
-      reviewWords?: string[];
     }
   ) => {
     const source = options?.source
@@ -813,31 +816,7 @@ export default function App() {
           ? 'recommend'
           : 'history');
 
-    if (article.importBatchId) {
-      ingestArticle(article, { open: true, source });
-      return;
-    }
-
-    if (!options?.continueFeed) {
-      resetRecommendationFeed();
-      recommendationContextRef.current = {
-        topic: options?.topic ?? 'English Idioms & Daily Practice',
-        reviewWords: options?.reviewWords ?? reviewLemmas,
-      };
-      updateRecommendationFeed(startRecommendationFeed(article.id));
-      updateRecommendationArticles([article]);
-    }
-
-    setLastReadingArticleId(article.id);
-    ingestArticle(article, {
-      open: true,
-      source,
-      preserveRecommendationFeed: true,
-    });
-
-    if (!options?.continueFeed && recommendationFeedRef.current.status === 'active') {
-      void prefetchNextRecommendationArticle();
-    }
+    ingestArticle(article, { open: true, source });
   };
 
   const openArticle = (article: Article) => {
@@ -952,7 +931,6 @@ export default function App() {
   };
 
   const openRecommendationArticle = (article: Article) => {
-    setLastReadingArticleId(article.id);
     ingestArticle(article, {
       open: true,
       source: article.source === 'ai_generated' ? 'recommend' : 'history',
@@ -1145,19 +1123,6 @@ export default function App() {
     }
   };
 
-  const handleRecommendForMe = () => {
-    const reviewWords = reviewLemmas;
-    void startRecommendationReading('English Idioms & Daily Practice', reviewWords);
-  };
-
-  const handleStartTargetedReview = () => {
-    const words = reviewLemmas;
-    void startRecommendationReading(
-      `Contextual review of: ${words.join(', ') || 'core vocabulary'}`,
-      words
-    );
-  };
-
   const startRecommendationFromEntry = () => {
     if (isRecommending) return;
     // Keep /recommend as a loading/empty shell for cold-start recommendation.
@@ -1210,7 +1175,6 @@ export default function App() {
     // Close the previous article as soon as the next one takes over. The
     // reader keeps at most the current article plus one prefetched successor.
     updateRecommendationArticles([nextArticle]);
-    setLastReadingArticleId(nextArticle.id);
     ingestArticle(nextArticle, {
       open: true,
       source: nextArticle.source === 'ai_generated' ? 'recommend' : 'history',
@@ -1225,13 +1189,14 @@ export default function App() {
     setFileImportNotice(notice || null);
     const [first, ...rest] = articles;
     for (const article of rest) {
+      if (history.some(existing => existing.id === article.id)) continue;
       ingestArticle(
         { ...article, source: article.source || 'user_input' },
         { open: false, source: 'manual' }
       );
     }
     beginReadingSession(
-      { ...first, source: first.source || 'user_input' },
+      history.find(existing => existing.id === first.id) ?? { ...first, source: first.source || 'user_input' },
       { source: 'manual' }
     );
   };
@@ -1318,6 +1283,11 @@ export default function App() {
     && recommendationFeed.seenArticleIds.includes(activeArticle.id)
   );
   const nextImportedArticle = activeArticle ? getNextImportedArticle(activeArticle, history) : undefined;
+  const magazineSequence = useMagazineReadingSequence(activeArticle, Boolean(
+    route.kind === 'reading' && !isRecommendationReading && activeArticle?.magazineIssueId
+  ));
+  const magazineContinuation = magazineSequence.state?.status === 'ready'
+    ? magazineSequence.state.continuation : undefined;
   const continuousReadingArticles = useMemo(() => {
     if (!isRecommendationReading) return undefined;
     const current = activeArticle || recommendationArticles[0];
@@ -1336,35 +1306,20 @@ export default function App() {
     fallback();
   };
   const goBackOrLibrary = () => goBackOrFallback(goToLibrary);
-  const returnHome = goBackOrLibrary;
-  const openReadingTab = () => {
-    if (route.kind === 'reading' && activeArticle) return;
-    if (isRecommending) {
-      if (route.kind !== 'recommendation') navigate({ kind: 'recommendation' });
-      return;
+  const returnToLearning = () => {
+    const index = readAppHistoryIndex(window.history.state);
+    if (index != null && index > 0 && readAppHistoryPreviousPath(window.history.state) === '/learning') {
+      window.history.back();
+    } else {
+      navigate({ kind: 'learning' }, { replace: true });
     }
-    const last = lastReadingArticleId ? findArticleById(lastReadingArticleId) : null;
-    if (last) {
-      const feed = recommendationFeedRef.current;
-      if (feed.status === 'active' && feed.seenArticleIds.includes(last.id)) {
-        navigate({ kind: 'reading', articleId: last.id });
-        return;
-      }
-      beginReadingSession(last, {
-        source: last.source === 'magazine'
-          ? 'magazine'
-          : last.source === 'ai_generated'
-            ? 'recommend'
-            : 'history',
-      });
-      return;
-    }
-    startRecommendationFromEntry();
   };
-  const resumeFeedRef = useRef(route.kind === 'reading');
+  const returnHome = goBackOrLibrary;
+  const openRecommendationEntry = () => navigate({ kind: 'recommendation' });
+  const resumeReadingRef = useRef(route.kind === 'reading');
   useEffect(() => {
-    if (resumeFeedRef.current && activeArticle) {
-      resumeFeedRef.current = false;
+    if (resumeReadingRef.current && activeArticle) {
+      resumeReadingRef.current = false;
       beginReadingSession(activeArticle);
     }
   }, [activeArticle?.id]);
@@ -1386,14 +1341,13 @@ export default function App() {
         {(
           [
             { id: 'library' as const, label: 'Library', icon: Library },
-            { id: 'reading' as const, label: '阅读', icon: BookOpen },
+            { id: 'reading' as const, label: '推荐阅读', icon: BookOpen },
             { id: 'learning' as const, label: '数据', icon: BarChart3 },
-            { id: 'history' as const, label: '历史', icon: History },
           ] as const
         ).map(({ id, label, icon: Icon }) => {
           const isCurrent = id === 'reading'
-            ? route.kind === 'reading' || route.kind === 'recommendation'
-            : route.kind === id;
+            ? isRecommendationReading || route.kind === 'recommendation'
+            : route.kind === id || (id === 'learning' && (route.kind === 'flashcards' || route.kind === 'learning-records' || route.kind === 'dictionary-settings')) || (id === 'library' && route.kind === 'reading' && !isRecommendationReading);
           return (
           <button
             key={id}
@@ -1403,7 +1357,11 @@ export default function App() {
             title={label}
             onClick={() => {
               if (id === 'reading') {
-                openReadingTab();
+                openRecommendationEntry();
+                return;
+              }
+              if (id === 'learning' && route.kind === 'flashcards') {
+                returnToLearning();
                 return;
               }
               navigate({ kind: id });
@@ -1469,9 +1427,9 @@ export default function App() {
           )}
         </div>
       )}
-      {(persistenceError || externalActivity.error) && (
+      {(persistenceError || externalActivity.error || flashcardActivity.error) && (
         <div role="alert" className="bg-amber-50 border-b border-amber-200 p-3 text-sm text-amber-900">
-          {persistenceError || externalActivity.error}
+          {persistenceError || externalActivity.error || flashcardActivity.error}
           {persistenceError && <button className="ml-3 underline" onClick={retryPersistentWrites}>重试保存</button>}
         </div>
       )}
@@ -1525,13 +1483,27 @@ export default function App() {
             isLoading={isRecommending}
             phase={recommendPhase}
             feedEnded={recommendationFeed.status === 'ended'}
+            onSelectArticle={article => {
+              const saved = history.find(item => item.id === article.id);
+              beginReadingSession(saved ? { ...article, ...saved, media: article.media } : article, { source: 'magazine' });
+            }}
             onStartRecommendation={startRecommendationFromEntry}
+            onContinueRecommendation={recommendationFeed.status === 'active' && recommendationArticles[0]
+              ? () => navigate({ kind: 'reading', articleId: recommendationArticles[0].id }) : undefined}
             onOpenLibrary={() => {
               resetRecommendationFeed();
               navigate({ kind: 'library' });
             }}
             onBack={goBackOrLibrary}
             navigation={appNavigation}
+          />
+        )}
+
+        {route.kind === 'flashcards' && (
+          <FlashcardReviewScreen
+            navigation={appNavigation}
+            onBack={returnToLearning}
+            onOpenReading={openRecommendationEntry}
           />
         )}
 
@@ -1558,10 +1530,25 @@ export default function App() {
               activeArticle.id, activeArticle.levelRating?.level || activeArticle.level, rating))}
             onNextArticle={activeArticle.importBatchId
               ? nextImportedArticle ? () => beginReadingSession(nextImportedArticle, { source: 'manual' }) : undefined
-              : startRecommendationFromEntry}
+              : isRecommendationReading ? startRecommendationFromEntry : undefined}
             nextArticleLabel={activeArticle.importBatchId
               ? activeArticle.importBatchFormat === 'pdf' ? '下一页正文' : '下一章'
-              : undefined}
+              : '下一篇推荐'}
+            readingPathLabel={isRecommendationReading ? '推荐阅读'
+              : magazineContinuation
+                ? `Library · ${magazineContinuation.issueTitle} · 第 ${magazineContinuation.position} / ${magazineContinuation.total} 篇`
+                : activeArticle.magazineIssueId ? 'Library · 按本期目录阅读' : 'Library'}
+            reviewWordCandidates={isRecommendationReading ? recommendationContextRef.current?.reviewWords : undefined}
+            readingContinuation={magazineSequence.state && <MagazineReadingNavigation
+              continuation={magazineContinuation}
+              error={magazineSequence.state.status === 'error' ? magazineSequence.state.message : undefined}
+              onNext={() => {
+                const next = magazineContinuation?.nextArticle;
+                if (next) beginReadingSession(findArticleById(next.id) || next, { source: 'magazine' });
+              }}
+              onRetry={magazineSequence.reload}
+              onOpenLibrary={goToLibrary}
+            />}
             navigation={appNavigation}
             continuousArticles={continuousReadingArticles}
             importJob={importQueueSnapshot.jobs.find((j) => j.articleId === activeArticle.id) ?? null}
@@ -1648,13 +1635,17 @@ export default function App() {
           <MyLearningScreen
             onBack={goBackOrLibrary}
             navigation={appNavigation}
-            onStartTargetedReview={handleStartTargetedReview}
+            onOpenRecommendedReading={openRecommendationEntry}
+            onOpenFlashcards={() => navigate({ kind: 'flashcards' })}
+            onOpenReadingRecords={() => navigate({ kind: 'learning-records' })}
+            onOpenDictionarySettings={() => navigate({ kind: 'dictionary-settings' })}
             onOpenArticle={(id) => {
               const art = history.find((a) => a.id === id);
               if (art) beginReadingSession(art, { source: 'history' });
             }}
             articlesReadCount={completedArticleCount}
             introducedWordsCount={bands.introduced}
+            learnedWordsCount={bands.learned}
             masteredWordsCount={bands.mastered}
             learningWordsCount={bands.learning}
             streakDaysCount={streakDays}
@@ -1662,23 +1653,38 @@ export default function App() {
             dueWordCount={bands.due}
             proficiencies={proficiencies}
             proficienciesLoading={proficienciesLoading}
+            proficienciesError={proficienciesError}
+            onRetryProficiencies={() => { void refreshProficiencies(); }}
             weakPointMetrics={weakPointMetrics}
-            isTargetedReviewLoading={isRecommending}
             articleProgress={articleProgress}
           />
         )}
 
-        {route.kind === 'history' && (
-          <HistoryScreen
-            articles={history}
-            sessions={sessions}
-            onSelectArticle={(article) =>
-              beginReadingSession(article, { source: 'history' })
-            }
-            onBack={goBackOrLibrary}
+        {route.kind === 'learning-records' && (
+          <ReadingStudyScreen
+            items={readingStudyItems}
+            selectedArticleId={route.articleId}
             navigation={appNavigation}
+            onBack={() => goBackOrFallback(() => navigate(route.articleId ? { kind: 'learning-records' } : { kind: 'learning' }, { replace: true }))}
+            onOverview={() => navigate({ kind: 'learning' })}
+            onSelectItem={(articleId) => navigate({ kind: 'learning-records', articleId })}
+            onOpenArticle={(id) => {
+              const article = history.find(item => item.id === id);
+              if (article) beginReadingSession(article, { source: 'history' });
+            }}
+            loading={studyEvidence.loading}
+            error={studyEvidence.error}
+            onRetry={studyEvidence.retry}
           />
         )}
+
+        {route.kind === 'dictionary-settings' && (
+          <DictionarySettingsScreen
+            navigation={appNavigation}
+            onBack={() => goBackOrFallback(() => navigate({ kind: 'learning' }, { replace: true }))}
+          />
+        )}
+
       </div>
 
       {showEnterArticle && (

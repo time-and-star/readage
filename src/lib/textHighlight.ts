@@ -18,6 +18,12 @@ export function getReadingTermMatches(tokens: readonly ReadingToken[], terms: re
   const occupied = new Set<number>();
   // Resolve long ranges first, even when a shorter overlapping range starts earlier.
   for (const { term, normalized } of normalizedTerms) {
+    const compoundGaps = new Set<number>();
+    let termWords = 0;
+    for (const token of tokenizeReadingParagraph(term)) {
+      if (token.type === 'word') termWords += 1;
+      else if (token.type === 'text' && /^[-\u2010\u2011]$/u.test(token.value)) compoundGaps.add(termWords);
+    }
     for (let start = 0; start < tokens.length; start++) {
       const first = tokens[start];
       if (first.type !== 'word' || occupied.has(first.tokenIndex)) continue;
@@ -26,7 +32,8 @@ export function getReadingTermMatches(tokens: readonly ReadingToken[], terms: re
       for (let end = start; end < tokens.length; end++) {
         const token = tokens[end];
         if (token.type === 'text') {
-          if (!/^\s+$/u.test(token.value)) break;
+          const hyphen = /^[-\u2010\u2011]$/u.test(token.value);
+          if (compoundGaps.has(indices.length) ? !hyphen : !/^\s+$/u.test(token.value)) break;
           continue;
         }
         if (token.type !== 'word' || occupied.has(token.tokenIndex)) break;

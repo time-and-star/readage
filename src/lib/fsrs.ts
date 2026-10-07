@@ -22,8 +22,8 @@ export const FSRS_PARAMETERS_ID =
 /**
  * FSRS-6 parameters used by the app.
  *
- * Short-term learning steps are intentionally disabled because this app does
- * not have a separate minute-level flashcard session. The canonical FSRS
+ * Short-term scheduler steps are disabled; word cards rehearse forgotten words
+ * within the current session without extra long-term review credit. Canonical FSRS
  * scheduler still owns stability, difficulty, due dates, lapses, and review
  * state for every long-term review event.
  */

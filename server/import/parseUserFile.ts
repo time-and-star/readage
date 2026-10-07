@@ -4,12 +4,12 @@ import { isSkippableImportTitle, parseEpubBuffer, parseHtmlContent } from '../ma
 import { parsePdfDocument } from '../documents/parsePdfDocument';
 import { parseDocxBuffer } from '../documents/parseDocx';
 import { saveArticleImage } from '../magazines/assets';
+import { createHash } from 'node:crypto';
 
 /** Same byte budget as a magazine issue download. */
 export const USER_IMPORT_MAX_BYTES = 64 * 1024 * 1024;
 /** Keep a whole issue, but stop before one file can fill browser storage. */
 export const USER_IMPORT_MAX_ARTICLES = 80;
-const MAGAZINE_MIN_WORDS = 80;
 
 export type UserImportFormat = 'epub' | 'pdf' | 'docx' | 'html' | 'text';
 
@@ -25,6 +25,28 @@ export interface UserImportParseResult {
   format: UserImportFormat;
   articles: ImportedUserArticle[];
   omittedCount: number;
+  sourceId: string;
+  totalCount: number;
+  offset: number;
+  nextOffset: number | null;
+}
+
+export interface UserImportPageOptions { offset?: number; limit?: number; signal?: AbortSignal }
+
+/** Chapter offsets count cleaned reading entries, rather than EPUB furniture/spine files. */
+export function parseUserImportPageQuery(query: Record<string, unknown>): { offset: number; limit: number } {
+  const number = (key: string, fallback: number) => {
+    const raw = query[key];
+    if (raw === undefined) return fallback;
+    if (typeof raw !== 'string' || !/^(0|[1-9]\d*)$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+      throw new UserImportError('INVALID_IMPORT_RANGE', '导入范围无效，请输入有效的章节起点。');
+    }
+    return Number(raw);
+  };
+  const offset = number('offset', 0);
+  const limit = number('limit', USER_IMPORT_MAX_ARTICLES);
+  if (limit < 1 || limit > USER_IMPORT_MAX_ARTICLES) throw new UserImportError('INVALID_IMPORT_RANGE', `每批最多准备 ${USER_IMPORT_MAX_ARTICLES} 篇。`);
+  return { offset, limit };
 }
 
 export class UserImportError extends Error {
@@ -138,20 +160,24 @@ function looksLikeHtml(text: string, extension: string): boolean {
   return head.startsWith('<!doctype') || head.startsWith('<html') || head.startsWith('<article');
 }
 
-function limitArticles(articles: ImportedUserArticle[]): { articles: ImportedUserArticle[]; omittedCount: number } {
-  if (articles.length <= USER_IMPORT_MAX_ARTICLES) {
-    return { articles, omittedCount: 0 };
-  }
-  return {
-    articles: articles.slice(0, USER_IMPORT_MAX_ARTICLES),
-    omittedCount: articles.length - USER_IMPORT_MAX_ARTICLES,
-  };
+function selectArticles(articles: ImportedUserArticle[], offset: number, limit: number) {
+  if (offset >= articles.length) throw new UserImportError('INVALID_IMPORT_RANGE', `文件共有 ${articles.length} 篇，请调整起点。`);
+  const selected = articles.slice(offset, offset + limit);
+  const end = offset + selected.length;
+  return { articles: selected, omittedCount: articles.length - end, totalCount: articles.length,
+    offset, nextOffset: end < articles.length ? end : null };
 }
 
 export async function parseUserImportFile(buffer: Buffer, filename: string, options: {
   dataRoot?: string;
   saveImage?: (buffer: Buffer) => Promise<string | null>;
-} = {}): Promise<UserImportParseResult> {
+} & UserImportPageOptions = {}): Promise<UserImportParseResult> {
+  options.signal?.throwIfAborted();
+  const offset = options.offset ?? 0;
+  const limit = options.limit ?? USER_IMPORT_MAX_ARTICLES;
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > USER_IMPORT_MAX_ARTICLES) {
+    throw new UserImportError('INVALID_IMPORT_RANGE', '导入范围无效，每批最多准备 80 篇。');
+  }
   if (!buffer.length) {
     throw new UserImportError('EMPTY_FILE', '文件是空的。');
   }
@@ -162,39 +188,54 @@ export async function parseUserImportFile(buffer: Buffer, filename: string, opti
   const extension = extensionOf(filename);
   const isZip = buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
   const isPdf = buffer.subarray(0, 5).toString('ascii').startsWith('%PDF');
-  const saveImage = options.saveImage || (options.dataRoot ? (image: Buffer) => saveArticleImage(image, options.dataRoot) : undefined);
+  const sourceId = createHash('sha256').update(buffer).digest('hex');
+  const imageWriter = options.saveImage || ((image: Buffer) => saveArticleImage(image, options.dataRoot));
+  const saveImage = async (image: Buffer) => {
+    options.signal?.throwIfAborted();
+    const result = await imageWriter(image);
+    options.signal?.throwIfAborted();
+    return result;
+  };
 
   if (isPdf) {
     let articles: ImportedUserArticle[];
-    try { articles = await parsePdfDocument(buffer, titleFromFilename(filename), options.dataRoot); }
+    try { articles = await parsePdfDocument(buffer, titleFromFilename(filename), options.dataRoot, { offset, limit, signal: options.signal }); }
     catch (error) {
+      options.signal?.throwIfAborted();
       throw new UserImportError('INVALID_PDF', `PDF 无法解析：${error instanceof Error ? error.message : '文件不完整'}`);
     }
     if (articles.length === 0) {
       throw new UserImportError('EMPTY_IMPORT', 'PDF 没有可读取的页面。');
     }
-    return { format: 'pdf', articles, omittedCount: Math.max(0, articles[0].sourceDocument!.pageCount - articles.length) };
+    options.signal?.throwIfAborted();
+    const totalCount = articles[0].sourceDocument!.pageCount;
+    const end = offset + articles.length;
+    return { format: 'pdf', articles, sourceId, totalCount, offset,
+      omittedCount: Math.max(0, totalCount - end), nextOffset: end < totalCount ? end : null };
   }
 
   if (isZip) {
     if (extension === 'docx') {
       let chapters: Awaited<ReturnType<typeof parseDocxBuffer>>;
-      try { chapters = await parseDocxBuffer(buffer, titleFromFilename(filename), { saveImage }); }
+      try { chapters = await parseDocxBuffer(buffer, titleFromFilename(filename), { saveImage, signal: options.signal }); }
       catch (error) {
+        options.signal?.throwIfAborted();
         throw new UserImportError('INVALID_DOCX', `Word 无法解析：${error instanceof Error ? error.message : '文件不完整'}`);
       }
       const articles = chapters.map(chapter => toArticle(chapter, 0))
         .filter((article): article is ImportedUserArticle => article !== null);
       if (!articles.length) throw new UserImportError('EMPTY_IMPORT', 'Word 文件中没有可阅读的文字。');
-      return { format: 'docx', ...limitArticles(articles) };
+      options.signal?.throwIfAborted();
+      return { format: 'docx', sourceId, ...selectArticles(articles, offset, limit) };
     }
     if (extension !== 'epub') {
       throw new UserImportError('UNSUPPORTED_FORMAT', '压缩格式请使用 EPUB 或 Word（DOCX）。');
     }
     let chapters: Awaited<ReturnType<typeof parseEpubBuffer>>;
     try {
-      chapters = await parseEpubBuffer(buffer, { saveImage, minWords: 1 });
+      chapters = await parseEpubBuffer(buffer, { saveImage, minWords: 1, signal: options.signal });
     } catch (error) {
+      options.signal?.throwIfAborted();
       const message = error instanceof Error ? error.message : 'EPUB 无法解析';
       throw new UserImportError('INVALID_EPUB', `EPUB 无法解析：${message}`);
     }
@@ -204,7 +245,8 @@ export async function parseUserImportFile(buffer: Buffer, filename: string, opti
     if (articles.length === 0) {
       throw new UserImportError('EMPTY_IMPORT', 'EPUB 里没有可阅读的正文。封面和目录已跳过。');
     }
-    return { format: 'epub', ...limitArticles(articles) };
+    options.signal?.throwIfAborted();
+    return { format: 'epub', sourceId, ...selectArticles(articles, offset, limit) };
   }
 
   const allowedText = new Set(['html', 'htm', 'xhtml', 'txt', 'md', 'text', 'markdown', '']);
@@ -220,19 +262,21 @@ export async function parseUserImportFile(buffer: Buffer, filename: string, opti
   }
 
   if (looksLikeHtml(text, extension)) {
-    const chapters = parseHtmlContent(text, titleFromFilename(filename));
+    const chapters = parseHtmlContent(text, titleFromFilename(filename), 1);
     const articles = chapters
-      .map((chapter) => toArticle(chapter, MAGAZINE_MIN_WORDS))
+      .map((chapter) => toArticle(chapter, 1))
       .filter((article): article is ImportedUserArticle => article !== null);
     if (articles.length === 0) {
-      throw new UserImportError('EMPTY_IMPORT', 'HTML 里没有清洗出可阅读的正文。导航、版权页和少于 80 词的章节已跳过。');
+      throw new UserImportError('EMPTY_IMPORT', 'HTML 里没有可阅读的正文，导航和版权页已跳过。');
     }
-    return { format: 'html', ...limitArticles(articles) };
+    options.signal?.throwIfAborted();
+    return { format: 'html', sourceId, ...selectArticles(articles, offset, limit) };
   }
 
   const articles = parsePlainText(text, filename);
   if (articles.length === 0) {
     throw new UserImportError('EMPTY_IMPORT', '文本里没有留下可阅读的正文。导航和杂志页眉已被清掉。');
   }
-  return { format: 'text', ...limitArticles(articles) };
+  options.signal?.throwIfAborted();
+  return { format: 'text', sourceId, ...selectArticles(articles, offset, limit) };
 }

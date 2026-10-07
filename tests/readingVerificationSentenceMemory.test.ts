@@ -127,7 +127,8 @@ test('backup validation preserves generated question sentences in IndexedDB meta
   const journal = await storage.getMeta('reading-verification:u');
   const exported = await exportLocalDataBackup();
   const backup = validateLocalDataBackup(JSON.parse(JSON.stringify({ ...exported,
-    indexedDb: { name: MEMORY_IDB_NAME, version: MEMORY_IDB_VERSION,
-      stores: { meta: [{ key: 'reading-verification:u', value: journal }] } } })));
+    memoryStorage: 'indexedDB', indexedDb: { name: MEMORY_IDB_NAME, version: MEMORY_IDB_VERSION,
+      stores: { rawEvents: [], articleEvidence: [], dailyEvidence: [], memoryState: [], finalizationTasks: [],
+        meta: [{ key: 'reading-verification:u', value: journal }] } } })));
   assert.deepEqual(backup.indexedDb!.stores.meta, [{ key: 'reading-verification:u', value: journal }]);
 });

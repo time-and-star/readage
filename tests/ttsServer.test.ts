@@ -79,6 +79,22 @@ function synthesize(url: string, body: unknown = { text: 'Hello world.' }, signa
   });
 }
 
+test('timing headers expose only numeric speech metrics and cache hits do not replay inference timings', async () => {
+  await harness((_request, response) => {
+    response.setHeader('Server-Timing', 'tts-infer;dur=2100.5, tts-pre;dur=70, tts-queue;dur=0, private-description;dur=123, tts-encode;dur=NaN');
+    audio(response);
+  }, async ({ url }) => {
+    const first = await synthesize(url);
+    assert.match(first.headers.get('Server-Timing') || '', /tts-infer;dur=2100.5/);
+    assert.doesNotMatch(first.headers.get('Server-Timing') || '', /private-description|NaN/);
+    await first.arrayBuffer();
+    const cached = await synthesize(url);
+    assert.match(cached.headers.get('Server-Timing') || '', /tts-cache;dur=0/);
+    assert.doesNotMatch(cached.headers.get('Server-Timing') || '', /tts-infer|tts-pre/);
+    await cached.arrayBuffer();
+  });
+});
+
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve: () => void;
   const promise = new Promise<void>((done) => { resolve = done; });

@@ -24,6 +24,25 @@ export function eventKey(event: RawWordEvent): string {
   return JSON.stringify([event.occurrenceId, event.eventType, event.occurredAt]);
 }
 
+/** Recover the immutable review state before the first reconstructable log. */
+function unloggedBaselineFor(state: WordMemoryState | null): WordMemoryState | null {
+  if (!state || state.fsrsCard.reps <= state.fsrsReviews.length) return null;
+  if (!state.fsrsReviews.length) return { ...state, fsrsCard: { ...state.fsrsCard }, fsrsReviews: [] };
+  const first = [...state.fsrsReviews].sort((left, right) => left.review.localeCompare(right.review))[0];
+  const previousReview = first.state === 0 ? null : first.due;
+  const due = previousReview
+    ? new Date(Date.parse(previousReview) + first.scheduledDays * 86_400_000).toISOString() : first.due;
+  return { ...state, stability: first.stability, difficulty: first.difficulty,
+    lastReview: previousReview, nextReview: due, fsrsReviews: [],
+    fsrsCard: { due, stability: first.stability, difficulty: first.difficulty,
+      elapsedDays: first.lastElapsedDays, scheduledDays: first.scheduledDays, learningSteps: first.learningSteps,
+      reps: state.fsrsCard.reps - state.fsrsReviews.length,
+      lapses: Math.max(0, state.fsrsCard.lapses
+        - state.fsrsReviews.filter(review => review.rating === 1 && review.state !== 0).length),
+      state: first.state, ...(previousReview ? { lastReview: previousReview } : {}) },
+  };
+}
+
 export function replayWordJournal(journal: WordJournal, timezone: string, now: Date,
   verifications: readonly ReadingVerificationEvidence[] = []) {
   const baselineRawKeys = new Set(journal.baselineRaw.map(eventKey));
@@ -41,11 +60,17 @@ export function replayWordJournal(journal: WordJournal, timezone: string, now: D
   const rawOccurrences = new Set(raw.map(exposureKey));
   const baselineProfile = rmeProfileForState(journal.baselineState);
   const historicalExposures = baselineProfile.exposureHistory.filter(event => !rawOccurrences.has(exposureKey(event)));
-  const state = initializeWordMemory(journal.userId, journal.wordId);
+  const unloggedBaseline = unloggedBaselineFor(journal.baselineState);
+  const baselineReviewAt = Date.parse(unloggedBaseline?.lastReview ?? '');
+  const afterBaseline = (at: string) => !Number.isFinite(baselineReviewAt) || Date.parse(at) > baselineReviewAt;
+  const replayableVerifications = verifications.filter(attempt => afterBaseline(attempt.occurredAt));
+  const state = unloggedBaseline ?? initializeWordMemory(journal.userId, journal.wordId);
   const firstAt = [raw[0]?.occurredAt, historicalExposures[0]?.occurredAt,
     journal.baselineState?.fsrsReviews[0]?.due].filter((value): value is string => Boolean(value)).sort()[0] || now.toISOString();
-  state.nextReview = firstAt;
-  state.fsrsCard.due = firstAt;
+  if (!unloggedBaseline) {
+    state.nextReview = firstAt;
+    state.fsrsCard.due = firstAt;
+  }
   // Older releases retain a bounded RME history. Keep the counters outside that
   // history as a baseline rather than deleting evidence that cannot be replayed.
   state.rme = { ...createEmptyRmeProfile(),
@@ -55,7 +80,13 @@ export function replayWordJournal(journal: WordJournal, timezone: string, now: D
       - baselineProfile.exposureHistory.filter(e => e.isValid && e.quality <= 0.2).length) };
   let current = state;
   const dates = new Set([...journal.baselineDaily.map(row => row.localDate), ...raw.map(row => row.localDate)]);
-  const legacyReviews = (journal.baselineState?.fsrsReviews ?? []).filter(review => review.source !== 'verification');
+  const flashcardIds = new Set(verifications.filter(attempt => attempt.purpose === 'flashcard_review').map(attempt => attempt.attemptId));
+  const verificationIds = new Set(verifications.filter(attempt => attempt.purpose !== 'flashcard_review').map(attempt => attempt.attemptId));
+  const independentRecalls = (journal.baselineState?.fsrsReviews ?? []).filter(review =>
+    (review.source === 'flashcard' && !review.verificationAttemptIds?.some(id => flashcardIds.has(id)))
+    || (review.source === 'verification' && !review.verificationAttemptIds?.some(id => verificationIds.has(id))));
+  const legacyReviews = (journal.baselineState?.fsrsReviews ?? []).filter(review => review.source !== 'verification'
+    && review.source !== 'flashcard');
   const legacyReviewDates = new Map<string, string>();
   for (const review of legacyReviews) {
     const actualEvidenceDay = journal.baselineDaily.find(day => day.articleEvidence.some(article => article.lastSeenAt === review.review));
@@ -72,6 +103,22 @@ export function replayWordJournal(journal: WordJournal, timezone: string, now: D
   const daily: DailyWordEvidence[] = [];
   type Action = { at: string; order: number; run: () => void };
   const actions: Action[] = [];
+  // Imported word-card history can predate this device's recall journal.
+  // Keep these reviews at their actual times, outside daily reading decisions.
+  for (const review of independentRecalls) {
+    if (!afterBaseline(review.review)) continue;
+    actions.push({ at: review.review, order: 3, run: () => {
+      const at = new Date(review.review);
+      const recent = !current.lastReview || at.getTime() - Date.parse(current.lastReview) < 86_400_000;
+      current = applyRmeReview(submitFsrsReview(current, review.rating as 1 | 2 | 3 | 4, at),
+        review.rating === 1 ? 'Again' : 'Good', at, review.rating === 2 || recent ? 0.6 : 1);
+      current.fsrsReviews[current.fsrsReviews.length - 1] = { ...current.fsrsReviews.at(-1)!,
+        source: review.source, ...(review.localDate ? { localDate: review.localDate } : {}),
+        ...(review.verificationAttemptIds ? { verificationAttemptIds: review.verificationAttemptIds } : {}),
+        ...(review.originalFlashcardRating !== undefined ? { originalFlashcardRating: review.originalFlashcardRating } : {}),
+        ...(review.flashcardRevisions ? { flashcardRevisions: review.flashcardRevisions.map(revision => ({ ...revision })) } : {}) };
+    } });
+  }
   const latestAssisted = (at: string) => {
     if (!current.lastAssistedAt || Date.parse(at) > Date.parse(current.lastAssistedAt)) current.lastAssistedAt = at;
   };
@@ -112,10 +159,10 @@ export function replayWordJournal(journal: WordJournal, timezone: string, now: D
       prepared.push(result.event);
     } });
   }
-  for (const attempt of verifications) {
+  for (const attempt of replayableVerifications) {
     if (attempt.wordId !== journal.wordId || Date.parse(attempt.occurredAt) > now.getTime()) continue;
     actions.push({ at: attempt.occurredAt, order: 3, run: () => {
-      const available = verifications.filter(row => Date.parse(row.occurredAt) <= Date.parse(attempt.occurredAt));
+      const available = replayableVerifications.filter(row => Date.parse(row.occurredAt) <= Date.parse(attempt.occurredAt));
       const articleRows = new Map<string, ArticleWordEvidence>();
       for (const event of prepared.filter(row => row.localDate === attempt.localDate)) {
         const article = aggregateArticleEvidence(prepared.filter(row => row.localDate === attempt.localDate && row.articleId === event.articleId));
@@ -150,7 +197,8 @@ export function replayWordJournal(journal: WordJournal, timezone: string, now: D
         } else if (row) articles.set(articleId, row);
       }
       const evidence = aggregateDailyEvidence([...articles.values()]);
-      const oldReviews = legacyReviews.filter(review => legacyReviewDates.get(review.review) === date);
+      const oldReviews = legacyReviews.filter(review => legacyReviewDates.get(review.review) === date
+        && afterBaseline(review.review));
       const incoming = incomingEvents.filter(event => event.localDate === date);
       const priorGrade = oldReviews.length > 0 ? (oldReviews.at(-1)!.rating <= 1 ? 'Again' : 'Good') : null;
       const replacesPriorSuccess = priorGrade === 'Good' && incoming.some(event => event.eventType === 'click');
@@ -178,7 +226,15 @@ export function replayWordJournal(journal: WordJournal, timezone: string, now: D
       if (evidence) {
         if (isHistorical) {
           if (!preservePriorDecision) {
-            current = finalizeDailyEvidence(current, evidence, journal.userId, zone) ?? current;
+            // Older lookups still belong in encounter/activity history, but
+            // cannot rewrite a known card whose earlier reviews are unavailable.
+            const hasLookupAfterBaseline = !unloggedBaseline
+              || dayPrepared.some(event => event.eventType === 'click' && afterBaseline(event.occurredAt))
+              || baseline?.articleEvidence.some(article => article.clickedOccurrenceCount > 0
+                && afterBaseline(article.lastSeenAt));
+            if (evidence.pendingGrade !== 'Again' || hasLookupAfterBaseline) {
+              current = finalizeDailyEvidence(current, evidence, journal.userId, zone) ?? current;
+            }
           } else {
             // Historical raw data may already have been pruned. Preserve the
             // actual old review decision instead of guessing from partial history.
@@ -208,7 +264,7 @@ export function replayWordJournal(journal: WordJournal, timezone: string, now: D
   actions.sort((a, b) => a.at.localeCompare(b.at) || a.order - b.order);
   // Current-day aggregation still runs, but does not finalize its review.
   for (const action of actions) action.run();
-  current = replayVerificationEvidence(current, verifications, timezone, daily, now) ?? current;
+  current = replayVerificationEvidence(current, replayableVerifications, timezone, daily, now) ?? current;
   current.rme = projectRmeProfile(current.rme!, current, now);
   return { state: current, daily, raw: prepared };
 }

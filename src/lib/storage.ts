@@ -11,6 +11,9 @@ export const STORAGE_KEYS = {
   weakPoints: `${PREFIX}:weakPoints`,
   learningDays: `${PREFIX}:learningDays`,
   readingBookmark: `${PREFIX}:readingBookmark`,
+  readingBookmarks: `${PREFIX}:readingBookmarks`,
+  readingParagraphProgress: `${PREFIX}:readingParagraphProgress`,
+  libraryView: `${PREFIX}:libraryView`,
   readingPreference: `${PREFIX}:readingPreference`,
   externalActivity: `${PREFIX}:externalActivity`,
 } as const;
@@ -102,7 +105,7 @@ function getBrowserStorage(): Storage | undefined {
 type PendingWrite<T> = { action: SetStateAction<T>; resolve: () => void; reject: (error: Error) => void };
 type PersistentEntry<T> = {
   value: T; fallback: T; normalize?: StorageNormalizer<T>; listeners: Set<() => void>;
-  pending: PendingWrite<T>[]; running: boolean;
+  pending: PendingWrite<T>[]; running: boolean; currentFlush?: Promise<void>;
 };
 const entries = new Map<string, PersistentEntry<any>>();
 const errors = new Map<string, string>();
@@ -118,6 +121,11 @@ function entryFor<T>(key: string, fallback: T, normalize?: StorageNormalizer<T>)
     listeners: new Set(), pending: [], running: false,
   });
   return entries.get(key)!;
+}
+
+/** Route restoration must include queued changes when a previous screen has just unmounted. */
+export function readPersistentValue<T>(key: string, fallback: T, normalize?: StorageNormalizer<T>): T {
+  return entryFor(key, fallback, normalize).value;
 }
 
 /** Rebase operations on the latest value while holding the cross-tab write lock. */
@@ -139,8 +147,7 @@ export async function commitPersistentUpdate<T>(
   return commit();
 }
 
-async function flushEntry<T>(key: string, entry: PersistentEntry<T>) {
-  if (entry.running) return;
+async function performEntryFlush<T>(key: string, entry: PersistentEntry<T>) {
   entry.running = true;
   try {
     while (entry.pending.length) {
@@ -152,6 +159,7 @@ async function flushEntry<T>(key: string, entry: PersistentEntry<T>) {
         entry.pending.shift();
         entry.value = entry.pending.reduce((value, item) => applyAction(value, item.action), committed);
         errors.delete(key);
+        if (!errors.size && retryTimer) { clearTimeout(retryTimer); retryTimer = undefined; }
         entry.listeners.forEach(listener => listener());
         notifyStatus();
         pending.resolve();
@@ -167,6 +175,25 @@ async function flushEntry<T>(key: string, entry: PersistentEntry<T>) {
   } finally { entry.running = false; }
 }
 
+function flushEntry<T>(key: string, entry: PersistentEntry<T>): Promise<void> {
+  if (entry.currentFlush) return entry.currentFlush;
+  const task = performEntryFlush(key, entry);
+  entry.currentFlush = task;
+  const release = () => { if (entry.currentFlush === task) entry.currentFlush = undefined; };
+  void task.then(release, release);
+  return task;
+}
+
+/** A backup must not omit optimistic records that have not reached storage yet. */
+export async function flushPendingPersistentWrites(): Promise<void> {
+  while ([...entries.values()].some(entry => entry.pending.length || entry.currentFlush)) {
+    await Promise.all([...entries].map(([key, entry]) => flushEntry(key, entry)));
+    if ([...entries].some(([key, entry]) => entry.pending.length && errors.has(key))) {
+      throw new Error('学习记录尚未全部保存，备份未导出。请保持页面打开并重试保存。');
+    }
+  }
+}
+
 export function updatePersistentValue<T>(key: string, fallback: T, action: SetStateAction<T>): Promise<void> {
   const entry = entryFor(key, fallback);
   entry.value = applyAction(entry.value, action);
@@ -176,7 +203,7 @@ export function updatePersistentValue<T>(key: string, fallback: T, action: SetSt
   return done;
 }
 export function retryPersistentWrites() { entries.forEach((entry, key) => { void flushEntry(key, entry); }); }
-const persistenceError = () => errors.size ? '学习记录尚未全部保存，请保持页面打开。系统会自动重试；也可导出备份后释放浏览器存储空间。' : null;
+const persistenceError = () => errors.size ? '学习记录尚未全部保存，请保持页面打开。系统会自动重试，也可点击重试保存。' : null;
 export function usePersistenceError() {
   return useSyncExternalStore(listener => { statusListeners.add(listener); return () => { statusListeners.delete(listener); }; }, persistenceError, () => null);
 }

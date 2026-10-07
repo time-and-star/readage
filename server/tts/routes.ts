@@ -34,6 +34,7 @@ export function createTtsRouter(
   });
 
   router.post('/synthesize', requireAccess, async (req, res) => {
+    const started = performance.now();
     const controller = new AbortController();
     const abort = () => controller.abort();
     const disconnect = () => { if (!res.writableEnded) abort(); };
@@ -47,6 +48,7 @@ export function createTtsRouter(
       res.setHeader('Content-Type', audio.contentType);
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Server-Timing', `tts-app;dur=${(performance.now() - started).toFixed(1)}${audio.serverTiming ? `, ${audio.serverTiming}` : ''}`);
       res.send(audio.bytes);
     } catch (error) {
       if (controller.signal.aborted || res.destroyed) return;

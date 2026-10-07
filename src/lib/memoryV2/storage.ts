@@ -16,6 +16,7 @@ export interface MemoryStorage {
   getMeta?<T>(key: string): Promise<T | null>;
   setMeta?(key: string, value: unknown): Promise<void>;
   getWordDailyEvidence?(userId: string, wordId: string): Promise<DailyWordEvidence[]>;
+  getAllArticleEvidence?(userId: string): Promise<ArticleWordEvidence[]>;
   // ==================== 原始事件 ====================
 
   /**

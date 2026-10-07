@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import JSZip from 'jszip';
 import { tmpdir } from 'node:os';
 import { parseDocxBuffer } from '../server/documents/parseDocx';
 import { parseUserImportFile } from '../server/import/parseUserFile';
@@ -102,5 +103,53 @@ test('PDF retains every original page, accepts short and scanned pages, and rend
   } finally {
     assert.ok(path.resolve(root).startsWith(`${path.resolve(tmpdir())}${path.sep}`));
     await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('PDF batches preserve original page numbers and continue without repeated or missing pages', async () => {
+  const root = await fs.mkdtemp(path.join(tmpdir(), 'readage-pdf-batches-'));
+  try {
+    const buffer = pdfFixture(Array.from({ length: 83 }, (_, i) => ({ lines: [`Lesson page ${i + 1}.`] })));
+    const first = await parseUserImportFile(buffer, 'long-book.pdf', { dataRoot: root });
+    const tail = await parseUserImportFile(buffer, 'long-book.pdf', { dataRoot: root, offset: first.nextOffset! });
+    assert.equal(first.articles.length, 80);
+    assert.equal(first.totalCount, 83);
+    assert.equal(tail.nextOffset, null);
+    assert.equal(tail.sourceId, first.sourceId);
+    assert.deepEqual([...first.articles, ...tail.articles].map(article => article.sourceDocument!.pageNumber), Array.from({ length: 83 }, (_, i) => i + 1));
+    assert.equal(tail.articles[0].sourceDocument!.src, first.articles[0].sourceDocument!.src);
+    assert.match(tail.articles[0].paragraphs.join(' '), /Lesson page 81/);
+    const selected = await parseUserImportFile(buffer, 'long-book.pdf', { dataRoot: root, offset: 81, limit: 1 });
+    assert.equal(selected.articles[0].sourceDocument!.pageNumber, 82);
+    assert.equal(selected.nextOffset, 82);
+  } finally {
+    assert.ok(path.resolve(root).startsWith(`${path.resolve(tmpdir())}${path.sep}`));
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('cancelled EPUB and DOCX parsing stop before saving any following images', async () => {
+  const epub = new JSZip();
+  epub.file('META-INF/container.xml', '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>');
+  epub.file('book.opf', '<package><manifest><item id="one" href="one.xhtml"/><item id="two" href="two.xhtml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/></spine></package>');
+  for (const name of ['one', 'two']) {
+    epub.file(`${name}.xhtml`, `<html><body><h1>Chapter ${name}</h1><p>A small chapter with a picture.</p><img src="${name}.png" /></body></html>`);
+    epub.file(`${name}.png`, smallPng);
+  }
+  const docx = await JSZip.loadAsync(await docxFixture('<w:p><w:r><w:t>First picture.</w:t><w:drawing><a:blip r:embed="photo"/></w:drawing></w:r></w:p><w:p><w:r><w:t>Second picture.</w:t><w:drawing><a:blip r:embed="second"/></w:drawing></w:r></w:p>', {
+    relationships: '<Relationship Id="photo" Type="x/image" Target="media/photo.png"/><Relationship Id="second" Type="x/image" Target="media/second.png"/>',
+  }));
+  docx.file('word/media/second.png', smallPng);
+  for (const [filename, zip] of [['book.epub', epub], ['book.docx', docx]] as const) {
+    const controller = new AbortController();
+    let saves = 0;
+    await assert.rejects(parseUserImportFile(await zip.generateAsync({ type: 'nodebuffer' }), filename, {
+      signal: controller.signal, saveImage: async () => {
+        saves += 1;
+        controller.abort(new Error('cancel remaining chapters'));
+        return '/api/import/images/test.png';
+      },
+    }), /cancel remaining chapters/);
+    assert.equal(saves, 1, `${filename} must stop after cancellation.`);
   }
 });

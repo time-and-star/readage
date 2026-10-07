@@ -66,8 +66,11 @@ export async function parseDocxBuffer(
   fallbackTitle: string,
   options: EpubParseOptions = {},
 ): Promise<ParsedChapter[]> {
+  options.signal?.throwIfAborted();
   const zip = await JSZip.loadAsync(buffer);
+  options.signal?.throwIfAborted();
   const document = await readXml(zip, 'word/document.xml');
+  options.signal?.throwIfAborted();
   const root = document && [...descendants(document)].find(node => localName(node) === 'document');
   if (!root) throw new Error('缺少 Word 正文。请使用 DOCX 文件。');
   const prefix = root.name!.includes(':') ? `${root.name!.split(':')[0]}:` : '';
@@ -79,6 +82,7 @@ export async function parseDocxBuffer(
   const body = [...descendants(root)].find(node => node.name === `${prefix}body`);
   if (!body) throw new Error('缺少 Word 正文。');
   const relationshipXml = await readXml(zip, 'word/_rels/document.xml.rels');
+  options.signal?.throwIfAborted();
   const relationships = new Map<string, string>();
   if (relationshipXml) for (const node of descendants(relationshipXml)) {
     if (localName(node) !== 'Relationship' || attribute(node, 'TargetMode')?.toLowerCase() === 'external') continue;
@@ -87,6 +91,7 @@ export async function parseDocxBuffer(
     if (id && target && /\/image$/.test(attribute(node, 'Type') || '')) relationships.set(id, target);
   }
   const styleXml = await readXml(zip, 'word/styles.xml');
+  options.signal?.throwIfAborted();
   const styles = new Map<string, { name: string; outline?: string }>();
   if (styleXml) for (const node of descendants(styleXml)) {
     if (localName(node) !== 'style') continue;
@@ -107,6 +112,7 @@ export async function parseDocxBuffer(
   };
   const pending = [...(body.children || [])].reverse();
   while (pending.length) {
+    options.signal?.throwIfAborted();
     const paragraph = pending.pop()!;
     if (paragraph.name === `${prefix}del`) continue;
     if (paragraph.name !== `${prefix}p`) {
@@ -133,6 +139,7 @@ export async function parseDocxBuffer(
     }
     const description = nodes.find(node => localName(node) === 'docPr');
     for (const node of nodes) {
+      options.signal?.throwIfAborted();
       const imageId = localName(node) === 'blip' ? attribute(node, 'embed')
         : localName(node) === 'imagedata' ? attribute(node, 'id') : undefined;
       const target = imageId && relationships.get(imageId);
@@ -145,10 +152,12 @@ export async function parseDocxBuffer(
         const declaredSize = (file as unknown as { _data?: { uncompressedSize?: number } } | null)?._data?.uncompressedSize;
         if (!file || (originalName && originalName !== file.name) || (declaredSize && declaredSize > MAX_IMAGE_BYTES)) continue;
         const image = await file.async('nodebuffer');
+        options.signal?.throwIfAborted();
         if (image.length > MAX_IMAGE_BYTES) continue;
         mediaBytes += image.length;
         if (mediaBytes > MAX_MEDIA_BYTES) throw new Error('Word 插图总大小超过 64MB。');
         src = await saveImage(image);
+        options.signal?.throwIfAborted();
         savedImages.set(imagePath, src);
       }
       if (src) current.media!.push({

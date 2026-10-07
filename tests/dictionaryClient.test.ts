@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  resolveDictionaryLearningWordId,
   lookupDictionaryWord,
   lookupDictionaryWords,
   type DictionaryEntry,
@@ -22,6 +23,16 @@ const entry: DictionaryEntry = {
     },
   ],
 };
+
+test('display headwords and later source responses cannot overwrite an established evidence ID', async () => {
+  const query = 'running';
+  assert.equal(await resolveDictionaryLearningWordId(query, { language: 'en', kind: 'word', stableId: 'run' }), 'run');
+  const displayed = await lookupDictionaryWord(query, { fetcher: (async () => new Response(JSON.stringify({ ok: true, results: [{
+    ...entry, lemma: 'running', learningTermRef: { language: 'en', kind: 'word', stableId: 'running' },
+  }] }))) as typeof fetch });
+  assert.equal(displayed?.lemma, 'running');
+  assert.equal(await resolveDictionaryLearningWordId(query, displayed?.learningTermRef), 'run');
+});
 
 test('dictionary client looks up one word and returns the first result', async () => {
   let request: RequestInit | undefined;

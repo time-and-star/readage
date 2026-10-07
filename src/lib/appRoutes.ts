@@ -1,16 +1,19 @@
 export type AppRoute =
   | { kind: 'landing' }
   | { kind: 'recommendation' }
+  | { kind: 'flashcards' }
   | { kind: 'reading'; articleId: string }
   | { kind: 'library' }
   | { kind: 'learning' }
-  | { kind: 'history' };
+  | { kind: 'dictionary-settings' }
+  | { kind: 'learning-records'; articleId?: string };
 
 export const APP_HISTORY_STATE_KEY = '__englishAiHistory';
 
 type AppHistoryState = {
   [APP_HISTORY_STATE_KEY]?: {
     index?: unknown;
+    previousPath?: unknown;
   };
 };
 
@@ -25,20 +28,28 @@ export function readAppHistoryIndex(state: unknown): number | null {
     : null;
 }
 
-export function withAppHistoryIndex(state: unknown, index: number): Record<string, unknown> {
+export function readAppHistoryPreviousPath(state: unknown): string | null {
+  if (!state || typeof state !== 'object') return null;
+  const path = (state as AppHistoryState)[APP_HISTORY_STATE_KEY]?.previousPath;
+  return typeof path === 'string' && path.startsWith('/') ? path : null;
+}
+
+export function withAppHistoryIndex(state: unknown, index: number, previousPath?: string): Record<string, unknown> {
   const base = state && typeof state === 'object'
     ? { ...(state as Record<string, unknown>) }
     : {};
-  base[APP_HISTORY_STATE_KEY] = { index };
+  const parent = previousPath ?? readAppHistoryPreviousPath(state);
+  base[APP_HISTORY_STATE_KEY] = { index, ...(parent ? { previousPath: parent } : {}) };
   return base;
 }
 
 const SIMPLE_ROUTE_PATHS = {
   landing: '/',
   recommendation: '/recommend',
+  flashcards: '/learning/flashcards',
   library: '/library',
   learning: '/learning',
-  history: '/history',
+  'dictionary-settings': '/settings/dictionaries',
 } as const;
 
 function normalizePathname(pathname: string): string {
@@ -51,6 +62,19 @@ export function parseAppPath(pathname: string): AppRoute {
   const path = normalizePathname(pathname);
   // Retired test links use the learning page; App canonicalizes with replaceState.
   if (path === '/assessment') return { kind: 'learning' };
+  // Keep word-card bookmarks while moving their canonical location into Learning.
+  if (path === '/flashcards') return { kind: 'flashcards' };
+  // Reading records now live under Learning; preserve saved history links.
+  if (path === '/history') return { kind: 'learning-records' };
+  if (path === '/learning/articles') return { kind: 'learning-records' };
+  if (path.startsWith('/learning/articles/')) {
+    const encodedId = path.slice('/learning/articles/'.length);
+    if (!encodedId || encodedId.includes('/')) return { kind: 'learning' };
+    try {
+      const articleId = decodeURIComponent(encodedId);
+      return articleId ? { kind: 'learning-records', articleId } : { kind: 'learning' };
+    } catch { return { kind: 'learning' }; }
+  }
 
   for (const [kind, routePath] of Object.entries(SIMPLE_ROUTE_PATHS)) {
     if (path === routePath) return { kind } as AppRoute;
@@ -74,6 +98,9 @@ export function parseAppPath(pathname: string): AppRoute {
 }
 
 export function buildAppPath(route: AppRoute): string {
+  if (route.kind === 'learning-records') {
+    return route.articleId ? `/learning/articles/${encodeURIComponent(route.articleId)}` : '/learning/articles';
+  }
   if (route.kind === 'reading') {
     return `/read/${encodeURIComponent(route.articleId)}`;
   }

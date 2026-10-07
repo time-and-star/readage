@@ -14,6 +14,16 @@ export class OverlongSentenceError extends Error {
   constructor() { super('Sentence exceeds the local model token limit.'); }
 }
 
+export function measureKokoroInference(tts) {
+  const nativeGenerate = tts.generate_from_ids.bind(tts);
+  tts.inferenceTimeMs = 0;
+  tts.generate_from_ids = async (...args) => {
+    const started = performance.now();
+    try { return await nativeGenerate(...args); }
+    finally { tts.inferenceTimeMs += performance.now() - started; }
+  };
+}
+
 /** Count the normalized phonemes before native inference; upstream otherwise silently truncates. */
 export function guardKokoroTokenizer(tokenizer) {
   const limit = Math.min(MAX_MODEL_TOKENS, Number(tokenizer.model_max_length) || MAX_MODEL_TOKENS);
@@ -44,16 +54,21 @@ export function createKokoroSynthesizer(tts, TextSplitterStream) {
   return async ({ input, voice, speed }, signal) => {
     const parts = [];
     let sampleCount = 0;
+    let generationMs = 0;
+    const inferenceBefore = tts.inferenceTimeMs || 0;
     const generatePart = async text => {
       signal.throwIfAborted();
       let audio;
+      const began = performance.now();
       try {
         audio = await tts.generate(text, { voice, speed });
       } catch (error) {
+        generationMs += performance.now() - began;
         if (!(error instanceof OverlongSentenceError)) throw error;
         for (const part of splitOverlongSentence(text)) await generatePart(part);
         return;
       }
+      generationMs += performance.now() - began;
       signal.throwIfAborted();
       parts.push(audio.audio);
       sampleCount += audio.audio.length;
@@ -68,7 +83,14 @@ export function createKokoroSynthesizer(tts, TextSplitterStream) {
     const samples = new Float32Array(sampleCount);
     let offset = 0;
     for (const part of parts) { samples.set(part, offset); offset += part.length; }
-    return encodePcmWave(samples);
+    const encodeStart = performance.now();
+    const bytes = encodePcmWave(samples);
+    // Buffer metadata stays in process; only numeric durations go to HTTP headers.
+    const inferenceMs = (tts.inferenceTimeMs || 0) - inferenceBefore;
+    bytes.timings = {
+      inferenceMs, preprocessingMs: Math.max(0, generationMs - inferenceMs), encodingMs: performance.now() - encodeStart,
+    };
+    return bytes;
   };
 }
 
@@ -148,16 +170,20 @@ export function createKokoroHttpServer(runtime) {
     const disconnect = () => { if (!res.writableEnded) controller.abort(); };
     res.on('close', disconnect);
     const previous = tail;
+    const queuedAt = performance.now();
     let release;
     tail = new Promise((resolve) => { release = resolve; });
     try {
       await previous;
       if (controller.signal.aborted) return;
       const started = performance.now();
+      const queueMs = started - queuedAt;
       const audio = await runtime.synthesize(request, controller.signal);
       if (controller.signal.aborted || res.destroyed) return;
       if (!audio.length || audio.length > MAX_AUDIO_BYTES) throw new Error('Invalid audio size.');
       res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': audio.length,
+        'Server-Timing': `tts-queue;dur=${queueMs.toFixed(1)}, tts-synth;dur=${(performance.now() - started).toFixed(1)}`
+          + (audio.timings ? `, tts-infer;dur=${audio.timings.inferenceMs.toFixed(1)}, tts-pre;dur=${audio.timings.preprocessingMs.toFixed(1)}, tts-encode;dur=${audio.timings.encodingMs.toFixed(1)}` : ''),
         'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
       res.end(audio);
       console.log(`[kokoro] ${request.voice}: ${request.input.length} chars, ${Math.round(performance.now() - started)}ms`);
@@ -211,6 +237,7 @@ export async function startKokoroService() {
       },
     });
     runtime.voices = tts.voices;
+    measureKokoroInference(tts);
     tts.tokenizer = guardKokoroTokenizer(tts.tokenizer);
     runtime.synthesize = createKokoroSynthesizer(tts, TextSplitterStream);
     // Confirm native inference and bundled phonemizer work before advertising ready.

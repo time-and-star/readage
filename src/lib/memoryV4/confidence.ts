@@ -29,23 +29,21 @@ export function calculateRecentExposureFrequency(profile: RmeMemoryProfile, now:
   }).length / 3);
 }
 
+/** Callers with source-aware history exclude lookup-only FSRS cards. */
+export interface RecallConfidenceInput extends FsrsRetentionInput {
+  hasRecallEvidence?: boolean;
+}
+
+/** Current FSRS recall prediction; passive reading is tracked independently. */
 export function calculateConfidence(
-  profile: RmeMemoryProfile,
-  fsrs: FsrsRetentionInput,
+  _profile: RmeMemoryProfile,
+  fsrs: RecallConfidenceInput,
   now: Date,
 ): number {
-  const totalOutcomes = profile.successfulExposureCount + profile.failedExposureCount;
-  if (totalOutcomes === 0) return 0;
-
-  const historySuccess = profile.successfulExposureCount / totalOutcomes;
-  const fsrsRetention = calculateFsrsRetention(fsrs, now);
-  const validRecent = profile.exposureHistory.filter((item) =>
-    item.isValid && Date.parse(item.occurredAt) <= now.getTime()
-  ).slice(-5);
-  const recentQuality = validRecent.length === 0
-    ? 1 // Legacy FSRS review counters have no paragraph quality history.
-    : validRecent.reduce((sum, item) => sum + item.quality, 0) / validRecent.length;
-  return clamp(historySuccess * fsrsRetention * recentQuality) * 100;
+  // Legacy pure callers supply an already-reviewed FSRS card without source
+  // metadata. Source-aware application callers must explicitly pass this gate.
+  if (fsrs.hasRecallEvidence === false) return 0;
+  return calculateFsrsRetention(fsrs, now) * 100;
 }
 
 export function stageFromConfidence(confidence: number): RmeMemoryStage {

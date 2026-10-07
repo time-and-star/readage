@@ -1,0 +1,69 @@
+# 本机句子翻译
+
+在文章标题或阅读正文里选中文字，点击操作条的 **翻译**；触屏可长按标题或句子，桌面可拖动选区。主标题和连续阅读的后续文章标题均支持，标题译文留在对应标题内。译文以小号文字插入所选句子结束处的下一行，后面的正文接着显示，不弹出卡片或遮罩，也没有关闭叉号。只有点击后才发送所选文字；点击别处或按 Esc 收起译注，切换文章或收起译注会取消请求。选择跨段文字时，译注紧跟最后一段中的选句结束处；服务不可用时在原位显示错误并提供重试。
+
+词卡中的翻译按钮使用同一个本机接口。简明词卡和完整词卡的英文释义、例句可点击单词继续查询；触屏长按选中所在句子，桌面拖动选中文字后，点击操作条的“翻译”，会把译文显示在当前词卡中，原卡保持打开。只发送选中文字，失败可重试，关闭词卡取消进行中的翻译。AI 解释和文章讨论已按用户要求暂时关闭，包括查词失败时的 AI 解释回退；本地词典仍可查询，历史讨论记录保留。腾讯模型只负责本次选中文本的翻译。当前安装启用按需模式，暂停打开应用、打开文章或导入文章时的自动全文翻译和分级预处理；已经保存的译文及分级可以继续使用。
+
+## 本机安装与启动
+
+当前电脑已将约 462 MB 的模型和约 12 MB 的 CPU 运行器安装在 `local-data/translation/`，无需再次下载。它们不会进入 Git，也不依赖临时实验目录。正常使用双击 `start-local.cmd` 或运行：
+
+```sh
+npm run start:local
+```
+
+本地启动器会等待腾讯模型就绪，并在关闭应用启动器时停止自己启动的模型。普通开发入口 `npm run dev` 和生产入口也会在应用服务启动后自动加载配置中启用的腾讯模型，无需另开翻译进程；加载期间可先阅读，模型就绪后即可翻译。已在运行的正确服务会复用，退出时只停止本次启动的模型。腾讯模型服务只监听本机地址，默认端口 8890；应用仍在 3000，朗读服务仍在 8880。
+
+服务端 `.env` 配置：
+
+```dotenv
+TRANSLATION_LOCAL_ENGINE=hymt2
+TRANSLATION_BASE_URL=http://127.0.0.1:8890/v1
+TRANSLATION_THREADS=4
+TRANSLATION_TIMEOUT_MS=60000
+VITE_TRANSLATION_MODE=on-demand
+```
+
+`npm run translation:start` 仍可单独运行模型，用于调试或让多份应用复用。模型首次装好后的完整性检查：`npm run translation:setup`。移除 `VITE_TRANSLATION_MODE` 并重启开发服务或重新构建，可恢复原来的云端导入预处理。
+
+重新从已验证的实验目录安装：
+
+```powershell
+npm run translation:setup -- --source "C:\Users\19891\AppData\Local\Temp\local-translation-trial-20261006"
+```
+
+此安装器使用已实测的 Windows x64 AVX2 构建和固定模型校验值，不会重新量化权重。换电脑需携带已验证的模型/运行器来源目录或安装目录；安装器不自动选择另一个 GGUF 或下载未经实测的运行器。运行时无需 Python、.NET SDK 或 C++ 编译器。
+
+## 接口与限制
+
+浏览器调用受应用访问控制保护的 `POST /api/translation`：
+
+```json
+{ "text": "The library closes at six, so we should leave now.", "targetLanguage": "Chinese" }
+```
+
+返回 `result.originalText`、`result.translatedText`、`result.targetLanguage`。也支持 `English`；当前阅读界面默认译成中文。`GET /api/translation/status` 提供配置及自动启动状态（`starting`、`ready`、`error`），启动失败时包含具体原因。
+
+后端向本机模型发送一条 user 消息：
+
+```text
+将以下文本翻译为中文，注意只需要输出翻译后的结果，不要额外解释：
+
+The library closes at six, so we should leave now.
+```
+
+一次最多 1200 个字符，单个 CPU 推理请求执行，最多另排队 4 个请求，默认 60 秒超时。截断或空译文会作为错误处理，不冒充成功结果，也不会自动发送到云端。
+
+使用非 v2 的官方 1.25bit Stride16 文件，数据区未改动，仅在独立副本中调整旧 GGUF 类型号以适配固定的 AVX2 分支。版本、SHA256 和运行器文件清单保存在 `local-data/translation/manifest.json`；启动日志位于 `local-data/translation/logs/server.log`。
+
+该版本已实测可以翻译句子和短段落，语法教学和上下文讲解仍不可靠，不用于这些任务。
+
+## 接入验证
+
+已在阅读页选中正文句子并点击翻译，确认显示实际模型译文；停止模型后确认错误及重试入口正常。重新通过本地启动器加载模型后再次翻译成功。按需模式刷新后不再显示全文译文准备提示，也不会恢复后台导入队列。
+
+翻译接口、取消、超时、启动生命周期及相关阅读/导入回归共 39 项通过；类型检查与生产构建通过。全量测试中的三组沙箱目录访问失败在允许读取目录后补验通过；另有两项现有页头品牌、Library 难度按钮的断言与当前界面不匹配，未改动这些独立界面。
+
+选句翻译仍可能有误译；例如实测中 `left home too late` 曾被错误译成“回家太晚”。接入成功不代表每一句的译文都准确。
+
+来源：[官方模型](https://huggingface.co/AngelSlim/Hy-MT2-1.8B-1.25Bit-GGUF)、[CPU AVX2 分支](https://github.com/ggml-org/llama.cpp/pull/27377)。

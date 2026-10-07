@@ -1,97 +1,163 @@
-import React from 'react';
-import { Library, RefreshCw, Sparkles } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { AppPageHeader } from './AppPageHeader';
-import { ReadAgeLogo } from './ReadAgeBrand';
+import { GalleryStory } from './GalleryStory';
+import type { Article, MagazineGalleryItem } from '../types';
+import { useGalleryStream } from '../lib/useGalleryStream';
 
 interface RecommendationEntryScreenProps {
   isLoading: boolean;
   phase: 'local' | 'ai' | null;
   feedEnded: boolean;
   onStartRecommendation: () => void;
+  onContinueRecommendation?: () => void;
+  onSelectArticle?: (article: Article) => void;
   onOpenLibrary: () => void;
   onBack: () => void;
   navigation: React.ReactNode;
 }
 
 export const RecommendationEntryScreen: React.FC<RecommendationEntryScreenProps> = ({
-  isLoading,
-  phase,
-  feedEnded,
-  onStartRecommendation,
-  onOpenLibrary,
-  onBack,
-  navigation,
+  isLoading, onStartRecommendation,
+  onContinueRecommendation, onSelectArticle, onOpenLibrary, onBack, navigation,
 }) => {
-  const message = isLoading
-    ? phase === 'ai'
-      ? 'Generating a personalized article...'
-      : 'Finding a good next article for you...'
-    : feedEnded
-      ? 'No unread recommendation is available right now.'
-      : 'Your next reading session starts here.';
+  const [openingId, setOpeningId] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const track = useRef<HTMLDivElement>(null);
+  const opening = useRef<AbortController | null>(null);
+  const pendingMove = useRef<number | null>(null);
+  const { items: visibleItems, loading: galleryLoading, error: galleryError, pageLoading, pageError,
+    activeSequence, setActive, hasMore, loadMore, removeImage, imageReady, beginScroll, retry } = useGalleryStream(track);
+  const position = Math.max(0, visibleItems.findIndex(item => item.sequence === activeSequence));
+  useEffect(() => () => opening.current?.abort(), []);
+  useEffect(() => {
+    const element = track.current;
+    const last = element?.querySelector<HTMLElement>('[data-gallery-card]:last-child');
+    if (!element || !last) return;
+    // The exhibits have different widths; leave exactly enough room to align the last one.
+    const resize = () => {
+      element.style.paddingRight = `${Math.max(0, element.clientWidth - last.offsetWidth - 8)}px`;
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(element);
+    observer.observe(last);
+    return () => observer.disconnect();
+  }, [visibleItems, galleryLoading]);
 
-  return (
-    <>
-      <AppPageHeader onBack={onBack} navigation={navigation} />
-      <main className="recommendation-entry min-h-[calc(100dvh-4rem)] bg-[#F8F6F0] px-4 py-10 text-[#2B2723] sm:px-6 sm:py-16 safe-pb">
-      <div className="mx-auto flex min-h-[min(66vh,600px)] w-full max-w-2xl items-center justify-center">
-        <section
-          className="recommendation-entry__card w-full border border-[#E3DDD1] bg-[#FFFDFA] px-6 py-10 text-center sm:px-12 sm:py-14"
-          aria-busy={isLoading}
-          aria-live="polite"
-        >
-          {isLoading ? (
-            <div className="recommendation-loading-visual" aria-hidden="true">
-              <div className="recommendation-loading-orbit">
-                <span />
-                <span />
-                <ReadAgeLogo className="h-12 w-12" />
-              </div>
-              <div className="recommendation-loading-lines">
-                <span />
-                <span />
-                <span />
-              </div>
-            </div>
-          ) : (
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[#EBD4C6] bg-[#F8EDE5] text-[#A94E2B]">
-              <Sparkles className="h-7 w-7" strokeWidth={1.5} aria-hidden="true" />
-            </div>
-          )}
-          <p className="app-section-kicker mt-7 uppercase text-[#A94E2B]">Your next chapter</p>
-          <h1 className="app-editorial-title mt-3 text-[2.25rem] text-[#2A2622] sm:text-5xl">
-            Recommended Reading
-          </h1>
-          <p className="mx-auto mt-5 max-w-md text-[15px] leading-7 text-[#6B645B]">
-            {message}
-          </p>
+  const syncPosition = () => {
+    const element = track.current;
+    if (!element) return;
+    const cards = Array.from(element.querySelectorAll('[data-gallery-card]')) as HTMLElement[];
+    if (!cards.length) return;
+    beginScroll();
+    const nearest = cards.reduce<number>((best, card, i) =>
+      Math.abs(card.offsetLeft - cards[0].offsetLeft - element.scrollLeft)
+        < Math.abs(cards[best].offsetLeft - cards[0].offsetLeft - element.scrollLeft) ? i : best, 0);
+    setActive(visibleItems[nearest]?.sequence ?? null);
+  };
+  const moveTo = (index: number) => {
+    pendingMove.current = null;
+    const element = track.current;
+    const cards = element?.querySelectorAll<HTMLElement>('[data-gallery-card]');
+    if (!element || !cards?.length) return;
+    const next = Math.max(0, Math.min(cards.length - 1, index));
+    beginScroll();
+    element.scrollTo({ left: cards[next].offsetLeft - cards[0].offsetLeft,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  };
+  const move = (direction: number) => {
+    if (direction > 0 && position >= visibleItems.length - 1 && hasMore) {
+      pendingMove.current = (visibleItems[visibleItems.length - 1]?.sequence ?? 0) + 1;
+      void loadMore(); return;
+    }
+    moveTo(position + direction);
+    if (direction > 0 && position >= visibleItems.length - 3 && hasMore) void loadMore();
+  };
+  useEffect(() => {
+    if (pendingMove.current !== null) {
+      const next = visibleItems.findIndex(item => item.sequence >= pendingMove.current!);
+      if (next >= 0) moveTo(next);
+    }
+  }, [visibleItems]);
+  const openArticle = async (item: MagazineGalleryItem) => {
+    if (!onSelectArticle || openingId) return;
+    const controller = new AbortController();
+    opening.current = controller;
+    setOpeningId(item.articleId); setOpenError(null);
+    try {
+      const response = await fetch(`/api/magazines/articles/${encodeURIComponent(item.articleId)}`, { signal: controller.signal });
+      const data = await response.json();
+      if (!response.ok || !data.ok || data.article?.id !== item.articleId || !data.article.content?.length) {
+        throw new Error('这篇文章暂时无法打开，请再试一次。');
+      }
+      if (!controller.signal.aborted) onSelectArticle(data.article);
+    } catch (error) {
+      if (!controller.signal.aborted) setOpenError(error instanceof Error ? error.message : '文章暂时无法打开。');
+    } finally {
+      if (!controller.signal.aborted) setOpeningId(null);
+      if (opening.current === controller) opening.current = null;
+    }
+  };
 
-          {!isLoading && (
-            <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-center">
-              <button
-                type="button"
-                onClick={onStartRecommendation}
-                className="app-primary-action inline-flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl px-5 py-3 text-sm font-semibold sm:w-auto"
-              >
-                <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                Start recommendation
-              </button>
-              <button
-                type="button"
-                onClick={onOpenLibrary}
-                className="inline-flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl border border-[#DCD5C7] bg-[#FFFDFA] px-5 py-3 text-sm font-medium text-[#332E28] transition-colors hover:bg-[#F2ECE0] active:bg-[#EFEAE0] sm:w-auto"
-              >
-                <Library className="h-4 w-4" aria-hidden="true" />
-                Browse library
-              </button>
-            </div>
-          )}
-          <p className="mt-8 border-t border-[#EDE7DD] pt-5 text-xs leading-6 text-[#81776B]">
-            Read at your pace. Look up a word whenever you need to.
-          </p>
+  const shownPosition = Math.min(position, Math.max(0, visibleItems.length - 1));
+
+  return <>
+    <AppPageHeader onBack={onBack} navigation={navigation} />
+    <main className="reading-gallery safe-pb">
+      <div className="reading-gallery__inner">
+        <section className="reading-gallery__intro" aria-label="推荐阅读">
+          <div className="reading-gallery__actions" aria-busy={isLoading}>
+            <button type="button" className="reading-gallery__recommend" disabled={isLoading || !!openingId}
+              onClick={onContinueRecommendation || onStartRecommendation}>
+              {isLoading ? '正在选文…' : onContinueRecommendation ? '继续推荐阅读' : '为我选一篇'}
+              <ArrowRight size={17} aria-hidden="true" />
+            </button>
+            {onContinueRecommendation && <button type="button" className="reading-gallery__text-action"
+              disabled={isLoading || !!openingId} onClick={onStartRecommendation}>重新推荐</button>}
+            <button type="button" className="reading-gallery__text-action" onClick={onOpenLibrary}>浏览全部杂志</button>
+          </div>
+        </section>
+
+        <section className="reading-gallery__collection" aria-label="杂志图片画廊">
+          <div className="reading-gallery__collection-heading">
+            <p>来自你的杂志藏书</p>
+            {!galleryLoading && visibleItems.length > 0 && <div className="reading-gallery__paging">
+              <span aria-live="polite" aria-label={`当前第 ${activeSequence ?? 1} 张图片`}>{String(activeSequence ?? 1).padStart(2, '0')}</span>
+              <button type="button" aria-label="上一张杂志图片" disabled={shownPosition === 0} onClick={() => move(-1)}><ArrowLeft size={18} /></button>
+              <button type="button" aria-label="下一张杂志图片" disabled={shownPosition >= visibleItems.length - 1 && !hasMore} onClick={() => move(1)}><ArrowRight size={18} /></button>
+            </div>}
+          </div>
+          {galleryLoading || (!visibleItems.length && hasMore && !pageError) ? <div className="reading-gallery__skeletons" role="status" aria-label="正在准备杂志图片">
+            {[0, 1, 2].map(i => <div className="reading-gallery__skeleton" key={i} />)}
+          </div> : galleryError ? <div className="reading-gallery__empty" role="alert">
+            <p>{galleryError}</p><button type="button" onClick={retry}>重新加载</button>
+          </div> : !visibleItems.length ? <div className="reading-gallery__empty">
+            <p>还没有可展示的杂志图片。导入带插图的杂志后，故事会在这里展开。</p>
+            <button type="button" onClick={onOpenLibrary}>去 Library 选一本杂志</button>
+          </div> : <div ref={track} className="reading-gallery__track" onScroll={syncPosition}
+            onPointerDown={() => { pendingMove.current = null; beginScroll(); }} onWheel={() => { pendingMove.current = null; beginScroll(); }}
+            tabIndex={0} aria-label="左右滑动浏览杂志图片"
+            onKeyDown={event => {
+              if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                event.preventDefault(); move(event.key === 'ArrowRight' ? 1 : -1);
+              }
+              if (event.key === 'Home' || event.key === 'End') {
+                event.preventDefault(); moveTo(event.key === 'Home' ? 0 : visibleItems.length - 1);
+              }
+            }}>
+            {visibleItems.map((item, index) => <GalleryStory key={item.sequence} item={item} eager={index < 3}
+              disabled={!!openingId || !onSelectArticle} opening={openingId === item.articleId}
+              onFocus={syncPosition} onOpen={() => void openArticle(item)}
+              onImageReady={imageReady} onImageError={() => removeImage(item.image.src)} />)}
+          </div>}
+          {pageLoading && <p className="reading-gallery__load-status" role="status">正在准备更多图片…</p>}
+          {pageError && <div className="reading-gallery__load-status" role="alert">
+            <span>{pageError}</span> <button type="button" onClick={() => visibleItems.length ? void loadMore() : retry()}>再试一次</button>
+          </div>}
+          {openError && <p className="reading-gallery__open-error" role="alert">{openError}</p>}
         </section>
       </div>
-      </main>
-    </>
-  );
+    </main>
+  </>;
 };

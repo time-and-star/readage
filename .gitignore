@@ -23,6 +23,8 @@ vendor/nextword-local-dictionary/data/*.pack
 data/dictionary/source/
 data/dictionary/reports/
 data/dictionary/build/
+# Re-downloadable third-party offline dictionaries (manifest/license stay in the pack).
+data/dictionary/imported/
 
 # Deploy secrets / local deploy artifacts
 .env.production

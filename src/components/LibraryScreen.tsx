@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowUpRight, BookOpen, FilePlus2, Loader2, RefreshCw, Search } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, Check, ChevronDown, ChevronRight, FilePlus2, Loader2, RefreshCw, Search, X } from 'lucide-react';
 import {
   Article,
   MagazineArticleStub,
@@ -10,9 +10,11 @@ import {
 } from '../types';
 import { CEFR_LEVELS } from '../data/mockArticles';
 import { getArticleCefrLevel } from '../lib/articleLevel';
-import { filterUserLibrary, groupUserLibrary, importBatchFormatLabel } from '../lib/userLibrary';
+import { filterUserLibrary, getLibraryFileProgress, groupUserLibrary, importBatchFormatLabel } from '../lib/userLibrary';
 import { getJsonApiHeaders } from '../lib/apiAuth';
 import { AppPageHeader } from './AppPageHeader';
+import { defaultLibraryView, normalizeLibraryView, type LibraryView } from '../lib/libraryView';
+import { readPersistentValue, STORAGE_KEYS, updatePersistentValue } from '../lib/storage';
 
 type LibraryTab = 'mine' | 'magazines';
 
@@ -22,10 +24,44 @@ type LibraryTab = 'mine' | 'magazines';
  */
 type MagLayer = 'sources' | 'issues' | 'articles';
 
-const libraryCardClass = 'library-card group w-full text-left bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-5 sm:p-6 shadow-2xs transition-all duration-200 hover:bg-[#F2ECE0] hover:border-[#C35E37]/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37] focus-visible:ring-offset-4 focus-visible:ring-offset-[#F8F6F0] disabled:opacity-60';
-const libraryTitleClass = 'library-card-title font-serif text-xl font-medium leading-snug text-[#2A2621] group-hover:text-[#A94E2B] transition-colors';
-const libraryMetaClass = 'library-meta flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed text-[#777066]';
-const libraryEmptyClass = 'library-empty col-span-full rounded-2xl border border-dashed border-[#DCD5C7] bg-[#FAF8F3]/70 px-6 py-14 text-center text-[#777066] text-sm leading-relaxed';
+const publicationMarks: Record<string, string> = {
+  economist: 'E', new_yorker: 'N', atlantic: 'A', wired: 'W',
+};
+
+const issueStatusLabels: Record<MagazineIssue['status'], string> = {
+  ready: '', partial: '部分可读', parsing: '整理中', failed: '暂不可用',
+};
+
+async function readJson(res: Response, label: string) {
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) throw new Error(`${label}暂时不可用，请稍后重试。`);
+  const data = await res.json();
+  if (!res.ok || !data.ok) throw new Error(data.error?.message || `${label}暂时不可用，请稍后重试。`);
+  return data;
+}
+
+const LibraryArticleRow: React.FC<{
+  article: Pick<MagazineArticleStub, 'title' | 'description'>;
+  number: number;
+  meta: React.ReactNode;
+  state?: string;
+  loading?: boolean;
+  disabled?: boolean;
+  onOpen: () => void;
+}> = ({ article, number, meta, state, loading, disabled, onOpen }) => {
+  return (
+    <button type="button" className="library-reading-row" onClick={onOpen} disabled={disabled}>
+      <span className="library-number" aria-hidden="true">{String(number).padStart(2, '0')}</span>
+      <div className="library-row-body">
+        <h3>{article.title}</h3>
+        {article.description && <p className="library-description">{article.description}</p>}
+        <div className="library-meta">{meta}</div>
+      </div>
+      {state && <span className="library-reading-state">{state === '已读' && <Check size={12} aria-hidden="true" />}{state}</span>}
+      {loading ? <Loader2 size={17} className="animate-spin" aria-label="正在打开" /> : <ArrowUpRight size={17} className="library-arrow" aria-hidden="true" />}
+    </button>
+  );
+};
 
 interface LibraryScreenProps {
   /** User-pasted articles (「我的文章」tab). */
@@ -43,30 +79,65 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   onBack,
   navigation,
 }) => {
-  const [tab, setTab] = useState<LibraryTab>('magazines');
-  const [levelFilter, setLevelFilter] = useState<string>('All');
-  const [topicQuery, setTopicQuery] = useState('');
+  const [initialView] = useState<LibraryView>(() => {
+    return readPersistentValue(STORAGE_KEYS.libraryView, defaultLibraryView, normalizeLibraryView);
+  });
+  const [tab, setTab] = useState<LibraryTab>(initialView.tab);
+  const [levelFilter, setLevelFilter] = useState<string>(initialView.levelFilter);
+  const [topicQuery, setTopicQuery] = useState(initialView.topicQuery);
   /** L1→L2 inside My articles: which imported file is open. */
-  const [activeImportBatchId, setActiveImportBatchId] = useState<string | null>(null);
+  const [activeImportBatchId, setActiveImportBatchId] = useState<string | null>(initialView.activeImportBatchId);
 
   const [sources, setSources] = useState<MagazineSourceSummary[]>([]);
   const [issues, setIssues] = useState<MagazineIssue[]>([]);
   /** L1→L2: which magazine is open; null = still on magazine list */
-  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(initialView.activeSourceId);
   /** L2→L3: which issue is open */
-  const [selectedIssue, setSelectedIssue] = useState<MagazineIssue | null>(null);
+  const [selectedIssue, setSelectedIssue] = useState<MagazineIssue | null>(initialView.selectedIssue);
   const [issueArticles, setIssueArticles] = useState<MagazineArticleStub[]>([]);
   const [catalogArticles, setCatalogArticles] = useState<MagazineCatalogArticleStub[]>([]);
   const [catalogTotal, setCatalogTotal] = useState(0);
   const [catalogNextCursor, setCatalogNextCursor] = useState<string | null>(null);
+  const [catalogPageCount, setCatalogPageCount] = useState(1);
+  const restoredCatalogPages = useRef(0);
   const [catalogRefreshKey, setCatalogRefreshKey] = useState(0);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<MagazineSyncStatus | null>(null);
-  const [loadingCatalog, setLoadingCatalog] = useState(false);
+  const [loadingCatalog, setLoadingCatalog] = useState(initialView.tab === 'magazines');
   const [loadingCatalogArticles, setLoadingCatalogArticles] = useState(false);
-  const [loadingIssue, setLoadingIssue] = useState(false);
+  const [loadingIssue, setLoadingIssue] = useState(Boolean(initialView.selectedIssue && initialView.tab === 'magazines'));
   const [loadingArticleId, setLoadingArticleId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const catalogRequest = useRef(0);
+  const issueRequest = useRef(0);
+  const retryAction = useRef<(() => void) | null>(null);
+  const scrollRestored = useRef(false);
+  const viewRef = useRef<LibraryView>(initialView);
+  viewRef.current = { tab, levelFilter, topicQuery, activeImportBatchId, activeSourceId, selectedIssue,
+    scrollY: scrollRestored.current ? window.scrollY : initialView.scrollY,
+    catalogPages: scrollRestored.current ? catalogPageCount : initialView.catalogPages };
+  useEffect(() => {
+    void updatePersistentValue(STORAGE_KEYS.libraryView, defaultLibraryView, viewRef.current).catch(() => {});
+  }, [tab, levelFilter, topicQuery, activeImportBatchId, activeSourceId, selectedIssue, catalogPageCount]);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const save = () => {
+      if (!scrollRestored.current) return;
+      void updatePersistentValue(STORAGE_KEYS.libraryView, defaultLibraryView,
+        { ...viewRef.current, scrollY: window.scrollY }).catch(() => {});
+    };
+    const onScroll = () => { if (!timer) timer = setTimeout(() => { timer = undefined; save(); }, 250); };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => { window.removeEventListener('scroll', onScroll); clearTimeout(timer); save(); };
+  }, []);
+  useEffect(() => {
+    if (scrollRestored.current || error || loadingCatalog || loadingIssue || loadingCatalogArticles) return;
+    let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => {
+      window.scrollTo({ top: initialView.scrollY, behavior: 'instant' });
+      scrollRestored.current = true;
+    }); });
+    return () => cancelAnimationFrame(frame);
+  }, [loadingCatalog, loadingIssue, loadingCatalogArticles, error, initialView]);
 
   const magLayer: MagLayer = selectedIssue
     ? 'articles'
@@ -103,7 +174,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     return sources.filter((s) => {
       if (levelFilter !== 'All' && s.levelHint && s.levelHint !== levelFilter) return false;
       if (!topicQuery.trim()) return true;
-      const q = topicQuery.toLowerCase();
+      const q = topicQuery.trim().toLowerCase();
       return (
         s.displayName.toLowerCase().includes(q) ||
         s.id.toLowerCase().includes(q) ||
@@ -118,7 +189,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       .filter((issue) => issue.sourceId === activeSourceId)
       .filter((issue) => {
         if (!topicQuery.trim()) return true;
-        const q = topicQuery.toLowerCase();
+        const q = topicQuery.trim().toLowerCase();
         return (
           issue.title.toLowerCase().includes(q) ||
           issue.issueLabel.toLowerCase().includes(q)
@@ -129,7 +200,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
 
   const filteredIssueArticles = useMemo(() => {
     if (!topicQuery.trim()) return issueArticles;
-    const q = topicQuery.toLowerCase();
+    const q = topicQuery.trim().toLowerCase();
     return issueArticles.filter(
       (a) =>
         a.title.toLowerCase().includes(q) ||
@@ -137,23 +208,9 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     );
   }, [issueArticles, topicQuery]);
 
-  const readJson = async (res: Response, label: string) => {
-    const ct = res.headers.get('content-type') || '';
-    const text = await res.text();
-    if (!ct.includes('application/json') || text.trimStart().startsWith('<')) {
-      throw new Error(
-        `${label} 返回了非 JSON（可能服务未重启或 API 未挂载）。请重启 npm run dev 后重试。HTTP ${res.status}`
-      );
-    }
-    try {
-      return JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      throw new Error(`${label} JSON 解析失败: ${text.slice(0, 80)}`);
-    }
-  };
-
   const loadCatalogArticlePage = useCallback(async (cursor?: string, append = false) => {
     if (levelFilter === 'All') return;
+    const request = ++catalogRequest.current;
     if (!append) setCatalogArticles([]);
     setLoadingCatalogArticles(true);
     setError(null);
@@ -162,7 +219,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       if (topicQuery.trim()) params.set('q', topicQuery.trim());
       if (cursor) params.set('cursor', cursor);
       const res = await fetch(`/api/magazines/articles?${params.toString()}`);
-      const data = await readJson(res, 'articles');
+      const data = await readJson(res, '文章列表');
+      if (request !== catalogRequest.current) return;
       if (!data.ok) {
         throw new Error((data.error as { message?: string } | undefined)?.message || '加载文章失败');
       }
@@ -170,28 +228,42 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       setCatalogArticles((current) => append ? [...current, ...nextArticles] : nextArticles);
       setCatalogTotal(typeof data.total === 'number' ? data.total : nextArticles.length);
       setCatalogNextCursor(typeof data.nextCursor === 'string' ? data.nextCursor : null);
+      setCatalogPageCount(count => append ? count + 1 : 1);
+      restoredCatalogPages.current = append ? restoredCatalogPages.current + 1 : 1;
+      if (!scrollRestored.current && levelFilter === initialView.levelFilter && topicQuery === initialView.topicQuery
+        && restoredCatalogPages.current < initialView.catalogPages && typeof data.nextCursor === 'string') {
+        await loadCatalogArticlePage(data.nextCursor, true);
+      }
     } catch (e) {
+      if (request !== catalogRequest.current) return;
+      retryAction.current = () => { void loadCatalogArticlePage(cursor, append); };
       setError(e instanceof Error ? e.message : '加载筛选文章失败');
       if (!append) {
         setCatalogTotal(0);
         setCatalogNextCursor(null);
       }
     } finally {
-      setLoadingCatalogArticles(false);
+      if (request === catalogRequest.current) setLoadingCatalogArticles(false);
     }
-  }, [levelFilter, topicQuery]);
+  }, [levelFilter, topicQuery, initialView]);
 
   useEffect(() => {
     if (!isArticleCatalogFilter) {
+      catalogRequest.current += 1;
       setCatalogArticles([]);
       setCatalogTotal(0);
       setCatalogNextCursor(null);
+      setLoadingCatalogArticles(false);
       return;
     }
+    setLoadingCatalogArticles(true);
     const timeout = window.setTimeout(() => {
       void loadCatalogArticlePage();
     }, topicQuery.trim() ? 250 : 0);
-    return () => window.clearTimeout(timeout);
+    return () => {
+      window.clearTimeout(timeout);
+      catalogRequest.current += 1;
+    };
   }, [catalogRefreshKey, isArticleCatalogFilter, loadCatalogArticlePage, topicQuery]);
 
   const loadCatalog = useCallback(async () => {
@@ -203,9 +275,9 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         fetch('/api/magazines/issues'),
         fetch('/api/magazines/sync/status'),
       ]);
-      const srcData = await readJson(srcRes, 'sources');
-      const issueData = await readJson(issueRes, 'issues');
-      const statusData = await readJson(statusRes, 'sync/status');
+      const srcData = await readJson(srcRes, '外刊目录');
+      const issueData = await readJson(issueRes, '期刊目录');
+      const statusData = await readJson(statusRes, '更新状态');
       if (srcData.ok) {
         setSources((srcData.sources as MagazineSourceSummary[]) || []);
         setLastSyncAt((srcData.lastSyncAt as string) || null);
@@ -223,6 +295,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         });
       }
     } catch (e) {
+      retryAction.current = () => { void loadCatalog(); };
       setError(e instanceof Error ? e.message : '加载外刊目录失败');
     } finally {
       setLoadingCatalog(false);
@@ -294,11 +367,14 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         progress: data.progress || 'starting',
       });
     } catch (e) {
+      retryAction.current = () => { void handleSync(); };
       setError(e instanceof Error ? e.message : '同步失败');
     }
   };
 
   const openSource = (sourceId: string) => {
+    issueRequest.current += 1;
+    setLoadingIssue(false);
     setActiveSourceId(sourceId);
     setSelectedIssue(null);
     setIssueArticles([]);
@@ -306,23 +382,32 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     setError(null);
   };
 
-  const openIssue = async (issue: MagazineIssue) => {
+  const openIssue = async (issue: MagazineIssue, preserveQuery = false) => {
+    const request = ++issueRequest.current;
     setSelectedIssue(issue);
     setLoadingIssue(true);
     setError(null);
     setIssueArticles([]);
-    setTopicQuery('');
+    if (!preserveQuery) setTopicQuery('');
     try {
       const res = await fetch(`/api/magazines/issues/${encodeURIComponent(issue.id)}`);
-      const data = await res.json();
+      const data = await readJson(res, '本期文章');
+      if (request !== issueRequest.current) return;
       if (!data.ok) throw new Error(data.error?.message || '加载期号失败');
       setIssueArticles(data.articles || []);
     } catch (e) {
+      if (request !== issueRequest.current) return;
+      retryAction.current = () => { void openIssue(issue, true); };
       setError(e instanceof Error ? e.message : '加载期号失败');
     } finally {
-      setLoadingIssue(false);
+      if (request === issueRequest.current) setLoadingIssue(false);
     }
   };
+
+  useEffect(() => {
+    if (initialView.selectedIssue && initialView.tab === 'magazines') void openIssue(initialView.selectedIssue, true);
+    return () => { issueRequest.current += 1; catalogRequest.current += 1; };
+  }, []);
 
   const openMagazineArticle = async (stub: MagazineArticleStub) => {
     setLoadingArticleId(stub.id);
@@ -333,8 +418,9 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       if (!data.ok || !data.article) {
         throw new Error(data.error?.message || '加载文章失败');
       }
-      onSelectArticle(data.article as Article);
+      await onSelectArticle(data.article as Article);
     } catch (e) {
+      retryAction.current = () => { void openMagazineArticle(stub); };
       setError(e instanceof Error ? e.message : '加载文章失败');
     } finally {
       setLoadingArticleId(null);
@@ -350,6 +436,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     }
     if (tab === 'magazines') {
       if (magLayer === 'articles') {
+        issueRequest.current += 1;
+        setLoadingIssue(false);
         setSelectedIssue(null);
         setIssueArticles([]);
         setTopicQuery('');
@@ -366,499 +454,179 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     onBack();
   };
 
-  const formatSyncTime = (iso: string | null | undefined) => {
-    if (!iso) return 'Not synced yet';
-    try {
-      return new Date(iso).toLocaleString();
-    } catch {
-      return iso;
-    }
+  const switchTab = (next: LibraryTab) => {
+    issueRequest.current += 1;
+    setLoadingIssue(false);
+    setTab(next);
+    setActiveSourceId(null);
+    setSelectedIssue(null);
+    setIssueArticles([]);
+    setActiveImportBatchId(null);
+    setLevelFilter('All');
+    setTopicQuery('');
+    setError(null);
   };
-
-  const searchPlaceholder =
-    tab === 'mine'
-      ? mineLayer === 'articles'
-        ? 'Search this file…'
-        : 'Search your files and articles…'
-      : isArticleCatalogFilter
-        ? 'Search articles…'
-        : magLayer === 'articles'
-        ? 'Search this issue…'
-        : magLayer === 'issues'
-          ? 'Search issues…'
-          : 'Search publications…';
-
-  /** Top chrome (tabs / CEFR / search) only when not on mine-only filters at L1, or always except we hide tab switch deep in drill-down? Keep tabs only at L1. */
-  const showTopTabs = (tab === 'mine' && mineLayer === 'files') || magLayer === 'sources';
+  const resetFilters = () => { setLevelFilter('All'); setTopicQuery(''); };
+  const hasFilters = levelFilter !== 'All' || Boolean(topicQuery.trim());
+  const fileProgress = activeImportFile ? getLibraryFileProgress(activeImportFile) : null;
   const showCefr = tab === 'mine' || magLayer === 'sources';
-  const showSearch = true;
+  const isNested = Boolean(tab === 'mine' ? activeImportFile : activeSourceId);
+  const title = tab === 'mine' && activeImportFile ? activeImportFile.title
+    : tab === 'magazines' && selectedIssue ? selectedIssue.issueLabel || selectedIssue.title
+      : tab === 'magazines' && activeSource ? activeSource.displayName : 'Library';
+  const searchPlaceholder = tab === 'mine'
+    ? activeImportFile ? '搜索章节、文章' : '搜索书籍、文章'
+    : isArticleCatalogFilter ? '搜索文章'
+      : magLayer === 'articles' ? '搜索本期文章' : magLayer === 'issues' ? '搜索期刊' : '搜索外刊';
+  const resultCount = tab === 'mine' ? filteredMine.length
+    : isArticleCatalogFilter ? catalogTotal
+      : magLayer === 'sources' ? filteredSources.length
+        : magLayer === 'issues' ? filteredIssues.length : filteredIssueArticles.length;
+  const sectionTitle = tab === 'mine' ? activeImportFile ? '目录' : '我的书架'
+    : isArticleCatalogFilter ? `${levelFilter} 文章`
+      : magLayer === 'sources' ? '外刊' : magLayer === 'issues' ? '全部期刊' : '本期目录';
+  const isLoading = tab === 'magazines' && (isArticleCatalogFilter
+    ? loadingCatalogArticles && catalogArticles.length === 0
+    : magLayer === 'articles' ? loadingIssue : loadingCatalog);
+  const lastUpdatedDate = new Date(lastSyncAt || syncStatus?.lastRunAt || '');
+  const syncDate = Number.isFinite(lastUpdatedDate.getTime())
+    ? lastUpdatedDate.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : null;
+  const renderEmpty = (message = '没有找到匹配的内容') => (
+    <div className="library-empty"><p>{message}</p>
+      {hasFilters && <button type="button" onClick={resetFilters}>清除筛选</button>}
+    </div>
+  );
+  const renderMagazineArticle = (article: MagazineArticleStub, index: number, meta: React.ReactNode) => (
+    <LibraryArticleRow key={article.id} article={article} number={index + 1} meta={meta}
+      loading={loadingArticleId === article.id} disabled={loadingArticleId !== null}
+      onOpen={() => void openMagazineArticle(article)} />
+  );
 
   return (
-    <div className="library-screen min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col selection:bg-[#FDE68A]">
+    <div className="library-screen min-h-screen flex flex-col">
       <AppPageHeader onBack={handleHeaderBack} navigation={navigation} />
-
-      <div className="library-heading max-w-5xl w-full mx-auto px-4 sm:px-8 pt-8 sm:pt-12 pb-6 sm:pb-8">
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#A94E2B]">The reading room</p>
-        <h1 className="font-serif text-3xl sm:text-5xl font-normal tracking-tight leading-tight text-[#2B2723]">
-          {tab === 'mine'
-            ? mineLayer === 'articles'
-              ? activeImportFile?.title || 'Imported file'
-              : 'Your articles'
-            : magLayer === 'articles' ? selectedIssue?.issueLabel || selectedIssue?.title : magLayer === 'issues' ? activeSource?.displayName : 'A world of good reading.'}
-        </h1>
-        <p className="mt-3 max-w-xl text-sm sm:text-base leading-relaxed text-[#777066]">
-          {tab === 'mine'
-            ? mineLayer === 'articles'
-              ? 'Choose a story from this file and make it your next reading session.'
-              : 'Keep the stories you love. Turn each one into a little progress.'
-            : magLayer === 'articles' ? 'Choose a story from this issue and make it your next reading session.' : magLayer === 'issues' ? 'Explore recent issues and find a story that sparks your curiosity.' : 'Discover fresh perspectives, or bring a story of your own. Your next chapter starts here.'}
-        </p>
-      </div>
-
-      {(showTopTabs || showCefr || showSearch) && (
-        <div className="max-w-5xl w-full mx-auto px-4 sm:px-8">
-          <div className="library-filters rounded-2xl border border-[#E3DDD1] bg-[#FAF8F3] p-4 sm:p-5 space-y-4">
-            {showTopTabs && (
-              <div className="flex gap-1 p-1 bg-[#EFECE3] rounded-xl sm:max-w-sm" aria-label="Library collection">
-                {(
-                  [
-                    { id: 'magazines' as const, label: 'Publications' },
-                    { id: 'mine' as const, label: 'My articles' },
-                  ] as const
-                ).map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    aria-pressed={tab === t.id}
-                    onClick={() => {
-                      setTab(t.id);
-                      setTopicQuery('');
-                      setError(null);
-                      if (t.id === 'mine') {
-                        setActiveSourceId(null);
-                        setSelectedIssue(null);
-                        setIssueArticles([]);
-                      } else {
-                        setActiveImportBatchId(null);
-                      }
-                    }}
-                    className={`flex-1 min-h-11 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37] ${tab === t.id
-                        ? 'bg-white text-[#A94E2B] shadow-2xs'
-                        : 'text-[#5B544C] hover:text-[#2B2723] active:bg-[#E8E2D5]'
-                      }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {showCefr && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <span className="text-xs font-medium text-[#777066]">Reading level</span>
-                <div className="flex flex-wrap gap-1.5" aria-label="Filter by reading level">
-                  {CEFR_LEVELS.map((lv) => (
-                    <button
-                      key={lv}
-                      type="button"
-                      aria-pressed={levelFilter === lv}
-                      onClick={() => {
-                        setLevelFilter(lv);
-                        if (lv === 'All') setTopicQuery('');
-                      }}
-                      className={`min-h-11 min-w-11 px-3.5 py-2 rounded-full text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37] focus-visible:ring-offset-2 ${levelFilter === lv
-                          ? 'bg-[#A94E2B] text-white'
-                          : 'bg-[#EFECE3] text-[#5B544C] hover:bg-[#E2DDD0]'
-                        }`}
-                    >
-                      {lv}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {showSearch && (
-              <label className="relative block">
-                <span className="sr-only">{searchPlaceholder}</span>
-                <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8C8478]" aria-hidden="true" />
-                <input
-                  type="text"
-                  value={topicQuery}
-                  onChange={(e) => setTopicQuery(e.target.value)}
-                  placeholder={searchPlaceholder}
-                  className="w-full min-h-12 bg-[#F8F6F0] border border-[#DDD6C8] rounded-xl pl-11 pr-4 py-3 text-sm placeholder:text-[#8C8478] outline-none focus:border-[#C35E37] focus:ring-2 focus:ring-[#C35E37]/15 transition-all"
-                />
-              </label>
-            )}
+      <div className="library-shell">
+        <div className="library-heading">
+          {isNested ? (
+            <nav className="library-breadcrumbs" aria-label="Library 路径">
+              <button type="button" onClick={() => switchTab(tab)}>Library</button>
+              <ChevronRight size={12} aria-hidden="true" />
+              {tab === 'magazines' && selectedIssue ? (
+                <><button type="button" onClick={handleHeaderBack}>{activeSource?.displayName}</button>
+                  <ChevronRight size={12} aria-hidden="true" /><span>{selectedIssue.issueLabel || selectedIssue.title}</span></>
+              ) : <span>{tab === 'mine' ? '我的书架' : '外刊'}</span>}
+            </nav>
+          ) : <p className="library-eyebrow">The reading room</p>}
+          <div className="library-heading-line">
+            <div><h1 className={isNested ? 'library-title library-title--detail' : 'library-title'}>{title}</h1>
+              {activeImportFile && fileProgress && <p className="library-heading-meta">{activeImportFile.articles.length} {fileProgress.unit}<span>·</span>已读 {fileProgress.completedCount} {fileProgress.unit}</p>}
+              {selectedIssue && <p className="library-heading-meta">{activeSource?.displayName}</p>}
+            </div>
+            {activeImportFile && fileProgress?.resumeArticle ? (
+              <button type="button" className="library-primary" onClick={() => onSelectArticle(fileProgress.resumeArticle!)}>
+                {fileProgress.completed ? '再读一遍' : fileProgress.started ? '继续阅读' : '开始阅读'}<ArrowUpRight size={15} aria-hidden="true" />
+              </button>
+            ) : <button type="button" onClick={onInsertArticle} className="library-primary"><FilePlus2 size={15} aria-hidden="true" />导入</button>}
           </div>
         </div>
-      )}
-
-      {error && (
-        <div className="max-w-5xl w-full mx-auto px-4 sm:px-8 pt-4">
-          <p className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3" role="alert">
-            {error}
-          </p>
+        <div className="library-collections" aria-label="Library collection">
+          <button type="button" aria-pressed={tab === 'magazines'} onClick={() => switchTab('magazines')}>外刊</button>
+          <button type="button" aria-pressed={tab === 'mine'} onClick={() => switchTab('mine')}>我的书架</button>
         </div>
-      )}
-
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-8 py-6 sm:py-8 space-y-5 safe-pb">
-        {/* ── 我的文章 ── */}
-        {tab === 'mine' && (
-          <>
-            {mineLayer === 'files' && (
-              <button
-                type="button"
-                onClick={onInsertArticle}
-                className="app-primary-action inline-flex min-h-12 items-center justify-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold transition-colors shadow-xs"
-              >
-                <FilePlus2 className="w-4 h-4" />
-                导入文章
-              </button>
-            )}
-
-            {userArticles.length === 0 ? (
-              <div className={`${libraryEmptyClass} space-y-2`}>
-                <BookOpen className="mx-auto mb-4 h-7 w-7 text-[#A94E2B]" aria-hidden="true" />
-                <p className="font-serif text-xl text-[#2B2723]">Make this shelf your own.</p>
-                <p>导入文件或粘贴文章，开始阅读。</p>
-              </div>
-            ) : filteredMine.length === 0 ? (
-              <p className={libraryEmptyClass}>
-                {mineLayer === 'articles' ? 'No articles in this file match your search.' : 'No articles match your search.'}
-              </p>
-            ) : (
-              <div className="library-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {filteredMine.map((item) => item.kind === 'file' ? (
-                  <button
-                    key={item.file.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveImportBatchId(item.file.id);
-                      setTopicQuery('');
-                      setError(null);
-                    }}
-                    className={libraryCardClass}
-                  >
-                    <h3 className={`${libraryTitleClass} mb-5`}>
-                      {item.file.title}
-                    </h3>
-                    <div className={libraryMetaClass}>
-                      <span>{importBatchFormatLabel(item.file.format)}</span>
-                      <span>·</span>
-                      <span>{item.file.articles.length} {item.file.articles.length === 1 ? 'article' : 'articles'}</span>
-                      <span className="ml-auto inline-flex items-center gap-1 text-[#A94E2B] font-medium">View file <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></span>
-                    </div>
-                  </button>
-                ) : (
-                  <button
-                    key={item.article.id}
-                    type="button"
-                    onClick={() => onSelectArticle(item.article)}
-                    className={libraryCardClass}
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <h3 className={libraryTitleClass}>
-                        {item.article.title}
-                      </h3>
-                      {getArticleCefrLevel(item.article) && (
-                        <span className="shrink-0 px-2.5 py-0.5 bg-[#EFECE3] text-[#5B544C] rounded-full text-xs font-semibold">
-                          {getArticleCefrLevel(item.article)}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-[#666056] mb-5 leading-relaxed line-clamp-3">
-                      {item.article.description}
-                    </p>
-                    <div className={libraryMetaClass}>
-                      <span>{mineLayer === 'articles' ? importBatchFormatLabel(activeImportFile?.format) : 'My article'}</span>
-                      {item.article.topic && (
-                        <>
-                          <span>·</span>
-                          <span>{item.article.topic}</span>
-                        </>
-                      )}
-                      <span>·</span>
-                      <span>{item.article.content.join(' ').split(/\s+/).filter(Boolean).length} words</span>
-                      <span className="ml-auto inline-flex items-center gap-1 text-[#A94E2B] font-medium">Start reading <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* ── L1: 杂志列表 ── */}
-        {tab === 'magazines' && magLayer === 'sources' && (
-          <>
-            <div className="library-status rounded-2xl border border-[#E3DDD1] bg-[#EFECE3]/50 p-4 sm:p-5 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs leading-relaxed text-[#666056]">
-                  <div><span className="font-medium">Last updated</span> · {formatSyncTime(lastSyncAt || syncStatus?.lastRunAt)}</div>
-                  {syncStatus?.running && (
-                    <div className="text-[#C35E37] mt-1 flex items-center gap-1">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      {syncStatus.progress || 'Syncing…'}
-                    </div>
-                  )}
-                  {syncStatus?.lastResult && !syncStatus.running && (
-                    <div className="mt-1 text-xs text-[#777066]">
-                      Imported {syncStatus.lastResult.importedIssues} · Skipped{' '}
-                      {syncStatus.lastResult.skippedIssues} · Failed{' '}
-                      {syncStatus.lastResult.failedIssues}
-                    </div>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleSync()}
-                  disabled={!!syncStatus?.running}
-                  className="shrink-0 inline-flex min-h-11 items-center gap-2 border border-[#DCD5C7] bg-[#FAF8F3] px-4 py-2.5 rounded-xl text-xs font-semibold text-[#5B544C] hover:bg-[#EFECE3] disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37]"
-                >
-                  {syncStatus?.running ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  )}
-                  Sync publications
+        <div className="library-toolbar">
+          <label className="library-search"><Search size={17} aria-hidden="true" /><span className="sr-only">{searchPlaceholder}</span>
+            <input type="search" value={topicQuery} onChange={(event) => setTopicQuery(event.target.value)} placeholder={searchPlaceholder} />
+          </label>
+          {showCefr && <label className="library-level"><span className="sr-only">阅读难度</span>
+            <select value={levelFilter} onChange={(event) => setLevelFilter(event.target.value)}>
+              {CEFR_LEVELS.map((level) => <option key={level} value={level}>{level === 'All' ? '全部难度' : level}</option>)}
+            </select><ChevronDown size={13} aria-hidden="true" />
+          </label>}
+        </div>
+        {error && <div className="library-error" role="alert"><p>{error}</p><button type="button" onClick={() => retryAction.current?.()}>重试</button></div>}
+        <main className="library-content">
+          <div className="library-section-heading"><h2>{sectionTitle}{!isLoading && <span>{resultCount}</span>}</h2>
+            {hasFilters && <button type="button" className="library-clear" onClick={resetFilters}>清除筛选<X size={12} aria-hidden="true" /></button>}
+          </div>
+          {isLoading ? <p className="library-loading" role="status"><Loader2 size={17} className="animate-spin" aria-hidden="true" />正在加载…</p> : tab === 'mine' ? (
+            userArticles.length === 0 ? <div className="library-empty"><p>把喜欢的文字放进书架</p><button type="button" onClick={onInsertArticle}>导入文件或粘贴文章<ArrowUpRight size={14} aria-hidden="true" /></button></div>
+              : filteredMine.length === 0 ? renderEmpty() : (
+                <div className="library-reading-list">{filteredMine.map((item, index) => {
+                  if (item.kind === 'file') {
+                    const progress = getLibraryFileProgress(item.file);
+                    return <button type="button" key={item.file.id} className="library-reading-row library-file-row" onClick={() => {
+                      setActiveImportBatchId(item.file.id); setTopicQuery(''); setError(null);
+                    }}>
+                      <span className="library-file-mark" aria-hidden="true">{importBatchFormatLabel(item.file.format)}</span>
+                      <div className="library-row-body"><h3>{item.file.title}</h3><div className="library-meta">
+                        <span>{item.file.articles.length} {progress.unit}</span>
+                        {progress.started && <span>已读 {progress.completedCount} / {item.file.articles.length}</span>}
+                        {!progress.completed && progress.started && <span>继续第 {progress.resumeNumber} {progress.unit}</span>}
+                      </div>{progress.started && <div className="library-file-progress" aria-hidden="true"><span style={{ width: `${progress.completedCount / item.file.articles.length * 100}%` }} /></div>}</div>
+                      {progress.completed && <span className="library-reading-state"><Check size={12} aria-hidden="true" />已读</span>}
+                      <ArrowUpRight size={17} className="library-arrow" aria-hidden="true" />
+                    </button>;
+                  }
+                  const level = getArticleCefrLevel(item.article);
+                  const number = activeImportFile ? activeImportFile.articles.findIndex((article) => article.id === item.article.id) + 1 : index + 1;
+                  return <LibraryArticleRow key={item.article.id} article={item.article} number={number}
+                    state={item.article.status === 'Completed' ? '已读' : item.article.lastOpenedAt ? '在读' : undefined}
+                    meta={<>{level && <span>{level}</span>}<span>{item.article.content.join(' ').split(/\s+/).filter(Boolean).length.toLocaleString()} 词</span></>}
+                    onOpen={() => { void onSelectArticle(item.article); }} />;
+                })}</div>
+              )
+          ) : isArticleCatalogFilter ? (
+            catalogArticles.length === 0 ? renderEmpty() : <>
+              <div className="library-reading-list">{catalogArticles.map((article, index) => renderMagazineArticle(article, index,
+                <><span>{article.sourceName}</span><span>{article.issueLabel}</span><span>{article.wordCount.toLocaleString()} 词</span></>,
+              ))}</div>
+              {catalogNextCursor && <button type="button" className="library-load-more" disabled={loadingCatalogArticles} onClick={() => void loadCatalogArticlePage(catalogNextCursor, true)}>
+                {loadingCatalogArticles ? <><Loader2 size={14} className="animate-spin" aria-hidden="true" />正在加载…</> : '更多文章'}
+              </button>}
+            </>
+          ) : magLayer === 'sources' ? (
+            filteredSources.length === 0 ? renderEmpty(sources.length ? '没有找到匹配的外刊' : '暂时没有外刊，更新目录后再看看') : (
+              <div className="library-publications">{filteredSources.map((source) => (
+                <button type="button" key={source.id} className="library-publication" data-publication={source.id} onClick={() => openSource(source.id)}>
+                  <span className="library-publication-mark" aria-hidden="true"><span className="library-mark-rule" />
+                    <span>{publicationMarks[source.id] || source.displayName.match(/Level\s+(\d+)/i)?.[1] || source.displayName.slice(0, 1)}</span>
+                    <span className="library-mark-foot">{source.id.startsWith('news') ? 'News in Levels' : 'Journal'}</span>
+                  </span>
+                  <div className="library-publication-body"><span className="library-publication-topic">{source.topic}</span>
+                    <h3>{source.displayName}</h3><div className="library-meta"><span>{source.issueCount} 期</span>{source.levelHint && <span>{source.levelHint}</span>}</div>
+                  </div><ArrowUpRight size={17} className="library-arrow" aria-hidden="true" />
                 </button>
-              </div>
-              <p className="text-xs leading-relaxed text-[#777066]">
-                Explore a publication, choose an issue, and start reading. Community mirrors are for personal study; please support original subscriptions.
-              </p>
-            </div>
-
-            {isArticleCatalogFilter ? (
-              <>
-                <p className="library-meta text-xs font-medium text-[#666056]" aria-live="polite">
-                  {catalogTotal > 0 ? `${catalogTotal} articles at ${levelFilter}` : `Articles at ${levelFilter}`}
-                </p>
-                {loadingCatalogArticles && catalogArticles.length === 0 ? (
-                  <p className="text-center text-[#777066] py-12 text-sm flex items-center justify-center gap-2" role="status">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Loading articles…
-                  </p>
-                ) : catalogArticles.length === 0 ? (
-                  <p className={libraryEmptyClass}>
-                    No articles match your search.
-                  </p>
-                ) : (
-                  <>
-                    <div className="library-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {catalogArticles.map((article) => (
-                        <button
-                          key={article.id}
-                          type="button"
-                          disabled={loadingArticleId === article.id}
-                          onClick={() => void openMagazineArticle(article)}
-                          className={libraryCardClass}
-                        >
-                          <div className="flex items-start justify-between gap-3 mb-3">
-                            <h3 className={libraryTitleClass}>
-                              {article.title}
-                            </h3>
-                            {loadingArticleId === article.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin text-[#C35E37] shrink-0" />
-                            ) : (
-                              <span className="shrink-0 px-2.5 py-0.5 bg-[#EFECE3] text-[#5B544C] rounded-full text-xs font-semibold">
-                                {article.level}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-sm text-[#666056] mb-5 leading-relaxed line-clamp-3">
-                            {article.description}
-                          </p>
-                          <div className={libraryMetaClass}>
-                            <span>{article.sourceName}</span>
-                            <span>·</span>
-                            <span>{article.issueLabel}</span>
-                            <span>·</span>
-                            <span>{article.wordCount} words</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                    {catalogNextCursor && (
-                      <button
-                        type="button"
-                        onClick={() => void loadCatalogArticlePage(catalogNextCursor, true)}
-                        disabled={loadingCatalogArticles}
-                        className="w-full min-h-12 border border-[#DDD6C8] bg-[#FAF8F3] hover:bg-[#F3EFE4] text-[#524B43] rounded-xl py-3 text-sm font-semibold transition-colors disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37]"
-                      >
-                        {loadingCatalogArticles ? 'Loading…' : 'Load more articles'}
-                      </button>
-                    )}
-                  </>
-                )}
-              </>
-            ) : loadingCatalog ? (
-              <p className="text-center text-[#777066] py-12 text-sm flex items-center justify-center gap-2" role="status">
-                <Loader2 className="w-4 h-4 animate-spin" /> Loading publications…
-              </p>
-            ) : filteredSources.length === 0 ? (
-              <div className={`${libraryEmptyClass} space-y-2`}>
-                <BookOpen className="mx-auto mb-4 h-7 w-7 text-[#A94E2B]" aria-hidden="true" />
-                <p className="font-serif text-xl text-[#2B2723]">Your next story is on its way.</p>
-                <p>Sync publications to fetch the latest available issues.</p>
-              </div>
-            ) : (
-              <div className="library-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {filteredSources.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => openSource(s.id)}
-                    className={`${libraryCardClass} flex flex-col`}
-                  >
-                    <div className="mb-5 flex w-full items-center justify-between">
-                      <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-[#E3DDD1] bg-[#EFECE3] text-[#A94E2B]"><BookOpen className="h-5 w-5" aria-hidden="true" /></span>
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#777066]">Publication</span>
-                    </div>
-                    <div className="flex w-full items-start justify-between gap-3 mb-4">
-                      <h3 className={libraryTitleClass}>
-                        {s.displayName}
-                      </h3>
-                      {s.levelHint && (
-                        <span className="shrink-0 px-2.5 py-0.5 bg-[#EFECE3] text-[#5B544C] rounded-full text-xs font-semibold">
-                          {s.levelHint}
-                        </span>
-                      )}
-                    </div>
-                    <div className={`${libraryMetaClass} mt-auto w-full`}>
-                      <span>{s.issueCount} issues</span>
-                      {s.topic && (
-                        <>
-                          <span>·</span>
-                          <span>{s.topic}</span>
-                        </>
-                      )}
-                      <span className="ml-auto inline-flex items-center gap-1 text-[#A94E2B] font-medium">Explore <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* ── L2: 期号列表（单一杂志） ── */}
-        {tab === 'magazines' && magLayer === 'issues' && (
-          <>
-            <div className="library-status bg-[#EFECE3]/50 border border-[#E3DDD1] rounded-2xl p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
-              <div className="text-xs leading-relaxed text-[#666056] min-w-0">
-                <div className="font-semibold text-sm text-[#2B2723]">
-                  {activeSource?.displayName}
-                </div>
-                <div className="mt-1 text-[#777066]">
-                  Browse available issues or sync this publication.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => void handleSync()}
-                disabled={!!syncStatus?.running}
-                className="shrink-0 inline-flex min-h-11 items-center gap-2 border border-[#DCD5C7] bg-[#FAF8F3] px-4 py-2.5 rounded-xl text-xs font-semibold text-[#5B544C] hover:bg-[#EFECE3] disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C35E37]"
-              >
-                {syncStatus?.running ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-3.5 h-3.5" />
-                )}
-                Sync publication
-              </button>
-            </div>
-
-            {loadingCatalog ? (
-              <p className="text-center text-[#777066] py-12 text-sm flex items-center justify-center gap-2" role="status">
-                <Loader2 className="w-4 h-4 animate-spin" /> Loading issues…
-              </p>
-            ) : filteredIssues.length === 0 ? (
-              <div className={`${libraryEmptyClass} space-y-2`}>
-                <p className="font-serif text-xl text-[#2B2723]">No issues here yet.</p>
-                <p>Sync this publication to bring its issues into your library.</p>
-              </div>
-            ) : (
-              <div className="library-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {filteredIssues.map((issue) => (
-                  <button
-                    key={issue.id}
-                    type="button"
-                    onClick={() => void openIssue(issue)}
-                    className={libraryCardClass}
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-4">
-                      <h3 className={libraryTitleClass}>
-                        {issue.issueLabel || issue.title}
-                      </h3>
-                      <span
-                        className={`shrink-0 px-2.5 py-0.5 rounded-full text-xs font-semibold ${issue.status === 'ready'
-                            ? 'bg-emerald-50 text-emerald-800'
-                            : issue.status === 'failed'
-                              ? 'bg-red-50 text-red-700'
-                              : 'bg-amber-50 text-amber-800'
-                          }`}
-                      >
-                        {issue.status}
-                      </span>
-                    </div>
-                    <div className={libraryMetaClass}>
-                      <span>{issue.format.toUpperCase()}</span>
-                      <span>·</span>
-                      <span>{issue.articleCount} articles</span>
-                      <span className="ml-auto inline-flex items-center gap-1 text-[#A94E2B] font-medium">View issue <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></span>
-                    </div>
-                    {issue.errorMessage && (
-                      <p className="mt-2 text-xs text-red-600">{issue.errorMessage}</p>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* ── L3: 文章列表 ── */}
-        {tab === 'magazines' && magLayer === 'articles' && (
-          loadingIssue ? (
-            <p className="text-center text-[#777066] py-12 text-sm flex items-center justify-center gap-2" role="status">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading articles…
-            </p>
-          ) : filteredIssueArticles.length === 0 ? (
-            <p className={libraryEmptyClass}>
-              {issueArticles.length === 0 ? 'No articles are available in this issue yet.' : 'No articles match your search.'}
-            </p>
-          ) : (
-            <div className="library-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {filteredIssueArticles.map((article) => (
-                <button
-                  key={article.id}
-                  type="button"
-                  disabled={loadingArticleId === article.id}
-                  onClick={() => void openMagazineArticle(article)}
-                  className={libraryCardClass}
-                >
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <h3 className={libraryTitleClass}>
-                      {article.title}
-                    </h3>
-                    {loadingArticleId === article.id && (
-                      <Loader2 className="w-4 h-4 animate-spin text-[#C35E37] shrink-0" />
-                    )}
-                  </div>
-                  <p className="text-sm text-[#666056] mb-5 leading-relaxed line-clamp-3">
-                    {article.description}
-                  </p>
-                  <div className={libraryMetaClass}>
-                    {article.wordCount != null && <span>{article.wordCount} words</span>}
-                    <span className="ml-auto inline-flex items-center gap-1 text-[#A94E2B] font-medium">Start reading <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></span>
-                  </div>
+              ))}</div>
+            )
+          ) : magLayer === 'issues' ? (
+            filteredIssues.length === 0 ? renderEmpty(issues.some((issue) => issue.sourceId === activeSourceId) ? '没有找到匹配的期刊' : '暂无期刊，更新目录后再看看') : (
+              <div className="library-issues">{filteredIssues.map((issue, index) => (
+                <button type="button" key={issue.id} className="library-issue" onClick={() => void openIssue(issue)}>
+                  <span className="library-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+                  <div className="library-row-body"><h3>{issue.issueLabel || issue.title}</h3><div className="library-meta"><span>{issue.articleCount} 篇文章</span>
+                    {issueStatusLabels[issue.status] && <span className={issue.status === 'failed' ? 'library-failed' : ''}>{issueStatusLabels[issue.status]}</span>}
+                  </div></div><ArrowUpRight size={17} className="library-arrow" aria-hidden="true" />
                 </button>
-              ))}
+              ))}</div>
+            )
+          ) : filteredIssueArticles.length === 0 ? renderEmpty(issueArticles.length ? '没有找到匹配的文章' : '本期暂无可读文章') : (
+            <div className="library-reading-list">{filteredIssueArticles.map((article) => renderMagazineArticle(article, issueArticles.findIndex((item) => item.id === article.id),
+              article.wordCount != null ? <span>{article.wordCount.toLocaleString()} 词</span> : null,
+            ))}</div>
+          )}
+        </main>
+        {tab === 'magazines' && magLayer !== 'articles' && <footer className="library-catalog-footer">
+          {syncStatus?.running && <p className="library-sync-progress" role="status"><Loader2 size={13} className="animate-spin" aria-hidden="true" />正在更新外刊…</p>}
+          <details className="library-sync-details"><summary><span>外刊更新{syncDate && <span className="library-sync-date">{syncDate}</span>}</span><ChevronDown size={13} aria-hidden="true" /></summary>
+            <div className="library-sync-content"><button type="button" className="library-text-action" onClick={() => void handleSync()} disabled={Boolean(syncStatus?.running)}>
+              <RefreshCw size={13} className={syncStatus?.running ? 'animate-spin' : ''} aria-hidden="true" />{syncStatus?.running ? '正在更新' : activeSourceId ? '更新这本外刊' : '更新外刊目录'}
+            </button>
+              {syncStatus?.lastResult && !syncStatus.running && <p>新增 {syncStatus.lastResult.importedIssues} 期 · 已有 {syncStatus.lastResult.skippedIssues} 期{syncStatus.lastResult.failedIssues > 0 && ` · 失败 ${syncStatus.lastResult.failedIssues} 期`}</p>}
+              <p>外刊内容用于个人学习，请支持原刊订阅。</p>
             </div>
-          )
-        )}
-      </main>
+          </details>
+        </footer>}
+      </div>
     </div>
   );
 };

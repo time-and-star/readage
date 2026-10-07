@@ -220,7 +220,7 @@ test('does not recover forced exposure from a low-quality Good day', () => {
   assert.equal(profile.forcedExposure, false);
 });
 
-test('confidence combines history, FSRS retention, and recent quality', () => {
+test('recall confidence follows FSRS independently of passive exposure quality', () => {
   let profile = createEmptyRmeProfile();
   profile = recordExposure(profile, {
     articleId: 'a', occurrenceId: 'o1', now: NOW, kind: 'natural', isValid: true, quality: 1,
@@ -232,8 +232,19 @@ test('confidence combines history, FSRS retention, and recent quality', () => {
   const confidence = calculateConfidence(profile, {
     stabilityDays: 10,
     lastReview: new Date(NOW.getTime() - DAY).toISOString(),
+    hasRecallEvidence: true,
   }, NOW);
   assert.ok(confidence > 0 && confidence < 100);
+  assert.equal(confidence, calculateConfidence(createEmptyRmeProfile(), {
+    stabilityDays: 10,
+    lastReview: new Date(NOW.getTime() - DAY).toISOString(),
+    hasRecallEvidence: true,
+  }, NOW));
+  assert.equal(calculateConfidence(profile, {
+    stabilityDays: 10,
+    lastReview: new Date(NOW.getTime() - DAY).toISOString(),
+    hasRecallEvidence: false,
+  }, NOW), 0);
   assert.equal(stageFromConfidence(0), 0);
   assert.equal(stageFromConfidence(90), 4);
 });

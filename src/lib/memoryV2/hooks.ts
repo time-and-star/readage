@@ -3,7 +3,7 @@
  * Subscribe to the shared MemoryV2Store for ready state and invalidation.
  */
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   DEFAULT_REVIEW_QUEUE_LIMIT,
   type WordProficiencyStats,
@@ -179,17 +179,20 @@ export function useAllWordProficiency() {
   const ready = useStoreReady(store);
   const [proficiencies, setProficiencies] = useState<WordProficiencyView[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
 
   const refresh = useCallback(async () => {
+    const token = ++request.current;
     setLoading(true);
     try {
       await store.ensureReady();
       const result = await store.system.getAllWordProficiency(store.userId);
-      setProficiencies(result);
-    } catch (error) {
-      console.error('Failed to load all word proficiencies:', error);
+      if (token === request.current) { setProficiencies(result); setError(null); }
+    } catch {
+      if (token === request.current) setError('词汇学习记录暂时无法读取，请重试。');
     } finally {
-      setLoading(false);
+      if (token === request.current) setLoading(false);
     }
   }, [store]);
 
@@ -199,9 +202,10 @@ export function useAllWordProficiency() {
       return;
     }
     void refresh();
+    return () => { request.current += 1; };
   }, [refresh, version, ready]);
 
-  return { proficiencies, loading: loading || !ready, refresh };
+  return { proficiencies, loading: loading || !ready, error, refresh };
 }
 
 /**
@@ -213,17 +217,20 @@ export function useDueWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT) {
   const ready = useStoreReady(store);
   const [dueWords, setDueWords] = useState<WordProficiencyView[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
 
   const refresh = useCallback(async () => {
+    const token = ++request.current;
     setLoading(true);
     try {
       await store.ensureReady();
       const result = await store.system.getDueWords(store.userId, new Date(), limit);
-      setDueWords(result);
-    } catch (error) {
-      console.error('Failed to load due words:', error);
+      if (token === request.current) { setDueWords(result); setError(null); }
+    } catch {
+      if (token === request.current) setError('到期复习记录暂时无法读取，请重试。');
     } finally {
-      setLoading(false);
+      if (token === request.current) setLoading(false);
     }
   }, [store, limit]);
 
@@ -233,9 +240,10 @@ export function useDueWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT) {
       return;
     }
     void refresh();
+    return () => { request.current += 1; };
   }, [refresh, version, ready]);
 
-  return { dueWords, loading: loading || !ready, refresh };
+  return { dueWords, loading: loading || !ready, error, refresh };
 }
 
 /** 获取尚未进入 FSRS、需要再次确认的单词 */
@@ -245,17 +253,20 @@ export function useConfirmationWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT)
   const ready = useStoreReady(store);
   const [confirmationWords, setConfirmationWords] = useState<WordProficiencyView[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
 
   const refresh = useCallback(async () => {
+    const token = ++request.current;
     setLoading(true);
     try {
       await store.ensureReady();
       const result = await store.system.getConfirmationWords(store.userId, new Date(), limit, store.timezone);
-      setConfirmationWords(result);
-    } catch (error) {
-      console.error('Failed to load confirmation words:', error);
+      if (token === request.current) { setConfirmationWords(result); setError(null); }
+    } catch {
+      if (token === request.current) setError('阅读确认记录暂时无法读取，请重试。');
     } finally {
-      setLoading(false);
+      if (token === request.current) setLoading(false);
     }
   }, [store, limit]);
 
@@ -265,9 +276,10 @@ export function useConfirmationWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT)
       return;
     }
     void refresh();
+    return () => { request.current += 1; };
   }, [refresh, version, ready]);
 
-  return { confirmationWords, loading: loading || !ready, refresh };
+  return { confirmationWords, loading: loading || !ready, error, refresh };
 }
 
 /**
@@ -279,17 +291,20 @@ export function useProficiencyStats() {
   const ready = useStoreReady(store);
   const [stats, setStats] = useState<WordProficiencyStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
 
   const refresh = useCallback(async () => {
+    const token = ++request.current;
     setLoading(true);
     try {
       await store.ensureReady();
       const result = await store.system.getProficiencyStats(store.userId);
-      setStats(result);
-    } catch (error) {
-      console.error('Failed to load proficiency stats:', error);
+      if (token === request.current) { setStats(result); setError(null); }
+    } catch {
+      if (token === request.current) setError('学习统计暂时无法读取，请重试。');
     } finally {
-      setLoading(false);
+      if (token === request.current) setLoading(false);
     }
   }, [store]);
 
@@ -299,9 +314,10 @@ export function useProficiencyStats() {
       return;
     }
     void refresh();
+    return () => { request.current += 1; };
   }, [refresh, version, ready]);
 
-  return { stats, loading: loading || !ready, refresh };
+  return { stats, loading: loading || !ready, error, refresh };
 }
 
 /** Surface storage quota / write failures to the UI. */

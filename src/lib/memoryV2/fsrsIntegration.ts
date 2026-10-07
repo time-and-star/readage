@@ -211,22 +211,29 @@ function reviseHistoricalSuccess(
     current.fsrsReviews[current.fsrsReviews.length - 1] = { ...current.fsrsReviews.at(-1)!,
       ...(review.source ? { source: review.source } : {}),
       ...(review.localDate ? { localDate: review.localDate } : {}),
-      ...(review.verificationAttemptIds ? { verificationAttemptIds: review.verificationAttemptIds } : {}) };
+      ...(review.verificationAttemptIds ? { verificationAttemptIds: review.verificationAttemptIds } : {}),
+      ...(review.originalFlashcardRating !== undefined ? { originalFlashcardRating: review.originalFlashcardRating } : {}),
+      ...(review.flashcardRevisions ? { flashcardRevisions: review.flashcardRevisions.map(revision => ({ ...revision })) } : {}) };
   }
 
   // Exposure counters/context remain intact. Recompute only the review-outcome
   // recovery state so the replaced Good cannot keep an earned recovery streak.
   let profile: RmeMemoryProfile = { ...rmeProfileForState(state), consecutiveAgain: 0, recoveryStreak: 0,
     forcedExposure: false, lastReviewGrade: null };
+  let previousReviewedAt: number | null = null;
   for (const review of current.fsrsReviews) {
     const grade = review.rating <= 1 ? 'Again' : 'Good';
     const reviewedAt = new Date(review.review);
     const date = getLocalDateInTimeZone(reviewedAt, userTimezone);
     const exposures = profile.exposureHistory.filter(item => item.isValid && item.localDate === date);
-    const quality = review.source === 'verification' && review.rating === 2 ? 0.6
+    const recentFlashcard = review.source === 'flashcard'
+      && (previousReviewedAt === null || reviewedAt.getTime() - previousReviewedAt < 86_400_000);
+    const quality = ((review.source === 'verification' || review.source === 'flashcard') && review.rating === 2)
+      || recentFlashcard ? 0.6
       : date === evidence.localDate ? evidence.averageRmeQuality ?? 1
       : exposures.length > 0 ? exposures.reduce((sum, item) => sum + item.quality, 0) / exposures.length : 1;
     profile = applyReviewOutcome(profile, grade, reviewedAt, quality);
+    previousReviewedAt = reviewedAt.getTime();
   }
   return { ...current, rme: projectRmeProfile(profile, current,
     current.lastReview ? new Date(current.lastReview) : reviewTime) };
@@ -251,7 +258,8 @@ export function finalizeDailyEvidence(
   const reviewTime = actualTime ?? getUtcInstantForLocalDayEnd(dailyEvidence.localDate, userTimezone);
 
   const previousIndex = memoryState?.fsrsReviews.findIndex(review =>
-    getLocalDateInTimeZone(new Date(review.review), userTimezone) === dailyEvidence.localDate) ?? -1;
+    review.source !== 'flashcard'
+    && getLocalDateInTimeZone(new Date(review.review), userTimezone) === dailyEvidence.localDate) ?? -1;
   if (memoryState && previousIndex >= 0) {
     const priorReview = memoryState.fsrsReviews[previousIndex];
     const quality = dailyEvidence.averageRmeQuality;

@@ -1,10 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import type { GrammarExplanation } from '../types';
-import { lookupDictionaryWord, toDictionaryWordCard as toWordCardResult } from '../lib/dictionaryClient';
+import { lookupDictionaryWord, resolveDictionaryLearningWordId, toDictionaryWordCard as toWordCardResult } from '../lib/dictionaryClient';
 import { useMemorySystem } from '../lib/memoryV2/hooks';
 import { WordCardPanel } from './WordCardPanel';
-import { canonicalLearningWordId } from '../lib/learningWordIds';
 import { useSpeech } from '../lib/speech/useSpeech';
 import { SpeechFeedback } from './SpeechControls';
 
@@ -43,11 +42,11 @@ export const WordSearchModule: React.FC = () => {
   useEffect(() => {
     if (!cardOpen || !speechPreparationText) return;
     let cancel: (() => void) | undefined;
-    const timer = setTimeout(() => { cancel = speech.prepare(speechPreparationText); }, 300);
+    const timer = setTimeout(() => { cancel = speech.prepare(speechPreparationText); }, 150);
     return () => { clearTimeout(timer); cancel?.(); };
   }, [cardOpen, speechPreparationText, speech.prepare, speech.preferences.lang, speech.preferences.rate]);
 
-  const search = async (event?: React.FormEvent, requestedQuery = query) => {
+  const search = async (event?: React.FormEvent, requestedQuery = query, recordEvidence = true) => {
     event?.preventDefault();
     const normalized = normalizeWordSearchQuery(requestedQuery);
     if (!normalized || loading) return;
@@ -64,9 +63,11 @@ export const WordSearchModule: React.FC = () => {
       const entry = await lookupDictionaryWord(normalized, { signal: controller.signal });
       if (controller.signal.aborted) return;
       if (entry) {
-        const wordId = canonicalLearningWordId(normalized, entry.lemma);
         setResult(toWordCardResult(entry));
         try {
+          if (!recordEvidence) return;
+          const wordId = await resolveDictionaryLearningWordId(normalized, entry.learningTermRef);
+          if (controller.signal.aborted) return;
           await recordWordSearchEvidence(wordId, normalized, recordExposure, recordClick);
         } catch (memoryError) {
           console.error('Failed to record word search evidence:', memoryError);
@@ -144,6 +145,7 @@ export const WordSearchModule: React.FC = () => {
         selectedText={selectedText}
         onClose={close}
         onSpeak={speech.speak}
+        onRetrySources={() => { void search(undefined, selectedText, false); }}
         onLookupRelated={(word) => {
           setQuery(word);
           void search(undefined, word);

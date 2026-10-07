@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { DICTIONARY_PROTOCOL_VERSION } from '../packages/dictionary/contracts';
+import { dictionaryCacheKey } from '../packages/dictionary/cache';
 import {
   createWordCardRequest,
   fetchWordCard,
 } from '../src/lib/wordCard';
+
+// Catalogue requests are separate from the lookup counts checked below.
+const catalog = { protocolVersion: DICTIONARY_PROTOCOL_VERSION, catalogVersion: 'test-catalog.v1', defaultSource: 'native-reviewed', sources: [] };
+const withCatalog = (fetcher: typeof fetch): typeof fetch => (async (url, options) =>
+  String(url).endsWith('/v1/sources') ? new Response(JSON.stringify({ ok: true, catalog })) : fetcher(url, options)) as typeof fetch;
 
 test('word card requests keep the clicked word and its article context', () => {
   assert.deepEqual(
@@ -30,7 +37,7 @@ test('lookup normalization preserves contractions and compounds without concaten
 test('contractions and hyphenated compounds use a single dictionary lookup', async () => {
   const originalFetch = globalThis.fetch;
   const queries: string[] = [];
-  globalThis.fetch = (async (url, options) => {
+  globalThis.fetch = withCatalog((async (url, options) => {
     assert.equal(url, '/api/dictionary/lookup');
     const { words } = JSON.parse(String(options?.body));
     assert.equal(words.length, 1);
@@ -38,7 +45,7 @@ test('contractions and hyphenated compounds use a single dictionary lookup', asy
     return new Response(JSON.stringify({ ok: true, results: [{ query: words[0], lemma: words[0],
       phonetic: '', cefrLevel: null, partOfSpeech: 'test', basicMeaningsZh: [],
       definitionEn: 'definition', definitionsEn: [] }] }));
-  }) as typeof fetch;
+  }) as typeof fetch);
   try {
     for (const word of ['can’t', 'well‑known']) await fetchWordCard(createWordCardRequest(word)!);
     assert.deepEqual(queries, ["can't", 'well-known']);
@@ -52,7 +59,7 @@ test('word card requests reject clicks that contain no lookup text', () => {
 
 test('single-word lookup works without accessing the authenticated AI endpoint', async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (url) => {
+  globalThis.fetch = withCatalog((async (url) => {
     assert.equal(url, '/api/dictionary/lookup');
     return new Response(
       JSON.stringify({
@@ -61,7 +68,7 @@ test('single-word lookup works without accessing the authenticated AI endpoint',
           cefrLevel: null, definitionEn: 'to move quickly on foot', definitionsEn: [], basicMeaningsZh: ['跑'] }],
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
-    ); }) as typeof fetch;
+    ); }) as typeof fetch);
 
   try {
     const request = createWordCardRequest('running', 'She is running late.')!;
@@ -83,7 +90,7 @@ test('financial and advice remain separate dictionary lookups in the same senten
     advice: { query: 'advice', lemma: 'advice', partOfSpeech: 'noun', phonetic: '',
       cefrLevel: null, definitionEn: 'a proposal for an appropriate course of action', definitionsEn: [], basicMeaningsZh: ['建议'] },
   };
-  globalThis.fetch = (async (url, options) => {
+  globalThis.fetch = withCatalog((async (url, options) => {
     assert.equal(url, '/api/dictionary/lookup', 'individual words must not call the AI endpoint');
     const body = JSON.parse(String(options?.body)) as { words: string[] };
     assert.equal(body.words.length, 1);
@@ -93,7 +100,7 @@ test('financial and advice remain separate dictionary lookups in the same senten
     return new Response(JSON.stringify({ ok: true, results: [dictionaryEntries[query]] }), {
       status: 200, headers: { 'Content-Type': 'application/json' },
     });
-  }) as typeof fetch;
+  }) as typeof fetch);
 
   try {
     for (const word of ['financial', 'advice']) {
@@ -111,9 +118,9 @@ test('financial and advice remain separate dictionary lookups in the same senten
 
 test('a failed lookup reports an error instead of fabricating a definition', async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = withCatalog((async () => {
     throw new Error('network down');
-  }) as typeof fetch;
+  }) as typeof fetch);
 
   try {
     const request = createWordCardRequest('curious', 'A curious case.')!;
@@ -121,6 +128,30 @@ test('a failed lookup reports an error instead of fabricating a definition', asy
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('a dictionary miss stays local and does not invoke the disabled AI explanation', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = withCatalog((async url => {
+    calls.push(String(url));
+    assert.equal(url, '/api/dictionary/lookup');
+    return new Response(JSON.stringify({ ok: true, results: [null] }));
+  }) as typeof fetch);
+  try {
+    await assert.rejects(fetchWordCard(createWordCardRequest('zzunlistedword')!), /词典未收录/);
+    assert.deepEqual(calls, ['/api/dictionary/lookup']);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('a phrase offers translation without sending an AI explanation request', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => { calls++; throw new Error('unexpected request'); }) as typeof fetch;
+  try {
+    await assert.rejects(fetchWordCard(createWordCardRequest('break a leg')!), /点击“翻译”/);
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test('a cached definition remains available when the dictionary is offline; cancelled requests stay cancelled', async () => {
@@ -132,14 +163,14 @@ test('a cached definition remains available when the dictionary is offline; canc
     setItem: (key: string, value: string) => values.set(key, value),
     removeItem: (key: string) => values.delete(key),
   } });
-  globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true, results: [{
+  globalThis.fetch = withCatalog((async () => new Response(JSON.stringify({ ok: true, results: [{
     query: 'running', lemma: 'run', phonetic: '', cefrLevel: null, partOfSpeech: 'verb',
     basicMeaningsZh: ['跑'], definitionEn: 'move quickly', definitionsEn: [],
-  }] }))) as typeof fetch;
+  }] }))) as typeof fetch);
   try {
     const request = createWordCardRequest('running')!;
     const result = await fetchWordCard(request);
-    globalThis.fetch = (async () => { throw new Error('offline'); }) as typeof fetch;
+    globalThis.fetch = withCatalog((async () => { throw new Error('offline'); }) as typeof fetch);
     assert.deepEqual(await fetchWordCard(request), JSON.parse(JSON.stringify(result)));
     const controller = new AbortController(); controller.abort();
     await assert.rejects(fetchWordCard(request, { signal: controller.signal }), /cancelled/);
@@ -162,16 +193,16 @@ test('old cards with incorrectly stemmed headwords are refreshed from the dictio
     removeItem: (key: string) => values.delete(key),
   } });
   let calls = 0;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = withCatalog((async () => {
     calls++;
     return new Response(JSON.stringify({ ok: true, results: [{ query: 'speed', lemma: 'speed',
       phonetic: '', cefrLevel: null, partOfSpeech: 'noun', basicMeaningsZh: ['速度'],
       definitionEn: 'rate of motion', definitionsEn: [] }] }));
-  }) as typeof fetch;
+  }) as typeof fetch);
   try {
     assert.equal((await fetchWordCard(createWordCardRequest('speed')!)).wordOrPhrase, 'speed');
     assert.equal(calls, 1);
-    assert.ok(values.has('english-ai:v4:word-card:speed'));
+    assert.ok(values.has('english-ai:v6:word-card:' + dictionaryCacheKey('en', catalog.catalogVersion, 'speed')));
   } finally {
     globalThis.fetch = originalFetch;
     if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);

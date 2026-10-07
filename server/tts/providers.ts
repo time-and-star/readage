@@ -80,6 +80,10 @@ export class OpenAiCompatibleTtsProvider implements TtsProvider {
     if (isWav && (bytes.byteLength < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE')) {
       throw new TtsError('TTS_INVALID_AUDIO');
     }
-    return { bytes, contentType: outputContentType };
+    const allowedMetrics = new Set(['tts-queue', 'tts-synth', 'tts-infer', 'tts-pre', 'tts-encode']);
+    const timing = Array.from((response.headers.get('server-timing') || '').slice(0, 1024).matchAll(/([\w-]+);dur=([\d.]+)/g))
+      .filter(match => allowedMetrics.has(match[1]) && Number.isFinite(Number(match[2])) && Number(match[2]) <= 600_000)
+      .map(match => `${match[1]};dur=${Number(match[2]).toFixed(1)}`).join(', ');
+    return { bytes, contentType: outputContentType, ...(timing ? { serverTiming: timing } : {}) };
   }
 }

@@ -11,6 +11,8 @@ import {
   MemoryScoreParams,
   DEFAULT_MS_PARAMS,
   type ReadingVerificationInput,
+  type FlashcardReviewInput,
+  type FlashcardReviewCorrectionInput,
 } from './types';
 import { MemoryStorage } from './storage';
 import {
@@ -24,7 +26,6 @@ import {
   finalizeDailyEvidence,
   batchFinalizeDailyEvidence,
   getPendingFinalizationDates,
-  hasSufficientPassiveRecallEvidence,
 } from './fsrsIntegration';
 import {
   calculateMemoryScore,
@@ -32,13 +33,17 @@ import {
   scoreToLevel,
   scoreToLevelWithHysteresis,
 } from './memoryScore';
-import { prepareRmeEvent, projectRmeProfile, rmeProfileForState } from './rmeV4Bridge';
+import { hasFormalRecallEvidence, prepareRmeEvent, projectRmeProfile, rmeProfileForState } from './rmeV4Bridge';
 import { updateExposureQuality } from '../memoryV4';
 import { stageFromConfidence, classifyExposure } from '../memoryV4';
 import { appendJournalEvents, importLookupEvents, refreshUserJournals, refreshWordJournal, readExternalLearningActivity } from '../browserExtension/importer';
 import { getLocalDateInTimeZone, getSystemTimeZone } from './dateUtils';
 import { mergeExposureSnapshot } from './rawEventPersistence';
-import { readVerificationHistory, saveVerificationAttempt, replayVerificationEvidence } from './verificationMemory';
+import { readVerificationHistory, saveVerificationAttempt, saveFlashcardReviewCorrection, replayVerificationEvidence } from './verificationMemory';
+import { readFlashcardStudyPreferences, saveFlashcardStudyPreferences, importFlashcardWords,
+  repairImportedFlashcardStates, updateFlashcardWords, type FlashcardStudyPreferences } from '../flashcardPreferences';
+import { LocalStorageMemoryStorage } from './localStorageImpl';
+import { IndexedDbMemoryStorage } from './indexedDbImpl';
 
 export interface WordProficiencyView {
   wordId: string;
@@ -52,6 +57,8 @@ export interface WordProficiencyView {
   opportunityScore?: number;
   memoryStage?: 0 | 1 | 2 | 3 | 4;
   isIntroduced?: boolean;
+  /** Eligible for the word-card plan; passive reading alone does not count as a new word. */
+  isFlashcardEligible?: boolean;
   status?: 'introduced' | 'learning' | 'mastered';
 }
 
@@ -116,11 +123,53 @@ function addRmeProjection(
   };
 }
 
+/** Keep learning statistics aligned with word-card enrollment and genuine recall history. */
+export function projectWordLearningStatus(state: WordMemoryState, preferences: FlashcardStudyPreferences) {
+  return learningStatusProjector(preferences)(state);
+}
+function learningStatusProjector(preferences: FlashcardStudyPreferences) {
+  const excludedIds = new Set([...preferences.pausedWordIds ?? [], ...preferences.excludedWordIds ?? []]);
+  const enrolledIds = new Set(preferences.importedWordIds);
+  return (state: WordMemoryState) => {
+  const hasRecall = hasFormalRecallEvidence(state);
+  const hasLookup = Number.isFinite(Date.parse(state.lastAssistedAt ?? ''))
+    || state.fsrsReviews.some(review => review.source === 'reading_lookup');
+  return { isIntroduced: !hasRecall,
+    isFlashcardEligible: !excludedIds.has(state.wordId) && (hasRecall || hasLookup || enrolledIds.has(state.wordId)) };
+  };
+}
+
 export class MemorySystemV2 {
-  getVerificationHistory(userId: string) { return readVerificationHistory(this.storage, userId); }
+  getMemoryStorageKind(): 'indexedDB' | 'localStorage' | 'unknown' {
+    return this.storage instanceof LocalStorageMemoryStorage ? 'localStorage'
+      : this.storage instanceof IndexedDbMemoryStorage ? 'indexedDB' : 'unknown';
+  }
+  getFlashcardStudyPreferences(userId: string) { return readFlashcardStudyPreferences(this.storage, userId); }
+  saveFlashcardStudyPreferences(userId: string, dailyNewWordLimit: number | null) {
+    return saveFlashcardStudyPreferences(this.storage, userId, dailyNewWordLimit);
+  }
+  updateFlashcardWords(userId: string, wordIds: string[], action: 'pause' | 'resume' | 'remove') {
+    return updateFlashcardWords(this.storage, userId, wordIds, action);
+  }
+  importFlashcardWords(userId: string, canonicalWordIds: string[], existingCanonicalWordIds?: ReadonlyMap<string, string>, now = new Date()) {
+    return importFlashcardWords(this.storage, userId, canonicalWordIds, existingCanonicalWordIds, now,
+      (wordId, aliases) => this.seedCanonicalWordMemory(userId, wordId, aliases));
+  }
+  async getArticleLearningEvidence(userId: string): Promise<ArticleWordEvidence[]> {
+    return this.storage.getAllArticleEvidence ? this.storage.getAllArticleEvidence(userId) : [];
+  }
+
+  async getVerificationHistory(userId: string) {
+    return (await readVerificationHistory(this.storage, userId))
+      .filter((attempt): attempt is typeof attempt & ReadingVerificationInput => attempt.purpose !== 'flashcard_review');
+  }
+  async getFlashcardReviewHistory(userId: string) {
+    return (await readVerificationHistory(this.storage, userId))
+      .filter((attempt): attempt is typeof attempt & FlashcardReviewInput => attempt.purpose === 'flashcard_review');
+  }
   getReadingVerificationMemoryStates(userId: string) { return this.storage.getAllMemoryStates(userId); }
 
-  async recordVerification(userId: string, input: ReadingVerificationInput, now = new Date()): Promise<void> {
+  async recordVerification(userId: string, input: ReadingVerificationInput | FlashcardReviewInput, now = new Date()): Promise<void> {
     await saveVerificationAttempt(this.storage, userId, input, this.timezone, now);
     if (input.purpose === 'immediate_practice') return;
     if (!await refreshWordJournal(this.storage, userId, input.wordId, this.timezone, now)) {
@@ -128,10 +177,17 @@ export class MemorySystemV2 {
     }
   }
 
+  async correctFlashcardReview(userId: string, input: FlashcardReviewCorrectionInput, now = new Date()): Promise<void> {
+    await saveFlashcardReviewCorrection(this.storage, userId, input, now);
+    if (!await refreshWordJournal(this.storage, userId, input.wordId, this.timezone, now)) {
+      await this.refreshVerificationWord(userId, input.wordId, now);
+    }
+  }
+
   private async refreshVerificationWord(userId: string, wordId: string, now = new Date()): Promise<void> {
     const attempts = (await readVerificationHistory(this.storage, userId)).filter(attempt => attempt.wordId === wordId);
-    if (!attempts.length) return;
     const state = await this.storage.getMemoryState(userId, wordId);
+    if (!attempts.length && !state?.fsrsReviews.some(review => review.source === 'flashcard')) return;
     const days = this.storage.getWordDailyEvidence ? await this.storage.getWordDailyEvidence(userId, wordId)
       : (await Promise.all([...new Set(attempts.map(attempt => attempt.localDate))]
         .map(date => this.storage.getDailyEvidence(userId, wordId, date)))).filter((day): day is DailyWordEvidence => Boolean(day));
@@ -318,6 +374,8 @@ export class MemorySystemV2 {
    * 在应用启动或用户进入新一天时调用
    */
   async finalizeHistoricalDates(userId: string, userTimezone: string): Promise<void> {
+    await repairImportedFlashcardStates(this.storage, userId, new Date(),
+      (wordId, aliases) => this.seedCanonicalWordMemory(userId, wordId, aliases));
     // Also recovers an interrupted import, even when some days were already marked finalized.
     await refreshUserJournals(this.storage, userId, userTimezone, new Date());
     const verificationWords = [...new Set((await readVerificationHistory(this.storage, userId)).map(attempt => attempt.wordId))];
@@ -369,6 +427,10 @@ export class MemorySystemV2 {
       await this.storage.saveMemoryState(state);
     }
 
+    // A late reading lookup can precede an already saved word-card review.
+    // Rebuild before marking the day complete, so an interrupted write retries.
+    for (const wordId of wordIds) await this.refreshVerificationWord(userId, wordId);
+
     // 5. 标记所有词据为已结算，并清理已结算日的 raw events 以控制存储体积
     const now = new Date().toISOString();
     for (const evidence of dailyEvidences) {
@@ -390,14 +452,18 @@ export class MemorySystemV2 {
     wordId: string,
     currentTime: Date = new Date()
   ): Promise<WordProficiencyView | null> {
-    const memoryState = await this.storage.getMemoryState(userId, wordId);
+    const [memoryState, preferences] = await Promise.all([
+      this.storage.getMemoryState(userId, wordId), this.getFlashcardStudyPreferences(userId),
+    ]);
 
     if (!memoryState) {
       return null;
     }
 
-    const memoryScore = calculateMemoryScore(memoryState, this.params, currentTime);
+    const memoryScore = hasFormalRecallEvidence(memoryState)
+      ? calculateMemoryScore(memoryState, this.params, currentTime) : 0;
     const level = scoreToLevel(memoryScore);
+    const learning = projectWordLearningStatus(memoryState, preferences);
 
     return addRmeProjection(memoryState, {
       wordId,
@@ -407,8 +473,8 @@ export class MemorySystemV2 {
       difficulty: memoryState.difficulty,
       nextReview: memoryState.nextReview,
       lastReview: memoryState.lastReview,
-      isIntroduced: memoryState.fsrsReviews.length === 0,
-      status: memoryState.fsrsReviews.length === 0
+      ...learning,
+      status: learning.isIntroduced
         ? 'introduced'
         : level === 4 ? 'mastered' : 'learning',
     }, currentTime);
@@ -422,7 +488,9 @@ export class MemorySystemV2 {
     wordIds: string[],
     currentTime: Date = new Date()
   ): Promise<Map<string, WordProficiencyView>> {
-    const memoryStates = await this.storage.getBatchMemoryStates(userId, wordIds);
+    const [memoryStates, preferences] = await Promise.all([
+      this.storage.getBatchMemoryStates(userId, wordIds), this.getFlashcardStudyPreferences(userId),
+    ]);
     const scores = calculateBatchMemoryScores(
       Array.from(memoryStates.values()),
       this.params,
@@ -430,10 +498,12 @@ export class MemorySystemV2 {
     );
 
     const proficiencies = new Map<string, WordProficiencyView>();
+    const projectLearning = learningStatusProjector(preferences);
 
     for (const [wordId, memoryState] of memoryStates.entries()) {
-      const memoryScore = scores.get(wordId) || 0;
+      const memoryScore = hasFormalRecallEvidence(memoryState) ? scores.get(wordId) || 0 : 0;
       const level = scoreToLevel(memoryScore);
+      const learning = projectLearning(memoryState);
 
       proficiencies.set(wordId, addRmeProjection(memoryState, {
         wordId,
@@ -443,8 +513,8 @@ export class MemorySystemV2 {
         difficulty: memoryState.difficulty,
         nextReview: memoryState.nextReview,
         lastReview: memoryState.lastReview,
-        isIntroduced: memoryState.fsrsReviews.length === 0,
-        status: memoryState.fsrsReviews.length === 0
+        ...learning,
+        status: learning.isIntroduced
           ? 'introduced'
           : level === 4 ? 'mastered' : 'learning',
       }, currentTime));
@@ -460,12 +530,16 @@ export class MemorySystemV2 {
     userId: string,
     currentTime: Date = new Date()
   ): Promise<WordProficiencyView[]> {
-    const memoryStates = await this.storage.getAllMemoryStates(userId);
+    const [memoryStates, preferences] = await Promise.all([
+      this.storage.getAllMemoryStates(userId), this.getFlashcardStudyPreferences(userId),
+    ]);
     const scores = calculateBatchMemoryScores(memoryStates, this.params, currentTime);
+    const projectLearning = learningStatusProjector(preferences);
 
     return memoryStates.map((state) => {
-      const memoryScore = scores.get(state.wordId) || 0;
+      const memoryScore = hasFormalRecallEvidence(state) ? scores.get(state.wordId) || 0 : 0;
       const level = scoreToLevel(memoryScore);
+      const learning = projectLearning(state);
 
       return addRmeProjection(state, {
         wordId: state.wordId,
@@ -475,8 +549,8 @@ export class MemorySystemV2 {
         difficulty: state.difficulty,
         nextReview: state.nextReview,
         lastReview: state.lastReview,
-        isIntroduced: state.fsrsReviews.length === 0,
-        status: state.fsrsReviews.length === 0
+        ...learning,
+        status: learning.isIntroduced
           ? 'introduced'
           : level === 4 ? 'mastered' : 'learning',
       }, currentTime);
@@ -496,7 +570,7 @@ export class MemorySystemV2 {
     // 筛选出到期的单词
     const dueWords = allProficiency.filter((p) => {
       const nextReviewTime = new Date(p.nextReview);
-      return p.isIntroduced !== true && nextReviewTime <= currentTime;
+      return p.isFlashcardEligible !== false && p.isIntroduced !== true && nextReviewTime <= currentTime;
     });
 
     // 按到期时间排序（越早到期的越靠前）
@@ -515,8 +589,8 @@ export class MemorySystemV2 {
   }
 
   /**
-   * Return words that have at least one effective passive exposure but have not
-   * entered FSRS yet. These are confirmation targets, not due reviews.
+   * Return spaced reading encounters awaiting their first formal recall.
+   * Additional passive exposures cannot complete that confirmation step.
    */
   async getConfirmationWords(
     userId: string,
@@ -533,13 +607,13 @@ export class MemorySystemV2 {
     const confirmationWords = allProficiency.filter((proficiency) => {
       if (proficiency.isIntroduced !== true) return false;
       const state = stateByWord.get(proficiency.wordId);
-      if (!state || state.fsrsReviews.length > 0) return false;
+      if (!state || hasFormalRecallEvidence(state)) return false;
       const profile = rmeProfileForState(state);
       const hasEffectiveExposure = profile.successfulExposureCount > 0
         && profile.exposureHistory.some(
           (exposure) => exposure.isValid && exposure.quality >= 0.8,
         );
-      if (!hasEffectiveExposure || hasSufficientPassiveRecallEvidence(state)) return false;
+      if (!hasEffectiveExposure) return false;
       const anchorAt = Date.parse(profile.lastEffectiveExposureAt ?? '');
       const lastDay = profile.lastEffectiveLocalDate
         ?? (Number.isFinite(anchorAt) ? getLocalDateInTimeZone(new Date(anchorAt), userTimezone) : null);
@@ -547,6 +621,8 @@ export class MemorySystemV2 {
         localDate: today, previousLocalDate: lastDay, userTimezone,
         lastExposureAt: profile.lastExposureAt, lastEffectiveExposureAt: profile.lastEffectiveExposureAt,
         firstUnconfirmedExposureAt: profile.firstUnconfirmedExposureAt,
+        // A recent lookup is assistance, so wait a full day before confirming.
+        lastReviewAt: state.lastAssistedAt,
       }).isValid;
     });
 
@@ -575,7 +651,8 @@ export class MemorySystemV2 {
     userId: string,
     currentTime: Date = new Date(),
   ): Promise<WordProficiencyStats> {
-    const allProficiency = await this.getAllWordProficiency(userId, currentTime);
+    const allProficiency = (await this.getAllWordProficiency(userId, currentTime))
+      .filter(word => word.isFlashcardEligible !== false);
     const now = currentTime;
 
     const byLevel: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };

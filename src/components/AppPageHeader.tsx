@@ -1,6 +1,5 @@
 import React from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { ReadAgeBrand } from './ReadAgeBrand';
 import { WordSearchModule } from './WordSearchModule';
 
 interface AppPageHeaderProps {
@@ -28,11 +27,6 @@ export const AppPageHeader: React.FC<AppPageHeaderProps> = ({
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
-        <ReadAgeBrand
-          className="app-desktop-brand"
-          logoClassName="h-7 w-7"
-          nameClassName="text-base"
-        />
       </div>
 
       <div className="flex min-w-0 justify-center px-1 sm:px-2">{navigation}</div>

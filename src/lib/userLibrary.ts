@@ -12,6 +12,32 @@ export type UserLibraryItem =
   | { kind: 'file'; file: UserLibraryFile }
   | { kind: 'article'; article: Article };
 
+/** Resume in source order after a completed chapter, or return to the latest open chapter. */
+export function getLibraryFileProgress(file: UserLibraryFile) {
+  const completedCount = file.articles.filter((article) => article.status === 'Completed').length;
+  const latest = file.articles.reduce<Article | undefined>((current, article) => {
+    const openedAt = Date.parse(article.lastOpenedAt || '');
+    if (!Number.isFinite(openedAt)) return current;
+    return !current || openedAt > Date.parse(current.lastOpenedAt || '') ? article : current;
+  }, undefined);
+  const latestIndex = latest ? file.articles.indexOf(latest) : -1;
+  const completed = file.articles.length > 0 && completedCount === file.articles.length;
+  const resumeArticle = completed ? file.articles[0] : latest?.status === 'In Progress'
+    ? latest
+    : file.articles.slice(latestIndex + 1).find((article) => article.status !== 'Completed')
+      || file.articles.find((article) => article.status !== 'Completed')
+      || latest
+      || file.articles[0];
+  return {
+    completedCount,
+    started: Boolean(latest) || completedCount > 0,
+    completed,
+    resumeArticle,
+    resumeNumber: resumeArticle ? file.articles.indexOf(resumeArticle) + 1 : 0,
+    unit: file.format === 'epub' ? '章' : file.format === 'pdf' ? '页' : '篇',
+  };
+}
+
 function batchOrder(article: Article): number {
   const match = article.id.match(/-(\d+)$/);
   return match ? Number(match[1]) : 0;

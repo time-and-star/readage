@@ -28,6 +28,7 @@ export interface TtsConfiguration {
 export interface TtsAudio {
   bytes: Buffer;
   contentType: 'audio/mpeg' | 'audio/wav';
+  serverTiming?: string;
 }
 
 /** Add an adapter here without changing the playback or HTTP route. */

@@ -5,18 +5,18 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { AppPageHeader } from '../src/components/AppPageHeader';
 
-test('renders the shared ReadAge brand with back, navigation, and page actions', () => {
+test('renders accessible back, navigation, word search, and page actions', () => {
   const html = renderToStaticMarkup(
     React.createElement(AppPageHeader, {
       onBack: () => undefined,
       navigation: React.createElement('nav', { 'aria-label': 'Primary navigation' }, 'Library'),
-      actions: React.createElement('button', { type: 'button' }, 'Search'),
+      actions: React.createElement('button', { type: 'button', 'aria-label': 'Import an article' }, 'Import'),
     }),
   );
 
-  assert.match(html, /aria-label="Back"/);
-  assert.match(html, />ReadAge</);
-  assert.match(html, /aria-label="Primary navigation"/);
-  assert.match(html, />Search</);
+  assert.match(html, /<button\b[^>]*type="button"[^>]*aria-label="Back"/);
+  assert.match(html, /<nav aria-label="Primary navigation">Library<\/nav>/);
+  assert.match(html, /<button\b[^>]*type="button"[^>]*aria-label="Search a word"/);
+  assert.match(html, /<button type="button" aria-label="Import an article">Import<\/button>/);
   assert.doesNotMatch(html, /<h1/);
 });

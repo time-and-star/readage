@@ -22,7 +22,7 @@ import {
 import { validateTutorRequest } from './src/lib/tutorValidation';
 import { createMagazineRouter } from './server/magazines/routes';
 import { createTtsRouter } from './server/tts/routes';
-import { parseUserImportFile, readImportFilename, UserImportError, USER_IMPORT_MAX_BYTES } from './server/import/parseUserFile';
+import { parseUserImportFile, parseUserImportPageQuery, readImportFilename, UserImportError, USER_IMPORT_MAX_BYTES } from './server/import/parseUserFile';
 import { renderPdfSourcePage, resolvePdfSource } from './server/documents/pdfSource';
 import { resolveDocumentImage } from './server/documents/assets';
 import { startMagazineScheduler } from './server/magazines/scheduler';
@@ -36,9 +36,15 @@ import {
   lookupDictionaryWords,
 } from './server/dictionary/service';
 import { resolveDictionaryLearningWordIds } from './server/dictionary/learningWordIds';
+import { getDictionaryRuntime } from './server/dictionary/runtime';
+import { createDictionaryRouter } from './server/dictionary/routes';
+import { createDictionarySettingsRouter } from './server/dictionary/settingsRoutes';
+import { createDictionaryImportRouter } from './server/dictionary/importRoutes';
 import { generateReadingVerification, readingVerificationProvider, READING_VERIFICATION_SERVER_BUDGET_MS,
   type VerificationDictionaryHint } from './server/readingVerification';
 import { runAfterReadingAgent, AFTER_READING_SERVER_BUDGET_MS } from './server/tutorAgent';
+import { createLocalTranslationRouter } from './server/translation/routes';
+import { createLocalTranslationStartup } from './server/translation/startup';
 import {
   attachStepRealtimeProxy,
   authorizeSensitiveRequest,
@@ -57,6 +63,7 @@ import {
 dotenv.config();
 
 const app = express();
+const localTranslationStartup = createLocalTranslationStartup();
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST?.trim() || '127.0.0.1';
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
@@ -95,6 +102,7 @@ const requireSensitiveApiAccess: express.RequestHandler = (req, res, next) => {
 /** Large tutor/import payloads are capped before expensive processing. */
 app.use(express.json({ limit: '2mb' }));
 app.use('/api/tts', createTtsRouter(requireSensitiveApiAccess));
+app.use('/api/translation', createLocalTranslationRouter(requireSensitiveApiAccess, { startupStatus: localTranslationStartup.status }));
 app.use('/api/magazines/sync', requireSensitiveApiAccess);
 app.use('/api/magazines', createMagazineRouter());
 app.get('/api/realtime/status', (_req, res) => {
@@ -161,13 +169,20 @@ app.post(
   requireSensitiveApiAccess,
   importFileBody,
   async (req, res) => {
+    const controller = new AbortController();
+    const disconnect = () => { if (!res.writableFinished) controller.abort(); };
+    req.once('aborted', disconnect);
+    res.once('close', disconnect);
     try {
       const header = req.header('x-import-filename');
       const filename = readImportFilename(header);
       const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      const parsed = await parseUserImportFile(buffer, filename);
+      const page = parseUserImportPageQuery(req.query);
+      const parsed = await parseUserImportFile(buffer, filename, { ...page, signal: controller.signal });
+      if (controller.signal.aborted) return;
       return res.json({ ok: true, ...parsed });
     } catch (error) {
+      if (controller.signal.aborted) return;
       if (error instanceof UserImportError) {
         const status = error.code === 'FILE_TOO_LARGE' ? 413 : 400;
         return res.status(status).json({
@@ -180,6 +195,9 @@ app.post(
         ok: false,
         error: { code: 'IMPORT_FAILED', message: '文件解析失败，请使用 DOCX、EPUB、PDF、HTML 或 TXT。' },
       });
+    } finally {
+      req.removeListener('aborted', disconnect);
+      res.removeListener('close', disconnect);
     }
   }
 );
@@ -232,6 +250,11 @@ app.get('/api/import/pause', (_req, res) => {
 
 // Local offline ECDICT dictionary: cheap read-only lookups, public like magazine reads.
 const DICTIONARY_LOOKUP_MAX_WORDS = 50;
+app.use('/api/dictionary/v1/settings', requireSensitiveApiAccess);
+app.use('/api/dictionary/v1/import', requireSensitiveApiAccess);
+app.use('/api/dictionary/v1', createDictionaryImportRouter(getDictionaryRuntime()));
+app.use('/api/dictionary/v1', createDictionarySettingsRouter(getDictionaryRuntime().settings, getDictionaryRuntime().service));
+app.use('/api/dictionary/v1', createDictionaryRouter(getDictionaryRuntime().service));
 app.get('/api/dictionary/health', (_req, res) => {
   res.json({ ok: true, dictionary: getDictionaryHealth() });
 });
@@ -251,8 +274,13 @@ app.post('/api/dictionary/lookup', async (req, res) => {
       },
     });
   }
-  const results = await lookupDictionaryWords(words);
-  return res.json({ ok: true, version: getDictionaryContentVersion(), schemaVersion: 'dictionary.v2', results });
+  try {
+    const results = await lookupDictionaryWords(words);
+    return res.json({ ok: true, version: getDictionaryContentVersion(), schemaVersion: 'dictionary.v2',
+      catalogVersion: getDictionaryRuntime().service.listSources().catalogVersion, results });
+  } catch {
+    return res.status(503).json({ ok: false, error: { code: 'DICTIONARY_UNAVAILABLE', message: 'Dictionary sources are unavailable.' } });
+  }
 });
 
 // Compact payload for passive reading and recommendation catalogs. A failure
@@ -268,7 +296,8 @@ app.post('/api/dictionary/lemmas', async (req, res) => {
   }
   try {
     const lemmas = await resolveDictionaryLearningWordIds(words);
-    return res.json({ ok: true, version: getDictionaryContentVersion(), lemmas });
+    return res.json({ ok: true, version: getDictionaryContentVersion(), lemmas,
+      learningTerms: lemmas.map(stableId => ({ language: 'en', kind: stableId.includes(' ') ? 'phrase' : 'word', stableId })) });
   } catch {
     return res.status(503).json({ ok: false, error: {
       code: 'DICTIONARY_UNAVAILABLE', message: 'Learning-word dictionary is unavailable.',
@@ -1252,6 +1281,19 @@ async function setupServer() {
   });
 
   const httpServer = http.createServer(app);
+  const stopLocalTranslation = () => { void localTranslationStartup.stop().finally(() => process.exit(0)); };
+  const onLocalShutdown = (message: unknown) => {
+    if (message && typeof message === 'object' && 'type' in message && message.type === 'readage:shutdown') stopLocalTranslation();
+  };
+  process.on('message', onLocalShutdown);
+  process.once('SIGINT', stopLocalTranslation);
+  process.once('SIGTERM', stopLocalTranslation);
+  httpServer.once('close', () => {
+    process.removeListener('message', onLocalShutdown);
+    process.removeListener('SIGINT', stopLocalTranslation);
+    process.removeListener('SIGTERM', stopLocalTranslation);
+    void localTranslationStartup.stop();
+  });
 
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
@@ -1305,6 +1347,11 @@ async function setupServer() {
   attachStepRealtimeProxy(httpServer);
 
   httpServer.listen(PORT, HOST, () => {
+    // Every app entry starts the configured model; a launcher-owned service is reused.
+    // Wait until the app port is bound so a failed duplicate launch cannot own a model.
+    void localTranslationStartup.start().catch(error => {
+      console.error('[translation] 自动启动本机翻译失败：', error.message);
+    });
     console.log(`Server running on http://${HOST}:${PORT}`);
     console.log(`Magazine API: http://localhost:${PORT}/api/magazines/sources`);
     console.log(`Magazine lemma index: http://localhost:${PORT}/api/magazines/lemma-index`);
@@ -1316,5 +1363,8 @@ async function setupServer() {
   });
 }
 
-setupServer();
+setupServer().catch(error => {
+  console.error('[startup] 应用启动失败：', error.message);
+  void localTranslationStartup.stop().finally(() => process.exit(1));
+});
 

@@ -116,6 +116,14 @@ function clampPercent(value: unknown): number {
     : 0;
 }
 
+/** A lookup records assistance; only recall sources establish recall evidence. */
+export function hasFormalRecallEvidence(state: WordMemoryState | null): boolean {
+  if (!state) return false;
+  return state.fsrsReviews.some((review) => review.source !== 'reading_lookup')
+    // Older migrations can retain a reviewed card without reconstructable logs.
+    || state.fsrsCard.reps > state.fsrsReviews.length;
+}
+
 export function projectRmeProfile(
   profile: RmeMemoryProfile,
   state: WordMemoryState,
@@ -124,6 +132,7 @@ export function projectRmeProfile(
   const confidence = calculateConfidence(profile, {
     stabilityDays: state.stability,
     lastReview: state.lastReview,
+    hasRecallEvidence: hasFormalRecallEvidence(state),
   }, now);
   const lastEffective = profile.lastEffectiveExposureAt
     ? new Date(profile.lastEffectiveExposureAt).getTime()

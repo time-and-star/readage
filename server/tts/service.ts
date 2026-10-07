@@ -80,12 +80,15 @@ export class TtsService {
       if (cached.expiresAt > Date.now()) {
         this.cache.delete(key);
         this.cache.set(key, cached);
-        return cached.audio;
+        return { ...cached.audio, serverTiming: 'tts-cache;dur=0' };
       }
       this.removeCached(key);
     }
     const existing = this.inFlight.get(key);
-    if (existing && !existing.controller.signal.aborted) return this.subscribe(existing, signal);
+    if (existing && !existing.controller.signal.aborted) {
+      const audio = await this.subscribe(existing, signal);
+      return { ...audio, serverTiming: `tts-shared;dur=0${audio.serverTiming ? `, ${audio.serverTiming}` : ''}` };
+    }
     if (this.active >= this.limits.maxConcurrent) throw new TtsError('TTS_BUSY');
     this.active += 1;
     const controller = new AbortController();

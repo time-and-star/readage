@@ -33,7 +33,7 @@ export function toLemma(word: string): string {
   return word
     .toLowerCase()
     .replace(/[\u2018\u2019\u02bc]/g, "'")
-    .replace(/[^a-z'\s-]/g, ' ')
+    .replace(/[^\p{Script=Latin}\p{M}0-9'\s-]/gu, ' ')
     .replace(/[-\s]+/g, ' ')
     .trim()
     .split(' ')

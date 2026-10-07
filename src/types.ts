@@ -1,3 +1,6 @@
+import type { DictionaryRecord, DictionarySourceView, DictionarySourceIssue, DictionarySourceMiss, DictionaryOriginalContent } from '../packages/dictionary/compat/englishTypes';
+import type { DictionaryDisplayRef, LearningTermRef } from '../packages/dictionary/contracts';
+export type * from '../packages/dictionary/compat/englishTypes';
 export type ArticleSource =
   | 'user_input'
   | 'library'
@@ -100,6 +103,7 @@ export interface MagazineSyncResult {
 
 export type LearningEventType =
   | 'click'
+  | 'flashcard_review'
   | 'exposure'
   | 'grammar_query'
   | 'discussion'
@@ -131,6 +135,15 @@ export interface ArticleMedia {
   caption?: string;
   /** Zero-based paragraph index; -1 places the image before the first paragraph. */
   afterParagraphIndex: number;
+}
+
+/** A picture-led entry into an article already in the local magazine library. */
+export interface MagazineGalleryItem {
+  articleId: string;
+  title: string;
+  image: ArticleMedia;
+  sourceName: string;
+  issueLabel: string;
 }
 
 export interface ArticleSourceDocument {
@@ -283,6 +296,12 @@ export interface LearningEvent {
 }
 
 export interface GrammarExplanation {
+  learningTermRef?: LearningTermRef;
+  dictionaryRef?: DictionaryDisplayRef;
+  dictionarySources?: DictionarySourceView[];
+  originalDictionaryContent?: DictionaryOriginalContent;
+  dictionarySourceIssues?: DictionarySourceIssue[];
+  dictionarySourceMisses?: DictionarySourceMiss[];
   wordOrPhrase: string;
   type: string;
   phonetic?: string;
@@ -310,94 +329,6 @@ export interface GrammarExplanation {
   dictionaryRecord?: DictionaryRecord;
   /** The sentence selected in the article; never presented as a curated example. */
   readingOriginalSentence?: string;
-}
-
-export type DictionaryReviewStatus = 'reviewed' | 'needs-review' | 'unreviewed';
-export type DictionarySourceKind = 'ECDICT' | 'manual' | 'unknown';
-export type DictionaryAuthoringMethod = 'model-manual' | 'pack-import' | 'unknown';
-
-export interface DictionarySourceRef {
-  kind: DictionarySourceKind;
-  label?: string;
-  detail?: string;
-  status: 'confirmed' | 'unknown';
-}
-
-export interface DictionaryExample {
-  id: string;
-  en: string;
-  zh?: string;
-  source: DictionarySourceRef;
-  reviewStatus: DictionaryReviewStatus;
-}
-
-export interface DictionaryCollocation {
-  en: string;
-  zh?: string;
-  source: DictionarySourceRef;
-  reviewStatus: DictionaryReviewStatus;
-}
-
-export interface DictionarySense {
-  id: string;
-  definitionEn: string;
-  definitionZh?: string;
-  definitionZhCandidates?: string[];
-  usageLabels: string[];
-  sortOrder: number;
-  examples: DictionaryExample[];
-  collocations: DictionaryCollocation[];
-  grammarNotes: string[];
-  source: DictionarySourceRef[];
-  reviewStatus: DictionaryReviewStatus;
-}
-
-export interface DictionaryPartOfSpeechGroup {
-  id: string;
-  partOfSpeech: string;
-  usageLabels: string[];
-  senses: DictionarySense[];
-  sortOrder: number;
-}
-
-export interface DictionaryPhrase {
-  id: string;
-  phrase: string;
-  partOfSpeech?: string;
-  definitionEn?: string;
-  definitionZh?: string;
-  examples: DictionaryExample[];
-  source: DictionarySourceRef[];
-  reviewStatus: DictionaryReviewStatus;
-}
-
-export interface DictionaryEditInfo {
-  source: DictionarySourceRef[];
-  revisionVersion: string;
-  /**
-   * Provenance of the entry's text. `model-manual` means a person/model wrote
-   * the senses and examples by hand; only that method may be published in a
-   * reviewed batch. Base-pack rows stay `pack-import`.
-   */
-  authoringMethod?: DictionaryAuthoringMethod;
-  reviewStatus: DictionaryReviewStatus;
-  changeNote?: string;
-}
-
-export interface DictionaryRecord {
-  schemaVersion: string;
-  query: string;
-  lemma: string;
-  phonetic: string;
-  phonetics: Array<{ label: string; text: string }>;
-  wordForms: Array<{ label: string; value: string }>;
-  wordFamily: string[];
-  cefrLevel: string | null;
-  tags: string[];
-  partOfSpeechGroups: DictionaryPartOfSpeechGroup[];
-  phrases: DictionaryPhrase[];
-  supplementaryChinese: string[];
-  edit: DictionaryEditInfo;
 }
 
 export interface TranslationResult {
@@ -449,6 +380,7 @@ export interface ArticleProgressRow {
   clickCount: number;
   discussionCount: number;
   hasSession: boolean;
+  lastOpenedAt?: string;
 }
 
 export interface LearningSignals {

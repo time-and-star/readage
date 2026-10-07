@@ -85,9 +85,16 @@ test('opens the magazine library with all levels and keeps manual CEFR filters',
     onBack: () => undefined,
   }));
 
-  for (const level of ['All', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2']) {
-    assert.match(html, new RegExp('>' + level + '</button>'));
-  }
+  const difficultyControl = html.match(/<label class="library-level">([\s\S]*?)<\/label>/)?.[1];
+  assert.ok(difficultyControl, 'manual difficulty choices have an accessible label');
+  assert.match(difficultyControl, /<span class="sr-only">阅读难度<\/span>/);
+  const select = difficultyControl.match(/<select\b[^>]*>([\s\S]*?)<\/select>/)?.[1];
+  assert.ok(select, 'difficulty choices remain a native select');
+  const options = [...select.matchAll(/<option value="([^"]+)"([^>]*)>([^<]*)<\/option>/g)];
+  assert.deepEqual(options.map(option => option[1]), ['All', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2']);
+  assert.deepEqual(options.filter(option => /\bselected=""/.test(option[2])).map(option => option[1]), ['All']);
+  assert.equal(options[0][3], '全部难度');
+  assert.deepEqual(options.slice(1).map(option => option[3]), ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']);
   assert.doesNotMatch(html, /英语测试|默认按英语测试结果| · 你的/);
   assert.doesNotMatch(html, /News in Levels - Level 2/);
 });

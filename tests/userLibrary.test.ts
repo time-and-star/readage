@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Article } from '../src/types';
-import { filterUserLibrary, groupUserLibrary, getNextImportedArticle } from '../src/lib/userLibrary';
+import { filterUserLibrary, getLibraryFileProgress, groupUserLibrary, getNextImportedArticle } from '../src/lib/userLibrary';
 
 function article(patch: Partial<Article> & Pick<Article, 'id' | 'title'>): Article {
   return {
@@ -15,6 +15,37 @@ function article(patch: Partial<Article> & Pick<Article, 'id' | 'title'>): Artic
 }
 
 describe('user library shelf', () => {
+  it('resumes the latest chapter and advances after completion without counting untouched imports as started', () => {
+    const chapters = [
+      article({ id: 'novel-0', title: 'One' }),
+      article({ id: 'novel-1', title: 'Two' }),
+      article({ id: 'novel-2', title: 'Three' }),
+    ];
+    const file = { id: 'novel', title: 'A novel', format: 'epub' as const, articles: chapters };
+    assert.equal(getLibraryFileProgress(file).started, false);
+    assert.equal(getLibraryFileProgress(file).resumeArticle, chapters[0]);
+
+    chapters[0].status = 'Completed';
+    chapters[0].lastOpenedAt = '2026-10-04T10:00:00Z';
+    chapters[1].lastOpenedAt = '2026-10-04T11:00:00Z';
+    let progress = getLibraryFileProgress(file);
+    assert.equal(progress.completedCount, 1);
+    assert.equal(progress.resumeArticle, chapters[1]);
+    assert.equal(progress.resumeNumber, 2);
+    assert.equal(progress.unit, '章');
+
+    chapters[1].status = 'Completed';
+    progress = getLibraryFileProgress(file);
+    assert.equal(progress.resumeArticle, chapters[2]);
+    assert.equal(progress.resumeNumber, 3);
+    chapters[2].status = 'Completed';
+    assert.equal(getLibraryFileProgress(file).completed, true);
+    assert.equal(getLibraryFileProgress(file).resumeArticle, chapters[0]);
+
+    chapters[0].lastOpenedAt = 'invalid date';
+    assert.equal(getLibraryFileProgress(file).resumeArticle, chapters[0]);
+    assert.equal(getLibraryFileProgress({ ...file, format: 'pdf' }).unit, '页');
+  });
   it('advances within an imported file in chapter order, regardless of recent-open order', () => {
     const first = article({ id: 'file-20-0', title: 'First', importBatchId: 'file-20' });
     const second = article({ id: 'file-20-1', title: 'Second', importBatchId: 'file-20' });

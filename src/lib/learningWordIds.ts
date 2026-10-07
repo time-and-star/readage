@@ -29,8 +29,9 @@ export class LearningWordIdResolver {
     const normalized = toLemma(surface);
     if (!normalized) return;
     const canonical = canonicalLearningWordId(normalized, dictionaryLemma);
-    this.remember(normalized, Promise.resolve(canonical));
-    this.remember(canonical, Promise.resolve(canonical));
+    // A confirmed/pending identity must not be overwritten by a later card.
+    if (!this.cache.has(normalized)) this.remember(normalized, Promise.resolve(canonical));
+    if (!this.cache.has(canonical)) this.remember(canonical, Promise.resolve(canonical));
   }
 
   private remember(word: string, result: Promise<string>): void {

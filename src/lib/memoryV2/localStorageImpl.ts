@@ -165,6 +165,13 @@ function taskIndexEntries(userId: string): string[] {
 }
 
 export class LocalStorageMemoryStorage implements MemoryStorage {
+  async getAllArticleEvidence(userId: string): Promise<ArticleWordEvidence[]> {
+    const prefix = `${STORAGE_PREFIX}:article:${userId}:`;
+    return storageKeys().filter(key => key.startsWith(prefix))
+      .map(key => readJSON<ArticleWordEvidence>(key))
+      .filter((row): row is ArticleWordEvidence => Boolean(row && row.userId === userId && row.clickedOccurrenceCount > 0));
+  }
+
   async getMeta<T>(key: string): Promise<T | null> {
     return readJSON<T>(`${STORAGE_PREFIX}:meta:${key}`);
   }

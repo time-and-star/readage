@@ -13,7 +13,7 @@ import {
 test('extracts unique lemmas in first-seen order and filters punctuation', () => {
   assert.deepEqual(
     extractUniqueLemmas("Reading, reading! WELL-being... can't stop; — reading."),
-    ['reading', 'well being', "can't", 'stop']
+    ['reading', 'well', "can't", 'stop']
   );
 });
 

@@ -87,11 +87,33 @@ export interface ReadingVerificationInput {
   questionSentence?: string;
   purpose?: 'delayed_verification' | 'immediate_practice';
 }
-export interface ReadingVerificationEvidence extends ReadingVerificationInput {
+/** Free recall from a flipped word card, stored in the existing recall journal. */
+export interface FlashcardReviewInput extends Omit<ReadingVerificationInput, 'purpose'> {
+  purpose: 'flashcard_review';
+  rating: 1 | 2 | 3 | 4;
+}
+/** An explicit correction replaces one saved recall, rather than adding another review. */
+export interface FlashcardReviewCorrectionInput {
+  correctionId: string;
+  attemptId: string;
+  wordId: string;
+  rating: 1 | 2 | 3 | 4;
+  expectedRevision: number;
+}
+export interface FlashcardReviewRevision {
+  correctionId: string;
+  revision: number;
+  previousRating: 1 | 2 | 3 | 4;
+  rating: 1 | 2 | 3 | 4;
+  correctedAt: string;
+}
+export type ReadingVerificationEvidence = (ReadingVerificationInput | FlashcardReviewInput) & {
   userId: string;
   occurredAt: string;
   localDate: string;
   timezone: string;
+  originalFlashcardRating?: 1 | 2 | 3 | 4;
+  flashcardRevisions?: FlashcardReviewRevision[];
 }
 
 /** 单词记忆状态（FSRS 主记录） */
@@ -133,9 +155,11 @@ export interface WordMemoryState {
     scheduledDays: number;
     learningSteps: number;
     review: string;
-    source?: 'reading_lookup' | 'verification';
+    source?: 'reading_lookup' | 'verification' | 'flashcard';
     localDate?: string;
     verificationAttemptIds?: string[];
+    originalFlashcardRating?: 1 | 2 | 3 | 4;
+    flashcardRevisions?: FlashcardReviewRevision[];
   }>;
   /** Additive RME-V4 profile; absent on legacy V2.2 states. */
   rme?: RmeMemoryProfile;

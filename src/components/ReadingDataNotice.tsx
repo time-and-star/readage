@@ -35,22 +35,26 @@ const READING_DATA_ROWS: readonly ReadingDataRow[] = [
   },
 ];
 
-export function ReadingDataNotice() {
+export function ReadingDataNotice({ compact = false }: { compact?: boolean } = {}) {
   return (
-    <details className="group rounded-2xl border border-[#DED6C9] bg-[#FAF8F3] p-4 sm:p-5">
-      <summary className="flex cursor-pointer list-none items-start gap-3 rounded-xl outline-none marker:hidden [&::-webkit-details-marker]:hidden focus-visible:ring-2 focus-visible:ring-[#A94E2B] focus-visible:ring-offset-2">
-        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F3E4DA] text-[#A94E2B]">
-          <ShieldCheck className="h-5 w-5" aria-hidden />
-        </div>
+    <details className={compact ? 'group border-t border-[#E3DDD1] pt-4' : 'group rounded-2xl border border-[#DED6C9] bg-[#FAF8F3] p-4 sm:p-5'}>
+      <summary className={`flex cursor-pointer list-none gap-3 rounded-sm outline-none marker:hidden [&::-webkit-details-marker]:hidden focus-visible:ring-2 focus-visible:ring-[#A94E2B] focus-visible:ring-offset-2 ${compact ? 'items-center' : 'items-start'}`}>
+        {!compact && (
+          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F3E4DA] text-[#A94E2B]">
+            <ShieldCheck className="h-5 w-5" aria-hidden />
+          </div>
+        )}
         <div className="min-w-0 flex-1">
-          <span id="reading-data-notice-heading" className="block text-base font-semibold text-[#332E28]">
+          <span id="reading-data-notice-heading" className={compact ? 'block text-xs font-medium text-[#6B6156]' : 'block text-base font-semibold text-[#332E28]'}>
             阅读数据说明
           </span>
-          <span className="mt-1 block text-sm leading-relaxed text-[#6B645B]">
-            了解哪些信息留在本机，以及主动使用 AI 时哪些内容会发送。
-          </span>
+          {!compact && (
+            <span className="mt-1 block text-sm leading-relaxed text-[#6B645B]">
+              了解哪些信息留在本机，以及主动使用 AI 时哪些内容会发送。
+            </span>
+          )}
         </div>
-        <ChevronDown className="mt-1 h-5 w-5 shrink-0 text-[#6B645B] transition-transform group-open:rotate-180" aria-hidden />
+        <ChevronDown className={`${compact ? 'h-4 w-4' : 'mt-1 h-5 w-5'} shrink-0 text-[#6B645B] transition-transform group-open:rotate-180`} aria-hidden />
       </summary>
 
       <div className="mt-4 border-t border-[#E8E1D8] pt-4">
@@ -105,7 +109,7 @@ export function ReadingDataNotice() {
           在开发环境或启用推荐诊断的站点，可能会发送 CEFR 档位、复习词、文章标识、候选匹配分数和时间，用于检查推荐质量；不包含整篇文章或讨论全文。
         </p>
         <p>
-          学习档案默认保存在当前浏览器，不会自动上传为云端档案。清除站点数据会删除本机记录；你可以在下方导出备份。
+          学习档案默认保存在当前浏览器，不会自动上传为云端档案。清除站点数据会删除本机记录；你可以通过备份功能导出本机记录。
         </p>
       </div>
       </div>

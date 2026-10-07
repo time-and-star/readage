@@ -1,32 +1,10 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import {
-  createDictionary,
-  type Dictionary,
-  type DictionaryEntry,
-  type DictionaryHealth,
-} from 'nextword-local-dictionary';
+import type { DictionaryHealth } from 'nextword-local-dictionary';
 import type { GrammarExplanation } from '../../src/types';
-import { canonicalizeDictionaryEntry, cleanWordForms, DICTIONARY_SCHEMA_VERSION, type CanonicalDictionaryEntry } from './model';
-import type { DictionaryRecord } from '../../src/types';
+import { cleanWordForms, DICTIONARY_SCHEMA_VERSION, type CanonicalDictionaryEntry } from './model';
 import { isEnglishWord } from '../../src/lib/englishTokens';
-
-/**
- * Local ECDICT offline dictionary service (server-only).
- *
- * The underlying pack file is ~113MB but lookups only read the header +
- * the shard/record for the queried word, so a lazy singleton is cheap.
- *
- * Env knobs:
- * - DICTIONARY_DATA_DIR: override the bundled data directory.
- * - DICTIONARY_EXPLAIN_FIRST: 'false'/'0' disables the dictionary fast path
- *   for the /api/tutor explain intent (LLM is always used instead).
- */
-
-let dictionary: Dictionary | undefined;
-let dictionaryInitError: Error | undefined;
-let revisions: Map<string, DictionaryRecord> | undefined;
-let revisionsLoadAttempted = false;
+import { getDictionaryRuntime } from './runtime';
+import { toEnglishDictionaryEntry, type EnglishDictionaryEntry } from './compatibility';
+import { isDictionaryExampleVisible } from '../../packages/dictionary/compat/englishPresentation';
 
 export interface DictionaryHealthResult extends DictionaryHealth {
   available: boolean;
@@ -35,75 +13,19 @@ export interface DictionaryHealthResult extends DictionaryHealth {
   revisionCount: number;
 }
 
-function getDictionary(): Dictionary {
-  if (dictionaryInitError) throw dictionaryInitError;
-  if (!dictionary) {
-    try {
-      dictionary = createDictionary({
-        dataDir: process.env.DICTIONARY_DATA_DIR?.trim() || undefined,
-      });
-    } catch (error) {
-      dictionaryInitError = error instanceof Error ? error : new Error(String(error));
-      throw dictionaryInitError;
-    }
-  }
-  return dictionary;
-}
-
-/** Read-only health info for diagnostics; never throws. */
 export function getDictionaryHealth(): DictionaryHealthResult {
-  try {
-    const health = getDictionary().getHealth();
-    return { ...health, available: true, version: getDictionaryContentVersion(), schemaVersion: DICTIONARY_SCHEMA_VERSION, revisionCount: getDictionaryRevisions().size };
-  } catch (error) {
-    return {
-      ok: false,
-      available: false,
-      dataDir: process.env.DICTIONARY_DATA_DIR?.trim() || '(bundled)',
-      indexedEntries: 0,
-      sourceRows: 0,
-      csvBytes: 0,
-      missingRequired: [error instanceof Error ? error.message : String(error)],
-      missingOptional: [],
-      version: getDictionaryContentVersion(),
-      schemaVersion: DICTIONARY_SCHEMA_VERSION,
-      revisionCount: getDictionaryRevisions().size,
-    };
-  }
+  const runtime = getDictionaryRuntime();
+  const available = runtime.service.listSources().sources.some(source => source.enabled && source.available);
+  let health: DictionaryHealth;
+  try { health = runtime.ecdict.getLegacyHealth(); }
+  catch { health = { ok: false, dataDir: process.env.DICTIONARY_DATA_DIR || '(bundled)', indexedEntries: 0,
+    sourceRows: 0, csvBytes: 0, missingRequired: ['ECDICT is unavailable.'], missingOptional: [] }; }
+  return { ...health, ok: available, available, indexedEntries: health.indexedEntries || runtime.native.count,
+    version: getDictionaryContentVersion(), schemaVersion: DICTIONARY_SCHEMA_VERSION, revisionCount: runtime.native.count };
 }
 
-export function getDictionaryContentVersion(): string {
-  const manifestPath = process.env.DICTIONARY_REVISION_MANIFEST?.trim() || path.resolve(process.cwd(), 'data/dictionary/revisions/manifest.json');
-  try {
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { contentVersion?: unknown };
-    return typeof manifest.contentVersion === 'string' && manifest.contentVersion.trim() ? manifest.contentVersion : 'dictionary-content.v1';
-  } catch {
-    return 'dictionary-content.v1';
-  }
-}
-
-function getDictionaryRevisions(): Map<string, DictionaryRecord> {
-  if (revisionsLoadAttempted) return revisions ?? new Map();
-  revisionsLoadAttempted = true;
-  revisions = new Map();
-  const revisionPath = process.env.DICTIONARY_REVISIONS_FILE?.trim() || path.resolve(process.cwd(), 'data/dictionary/revisions/curated-50.jsonl');
-  try {
-    if (!fs.existsSync(revisionPath)) return revisions;
-    for (const [lineIndex, line] of fs.readFileSync(revisionPath, 'utf8').split(/\r?\n/).entries()) {
-      if (!line.trim()) continue;
-      const value = JSON.parse(line) as Partial<DictionaryRecord>;
-      if (typeof value.lemma !== 'string' || !Array.isArray(value.partOfSpeechGroups) || !value.edit) {
-        throw new Error(`invalid revision shape at ${revisionPath}:${lineIndex + 1}`);
-      }
-      revisions.set(value.lemma.toLowerCase(), value as DictionaryRecord);
-    }
-  } catch (error) {
-    console.warn('[dictionary] revisions unavailable:', error instanceof Error ? error.message : error);
-    revisions.clear();
-  }
-  return revisions;
-}
-
+/** Compatibility content version; v1 clients use the complete source catalogue token. */
+export function getDictionaryContentVersion(): string { return getDictionaryRuntime().native.legacyContentVersion; }
 /** Whether the explain intent should try the local dictionary before the LLM. */
 export function isDictionaryExplainFirstEnabled(): boolean {
   const raw = process.env.DICTIONARY_EXPLAIN_FIRST?.trim().toLowerCase();
@@ -117,28 +39,18 @@ export function isSingleWordQuery(text: string | undefined): text is string {
   return isEnglishWord(trimmed);
 }
 
-/** Lookup with lemmatization; returns null on miss or when unavailable. */
-export async function lookupDictionaryWord(word: string): Promise<CanonicalDictionaryEntry | null> {
-  try {
-    const entry = await getDictionary().lookup(word);
-    if (!entry) return null;
-    return canonicalizeDictionaryEntry({ ...entry, revision: getDictionaryRevisions().get(entry.lemma.toLowerCase()) });
-  } catch (error) {
-    console.warn('[dictionary] lookup failed:', error instanceof Error ? error.message : error);
-    return null;
-  }
+/** Existing English view, supplied by the independent service and explicit compatibility layer. */
+export async function lookupDictionaryWord(word: string): Promise<EnglishDictionaryEntry | null> {
+  return toEnglishDictionaryEntry(await getDictionaryRuntime().service.lookup({ text: word, language: 'en' }));
 }
 
-/** Batch lookup (same order as input); misses resolve to null entries. */
-export async function lookupDictionaryWords(words: string[]): Promise<Array<CanonicalDictionaryEntry | null>> {
-  try {
-    return await Promise.all(words.map((word) => lookupDictionaryWord(word)));
-  } catch (error) {
-    console.warn('[dictionary] lookupMany failed:', error instanceof Error ? error.message : error);
-    return words.map(() => null);
+export async function lookupDictionaryWords(words: string[]): Promise<Array<EnglishDictionaryEntry | null>> {
+  const results: Array<EnglishDictionaryEntry | null> = [];
+  for (let start = 0; start < words.length; start += 50) {
+    results.push(...(await getDictionaryRuntime().service.lookupMany(words.slice(start, start + 50).map(text => ({ text, language: 'en' })))).map(toEnglishDictionaryEntry));
   }
+  return results;
 }
-
 function firstNonEmpty(...values: Array<string | undefined>): string {
   for (const value of values) {
     const trimmed = value?.trim();
@@ -193,16 +105,21 @@ export function buildDictionaryExplanation(
   }
   if (entry.register.trim()) grammarRules.push(`语域：${entry.register.trim()}`);
 
-  // No corpus examples in the pack; the article sentence the learner tapped
-  // is the most relevant "live" example.
+  // Authored reviewed examples and published source examples retain their provenance.
   const exampleSentences = entry.partOfSpeechGroups.flatMap((group) => group.senses.flatMap((sense) =>
-    sense.examples.filter((example) => example.reviewStatus === 'reviewed').map((example) => example.en),
+    sense.examples.filter(isDictionaryExampleVisible).map((example) => example.en),
   ));
 
   const exchanges = cleanWordForms(entry.exchanges);
   const phonetic = cleanPhonetic(entry.phonetic);
 
   return {
+    learningTermRef: (entry as EnglishDictionaryEntry).learningTermRef,
+    dictionaryRef: (entry as EnglishDictionaryEntry).dictionaryRef,
+    dictionarySources: (entry as EnglishDictionaryEntry).dictionarySources,
+    originalDictionaryContent: (entry as EnglishDictionaryEntry).dictionarySources?.[0]?.originalContent,
+    dictionarySourceIssues: (entry as EnglishDictionaryEntry).dictionarySourceIssues,
+    dictionarySourceMisses: (entry as EnglishDictionaryEntry).dictionarySourceMisses,
     wordOrPhrase: entry.lemma || query,
     type: entry.partOfSpeech || 'unknown',
     phonetic: phonetic || undefined,
