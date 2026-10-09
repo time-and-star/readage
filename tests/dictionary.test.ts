@@ -16,8 +16,13 @@ const originalExplainFirst = process.env.DICTIONARY_EXPLAIN_FIRST;
 // These compatibility checks exercise the native-first startup defaults,
 // independently of the user's persisted display order and enabled sources.
 const originalSettingsFile = process.env.DICTIONARY_SETTINGS_FILE;
+const originalManifest = process.env.DICTIONARY_REVISION_MANIFEST;
+// Editorial sample assertions use their explicit fixture; production uses the full authored pack.
+process.env.DICTIONARY_REVISION_MANIFEST = path.resolve('data/dictionary/revisions/manifest.json');
 process.env.DICTIONARY_SETTINGS_FILE = path.join(tmpdir(), `readage-dictionary-test-${randomUUID()}.json`);
 after(() => {
+  if (originalManifest === undefined) delete process.env.DICTIONARY_REVISION_MANIFEST;
+  else process.env.DICTIONARY_REVISION_MANIFEST = originalManifest;
   if (originalSettingsFile === undefined) delete process.env.DICTIONARY_SETTINGS_FILE;
   else process.env.DICTIONARY_SETTINGS_FILE = originalSettingsFile;
 });

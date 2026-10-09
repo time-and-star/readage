@@ -2,6 +2,7 @@ import { DICTIONARY_PROTOCOL_VERSION, type DictionaryDisplayRef, type Dictionary
 import { canonicalizeDictionaryEntry, canonicalizeReviewedRecord, type CanonicalDictionaryEntry } from './model';
 import type { DictionaryRecord, DictionarySourceRef, DictionarySourceView, DictionarySourceIssue, DictionarySourceMiss } from '../../packages/dictionary/compat/englishTypes';
 import { ENGLISH_RECORD_EXTENSION } from '../../packages/dictionary/server/englishEntry';
+import { READAGE_AUTHORED_EXTENSION, type ReadAgeWord } from '../../packages/dictionary/readage';
 import { englishLanguageAdapter } from '../../packages/dictionary/languages/english';
 import { convert } from 'html-to-text';
 
@@ -93,7 +94,8 @@ export function toEnglishDictionaryEntry(result: LookupResult): EnglishDictionar
     entry.dictionaryId === 'ecdict' ? 'ECDICT 内置词典' : entry.provenance.find(item => item.label)?.label ?? entry.dictionaryId;
   const dictionarySources: DictionarySourceView[] = converted.map(({ entry, record }) => {
     const ref = reference(entry);
-    return { record: record!, ...(entry.content.kind === 'original' ? { originalContent: {
+    return { record: record!, ...(entry.extensions?.[READAGE_AUTHORED_EXTENSION]
+      ? { readageContent: entry.extensions[READAGE_AUTHORED_EXTENSION] as ReadAgeWord } : {}), ...(entry.content.kind === 'original' ? { originalContent: {
       mediaType: entry.content.mediaType, content: entry.content.content, plainText: record!.definitionEn,
     } } : {}), dictionaryRef: { protocolVersion: DICTIONARY_PROTOCOL_VERSION, catalogVersion: result.catalogVersion,
       ...ref, dictionaryName: name(entry), fieldSources: Object.fromEntries(

@@ -10,7 +10,8 @@ import { ForgettingCurvePanel } from './ForgettingCurvePanel';
 import { FlashcardStudySettings } from './FlashcardStudySettings';
 import { WordMemoryDetailsPanel } from './WordMemoryDetailsPanel';
 import { buildWordMemoryDetails } from '../lib/wordMemoryDetails';
-import { lookupDictionaryWord, resolveLearningWordIds, toDictionaryWordCard } from '../lib/dictionaryClient';
+import { resolveLearningWordIds } from '../lib/dictionaryClient';
+import { createWordCardRequest, fetchWordCard } from '../lib/wordCard';
 import { getCompactWordCard } from '../lib/compactWordCard';
 import type { FlashcardStudyPreferences } from '../lib/flashcardPreferences';
 import { getFlashcardPlanSettingsKey, reconcileFlashcardSession, shouldRefreshFlashcardSession } from '../lib/flashcardSessionSettings';
@@ -256,17 +257,24 @@ export const FlashcardReviewScreen: React.FC<FlashcardReviewScreenProps> = ({ na
     if (!current) { setDictionaryLoading(false); return; }
     const controller = new AbortController();
     setDictionaryLoading(true);
-    void lookupDictionaryWord(current.canonicalWordId, { signal: controller.signal }).then(entry => {
+    const request = createWordCardRequest(current.canonicalWordId);
+    if (!request) { setDictionaryLoading(false); setDictionaryError('这个词的查询内容无效。'); return; }
+    void fetchWordCard(request, { signal: controller.signal, forceRefresh: dictionaryRetry > 0 }).then(card => {
       if (controller.signal.aborted) return;
-      if (entry) setDictionaryCard(toDictionaryWordCard(entry));
-      else setDictionaryError('当前词典暂未收录这个词，可以尝试重新查词。');
-    }).catch(() => {
-      if (!controller.signal.aborted) setDictionaryError('释义暂时无法加载。重试成功后即可继续复习。');
+      setDictionaryCard(card);
+    }).catch(error => {
+      if (!controller.signal.aborted) setDictionaryError(error instanceof Error ? error.message : '释义暂时无法加载。重试成功后即可继续复习。');
     }).finally(() => {
       if (!controller.signal.aborted) setDictionaryLoading(false);
     });
     return () => controller.abort();
   }, [currentKey, dictionaryRetry]);
+
+  useEffect(() => {
+    const refresh = () => setDictionaryRetry(value => value + 1);
+    window.addEventListener('dictionary-settings-changed', refresh);
+    return () => window.removeEventListener('dictionary-settings-changed', refresh);
+  }, []);
 
   useEffect(() => {
     if (!current) return;

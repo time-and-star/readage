@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import type { GrammarExplanation } from '../types';
-import { lookupDictionaryWord, resolveDictionaryLearningWordId, toDictionaryWordCard as toWordCardResult } from '../lib/dictionaryClient';
+import { resolveDictionaryLearningWordId } from '../lib/dictionaryClient';
+import { createWordCardRequest, fetchWordCard } from '../lib/wordCard';
 import { useMemorySystem } from '../lib/memoryV2/hooks';
 import { WordCardPanel } from './WordCardPanel';
 import { useSpeech } from '../lib/speech/useSpeech';
@@ -49,39 +50,45 @@ export const WordSearchModule: React.FC = () => {
   const search = async (event?: React.FormEvent, requestedQuery = query, recordEvidence = true) => {
     event?.preventDefault();
     const normalized = normalizeWordSearchQuery(requestedQuery);
-    if (!normalized || loading) return;
+    const request = createWordCardRequest(normalized);
+    if (!request) return;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     setSearchOpen(false);
     setCardOpen(true);
-    setSelectedText(normalized);
+    setSelectedText(request.selectedText);
     setLoading(true);
     setResult(null);
     setError(null);
     try {
-      const entry = await lookupDictionaryWord(normalized, { signal: controller.signal });
+      const card = await fetchWordCard(request, { signal: controller.signal, forceRefresh: !recordEvidence });
       if (controller.signal.aborted) return;
-      if (entry) {
-        setResult(toWordCardResult(entry));
-        try {
-          if (!recordEvidence) return;
-          const wordId = await resolveDictionaryLearningWordId(normalized, entry.learningTermRef);
-          if (controller.signal.aborted) return;
-          await recordWordSearchEvidence(wordId, normalized, recordExposure, recordClick);
-        } catch (memoryError) {
-          console.error('Failed to record word search evidence:', memoryError);
-        }
+      setResult(card);
+      try {
+        if (!recordEvidence) return;
+        const wordId = await resolveDictionaryLearningWordId(request.selectedText, card.learningTermRef);
+        if (controller.signal.aborted) return;
+        await recordWordSearchEvidence(wordId, request.selectedText, recordExposure, recordClick);
+      } catch (memoryError) {
+        console.error('Failed to record word search evidence:', memoryError);
       }
     } catch (cause) {
-      if (cause instanceof Error && /abort|cancel/i.test(cause.message)) return;
-      setCardOpen(false);
-      setSearchOpen(true);
+      if (controller.signal.aborted) return;
       setError(cause instanceof Error ? cause.message : 'Word search failed.');
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
   };
+
+  const refreshRef = useRef(() => {});
+  refreshRef.current = () => { void search(undefined, selectedText, false); };
+  useEffect(() => {
+    if (!cardOpen) return;
+    const refresh = () => refreshRef.current();
+    window.addEventListener('dictionary-settings-changed', refresh);
+    return () => window.removeEventListener('dictionary-settings-changed', refresh);
+  }, [cardOpen]);
 
   const close = () => {
     speech.stop();
@@ -123,7 +130,7 @@ export const WordSearchModule: React.FC = () => {
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search an English word"
+                placeholder="Search an English word or phrase"
                 className="min-w-0 flex-1 bg-transparent text-base text-[#2B2723] outline-none"
                 enterKeyHint="search"
               />
@@ -139,9 +146,10 @@ export const WordSearchModule: React.FC = () => {
         </div>
       )}
       <WordCardPanel
-        open={cardOpen && (loading || Boolean(result) || Boolean(selectedText && !error))}
+        open={cardOpen}
         loading={loading}
         result={result}
+        error={error}
         selectedText={selectedText}
         onClose={close}
         onSpeak={speech.speak}

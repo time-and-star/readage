@@ -64,9 +64,13 @@ export function ReadingLookupCard(props: Props) {
   if (!open) return null;
   if (expanded) return <WordCardPanel {...props} ancestorCardIds={[...ancestorCardIds, scopeId]} onRetrySources={onRetry} />;
   const primaryPreview = result ? getCompactWordCard(result, selectedText) : null;
-  const source = result?.dictionarySources?.[0];
-  const preview = source ? getCompactWordCard(toDictionarySourceWordCard(source), selectedText) : primaryPreview;
-  // Keep the configured source's meaning intact; only use supplemented pronunciation for the same headword.
+  const source = result?.dictionarySources?.find(source => source.readageContent) ?? result?.dictionarySources?.[0];
+  const sourcePreview = source ? getCompactWordCard(toDictionarySourceWordCard(source), selectedText) : primaryPreview;
+  const coreMeaning = source?.readageContent?.coreMeaning;
+  const preview = sourcePreview && coreMeaning?.zh.trim() ? {
+    ...sourcePreview, meaningZh: coreMeaning.zh.trim(), definitionEn: coreMeaning.en.trim() || sourcePreview.definitionEn,
+  } : sourcePreview;
+  // Keep the authored meaning intact; only use supplemented pronunciation for the same headword.
   const phonetic = preview?.phonetic || (preview?.word === primaryPreview?.word ? primaryPreview?.phonetic : undefined);
   const sourceRef = source?.dictionaryRef ?? result?.dictionaryRef;
   const sourceName = sourceRef?.dictionaryName || sourceRef?.dictionaryId;

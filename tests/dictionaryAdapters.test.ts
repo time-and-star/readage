@@ -20,17 +20,17 @@ test('the application service exposes registration for an additional language an
   assert.equal(result.sources[0].dictionaryId, 'extra-french');
 });
 
-test('the real reviewed source works with the old source disabled or missing and remains independent', async () => {
+test('the complete authored source works with the old source disabled or missing and remains independent', async () => {
   for (const enabledSources of [['native-reviewed'], ['native-reviewed', 'ecdict']]) {
     const runtime = createDictionaryRuntime({ enabledSources, dataDir: path.resolve('data/no-such-dictionary-directory') });
     const result = await runtime.service.lookup({ text: 'bank', language: 'en' });
     const entry = toEnglishDictionaryEntry(result)!;
     assert.equal(result.status, 'found');
-    assert.equal(runtime.native.count, 50);
-    assert.equal(runtime.native.metadata.entryCount, 50);
+    assert.equal(runtime.native.count, 17974);
+    assert.equal(runtime.native.metadata.entryCount, 17974);
     assert.equal(entry.dictionaryRef.dictionaryId, 'native-reviewed');
-    assert.equal(entry.phonetic, '');
-    assert.ok(entry.partOfSpeechGroups.flatMap(group => group.senses).some(sense => sense.definitionZh?.includes('银行')));
+    assert.ok(entry.phonetic, 'the complete ReadAge source supplies its own pronunciation');
+    assert.ok(entry.dictionarySources[0].readageContent?.senses.some(sense => sense.titleZh === '银行'));
     assert.equal(entry.learningTermRef?.stableId, 'bank');
     if (enabledSources.includes('ecdict')) assert.equal(result.sources.find(item => item.dictionaryId === 'ecdict')?.status, 'unavailable');
     assert.equal((await runtime.service.getEntry({ dictionaryId: 'native-reviewed', entryId: 'bank' })).status, 'found');
@@ -73,8 +73,10 @@ test('a native-only term is indexed directly; pending editorial records are excl
 });
 
 test('display source switches leave English identities fixed and supplementation retains field provenance', async () => {
-  const nativeFirst = createDictionaryRuntime();
-  const legacyFirst = createDictionaryRuntime({ sourceOrder: ['ecdict', 'native-reviewed'], defaultSource: 'ecdict' });
+  // This fixture deliberately has no native pronunciation, to exercise supplementation.
+  const fixture = { manifestPath: path.resolve('data/dictionary/revisions/manifest.json') };
+  const nativeFirst = createDictionaryRuntime(fixture);
+  const legacyFirst = createDictionaryRuntime({ ...fixture, sourceOrder: ['ecdict', 'native-reviewed'], defaultSource: 'ecdict' });
   const surfaces = ['running', 'books', 'studies', 'saw', 'went', 'over time'];
   const left = await nativeFirst.resolveLearningTerms(surfaces);
   const right = await legacyFirst.resolveLearningTerms(surfaces);

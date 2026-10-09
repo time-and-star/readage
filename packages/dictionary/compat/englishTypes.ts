@@ -7,6 +7,7 @@ export interface DictionarySourceView {
   dictionaryRef: import('../contracts').DictionaryDisplayRef;
   record: DictionaryRecord;
   originalContent?: DictionaryOriginalContent;
+  readageContent?: import('../readage').ReadAgeWord;
 }
 
 export interface DictionaryOriginalContent {

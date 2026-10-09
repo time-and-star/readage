@@ -144,13 +144,35 @@ test('a dictionary miss stays local and does not invoke the disabled AI explanat
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('a phrase offers translation without sending an AI explanation request', async () => {
+test('a phrase queries the enabled dictionaries before offering translation after a miss', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
-  globalThis.fetch = (async () => { calls++; throw new Error('unexpected request'); }) as typeof fetch;
+  globalThis.fetch = withCatalog((async (url, options) => {
+    calls++;
+    assert.equal(url, '/api/dictionary/lookup');
+    assert.deepEqual(JSON.parse(String(options?.body)), { words: ['break a leg'] });
+    return new Response(JSON.stringify({ ok: true, results: [null] }));
+  }) as typeof fetch);
   try {
     await assert.rejects(fetchWordCard(createWordCardRequest('break a leg')!), /点击“翻译”/);
-    assert.equal(calls, 0);
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('a phrase found in a user dictionary returns its original content without invoking AI', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = withCatalog((async url => {
+    assert.equal(url, '/api/dictionary/lookup');
+    return new Response(JSON.stringify({ ok: true, results: [{ query: 'break a leg', lemma: 'break a leg',
+      phonetic: '', cefrLevel: null, partOfSpeech: '', basicMeaningsZh: [], definitionsEn: [],
+      definitionEn: '祝你好运', dictionarySources: [{ dictionaryRef: { dictionaryId: 'my-mdx', dictionaryName: '我的词典' },
+        originalContent: { mediaType: 'text/html', content: '<p>祝你好运</p>', plainText: '祝你好运' } }] }] }));
+  }) as typeof fetch);
+  try {
+    const card = await fetchWordCard(createWordCardRequest('break a leg')!);
+    assert.equal(card.source, 'dictionary');
+    assert.equal(card.wordOrPhrase, 'break a leg');
+    assert.equal(card.originalDictionaryContent?.plainText, '祝你好运');
   } finally { globalThis.fetch = originalFetch; }
 });
 

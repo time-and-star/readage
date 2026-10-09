@@ -1,9 +1,11 @@
 import React, { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { BookOpen, Copy, Globe, Sparkles, Volume2, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, Copy, Globe, Sparkles, Volume2, X } from 'lucide-react';
 import type { GrammarExplanation } from '../types';
 import { DictionarySenseGroups } from './DictionarySenseGroups';
 import { DictionarySourceSections } from './DictionarySourceSections';
+import { ReadAgeEntrySections } from './ReadAgeEntrySections';
+import { toDictionarySourceWordCard } from '../lib/dictionaryClient';
 import { DictionarySourceIssues } from './DictionarySourceIssues';
 import { WordCardInteractions } from './WordCardInteractions';
 import { WordCardText } from './WordCardText';
@@ -24,6 +26,9 @@ export interface WordCardPanelProps {
   onRetrySources?: () => void;
   error?: string | null;
   ancestorCardIds?: string[];
+  recordStatus?: string | null;
+  onRetryRecord?: () => void;
+  returnTo?: string;
 }
 
 /**
@@ -33,7 +38,7 @@ export interface WordCardPanelProps {
 export const WordCardPanel: React.FC<WordCardPanelProps> = ({
   open,
   loading,
-  result,
+  result: lookupResult,
   selectedText,
   onClose,
   onSpeak,
@@ -43,6 +48,9 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
   onRetrySources,
   error,
   ancestorCardIds = [],
+  recordStatus,
+  onRetryRecord,
+  returnTo,
 }) => {
   const scopeId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -54,6 +62,17 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
   }, [open]);
   if (!open) return null;
 
+  const authoredSource = lookupResult?.dictionarySources?.find(source => source.readageContent);
+  const authoredCard = authoredSource ? toDictionarySourceWordCard(authoredSource) : undefined;
+  const result = authoredCard && lookupResult ? {
+    ...lookupResult, ...authoredCard,
+    learningTermRef: lookupResult.learningTermRef,
+    dictionarySources: lookupResult.dictionarySources,
+    dictionarySourceIssues: lookupResult.dictionarySourceIssues,
+    dictionarySourceMisses: lookupResult.dictionarySourceMisses,
+    phonetic: authoredCard.phonetic || (authoredCard.wordOrPhrase === lookupResult.wordOrPhrase ? lookupResult.phonetic : undefined),
+  } : lookupResult;
+  const otherSources = result?.dictionarySources?.filter(source => source !== authoredSource) ?? [];
   const title = result?.wordOrPhrase || selectedText || 'Word card';
 
   return createPortal(
@@ -61,7 +80,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
       className="word-card-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="Word card"
+      aria-label={authoredSource ? 'ReadAge 自编词卡' : 'Word card'}
       data-word-card-dialog="true"
       data-word-card-scopes={[...ancestorCardIds, scopeId].join(' ')}
       style={{ zIndex: 60 + ancestorCardIds.length * 10 }}
@@ -74,13 +93,15 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
         if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
         if (event.key !== 'Tab') return;
         const buttons = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], summary, [tabindex="0"]') ?? [])]
-          .filter(element => !element.closest('details:not([open])') || element.tagName === 'SUMMARY');
+          .filter(element => element.getClientRects().length > 0 && (!element.closest('details:not([open])') || element.tagName === 'SUMMARY'));
         const first = buttons[0]; const last = buttons[buttons.length - 1];
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
       }}>
         <div className="word-card-dialog__bar">
-          <span className="word-card-dialog__label">Dictionary lookup</span>
+          {returnTo ? <button type="button" className="word-card-return" onClick={onClose}>
+            <ArrowLeft size={12} aria-hidden="true" />返回 {returnTo}
+          </button> : <span className="word-card-dialog__label">{authoredSource ? 'ReadAge 自编词卡' : 'Dictionary lookup'}</span>}
           <button
             type="button"
             onClick={onClose}
@@ -119,7 +140,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
                   {result.tags?.map((tag) => <span key={tag} className="word-card-chip">{tag}</span>)}
                   {result.source && (
                     <span className="word-card-chip word-card-chip--source">
-                      {result.source === 'dictionary' ? result.dictionarySources?.length
+                      {authoredSource ? authoredSource.dictionaryRef.dictionaryName || 'ReadAge 自编词典' : result.source === 'dictionary' ? result.dictionarySources?.length
                         ? `${result.dictionarySources.length} 本词典` : result.dictionaryRef?.dictionaryName || 'Local dictionary' : 'AI explanation'}
                     </span>
                   )}
@@ -168,7 +189,13 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
             )}
 
             <DictionarySourceIssues issues={result.dictionarySourceIssues} misses={result.dictionarySourceMisses} onRetry={onRetrySources} />
-            {result.dictionarySources?.length ? (
+            {authoredSource?.readageContent ? <>
+              <ReadAgeEntrySections word={authoredSource.readageContent} onLookupRelated={onLookupRelated} />
+              {otherSources.length > 0 && <details className="word-card-alternate-sources">
+                <summary>其他词典 · {otherSources.length} 本</summary>
+                <DictionarySourceSections sources={otherSources} onLookupRelated={onLookupRelated} initiallyExpanded={false} />
+              </details>}
+            </> : result.dictionarySources?.length ? (
               <DictionarySourceSections sources={result.dictionarySources} onLookupRelated={onLookupRelated} />
             ) : result.dictionaryRecord ? (
               <DictionarySenseGroups record={result.dictionaryRecord} />
@@ -268,7 +295,11 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
               </section>
             )}
             </WordCardInteractions>
-            <WordMemoryDetailsPanel key={result.wordOrPhrase} wordId={result.wordOrPhrase} />
+            {recordStatus && <div className="word-card-record-status" role="status">
+              <p>{recordStatus}</p>
+              {onRetryRecord && <button type="button" className="word-card-action" onClick={onRetryRecord}>重试保存</button>}
+            </div>}
+            <WordMemoryDetailsPanel key={result.wordOrPhrase} wordId={result.learningTermRef?.stableId || result.wordOrPhrase} />
           </div>
         ) : (
           <div className="word-card-state">

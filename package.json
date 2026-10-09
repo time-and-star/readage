@@ -16,6 +16,7 @@
         "build": "vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=external --sourcemap --outfile=dist/server.mjs && npm run build:particles",
         "build:particles": "npm --prefix prototypes/rec-particles run build",
         "dictionary:extract": "node scripts/dictionary/extract-pack.mjs",
+        "dictionary:import-readage": "tsx scripts/dictionary/import-readage.ts",
         "dictionary:import-wordnet": "node scripts/dictionary/import-wordnet.mjs",
         "dictionary:report": "node scripts/dictionary/quality-report.mjs",
         "dictionary:sample": "node scripts/dictionary/sample-words.mjs",

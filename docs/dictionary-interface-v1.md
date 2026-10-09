@@ -4,6 +4,16 @@
 
 当前接入 `native-reviewed`、`ecdict`、可选 WordNet 和用户导入的 MDX，保持现有英语页面、教学和导出模型。学习概况底部的“设置与工具 → 词典设置”提供紧凑来源卡片、拖动排序和浏览器 MDX 文件导入。MDX 原文经安全节点转换后展示，不加载词库脚本、样式、图片或音频；没有新增真实日语分析或词库。管理和安装属于应用层，公共 v1 查询契约保持不变。
 
+## ReadAge 自编词典接入
+
+阅读查词、全局搜索、复习词卡及词卡内继续查词共用 `fetchWordCard` 和版本缓存。单词与短语都先查询已启用词典，未收录时才提示翻译。导出、教学兼容层及浏览器扩展通过兼容 API 访问同一运行时。将 `native-reviewed` 启用、排在首位并设为默认后，所有这些入口优先返回完整 ReadAge 自编词库；其他已启用词典继续提供独立来源内容。保留该来源 ID 是为了沿用已保存的来源设置，不代表仅加载审核样本。
+
+词典设置保存后，当前阅读、搜索、复习和嵌套查词立即重新查询；刷新不额外记录查词证据。既有学习身份、存储键及复习安排保持不变。2026-10-08 从桌面 `词典/readage` 的当前发布脚本装配得到 **17,974 个词条、30,538 个义项、0 个待编占位词条**。这是实际自编词库，与阅读应用的 `curated-50.jsonl` 编辑实验样本不同。
+
+`npm run dictionary:import-readage -- "<ReadAge 项目目录>"` 按该目录 `index.html` 引用顺序装配数据，执行原项目数据校验；不扫描备份或草稿脚本。输出位于 `data/dictionary/readage`，包括完整原数据的压缩块、字节索引与数量/哈希清单。服务器按词条读取，词库不进入网页包。更新源词库后重新导入并重启服务。
+
+`ReadAgeAuthoredAdapter` 同时提供中性义项结构、既有英语展示投影和 `readage.authored.v1` 原数据扩展。兼容接口的各来源 `readageContent` 保留完整原词条：中文详解、例句分析、搭配例句、家族词、词源、易混辨析、纠错、语境、练习及参考来源。完整词卡展示这些模块，练习可直接选择答案。原文中的教学 HTML 通过已有安全节点解析器展示。原词库没有阅读应用的审核字段，因此接入不会虚构 `reviewed` 状态；发布例句标注为 `dictionary-source`。
+
 ```mermaid
 flowchart TD
   UI[阅读 / 搜索 / 导出 / 扩展] --> Compat[现有英语客户端与展示兼容层]
@@ -116,7 +126,7 @@ DICTIONARY_DEFAULT_SOURCE=native-reviewed
 
 保留原有 `DICTIONARY_DATA_DIR`、`DICTIONARY_REVISIONS_FILE`、`DICTIONARY_REVISION_MANIFEST`、`DICTIONARY_EXPLAIN_FIRST`。数据目录或编纂文件路径只用于服务端，不暴露在 v1 来源目录中。
 
-`native-reviewed` 读取清单的 `revisionFile`（默认 `data/dictionary/revisions/curated-50.jsonl`）并只索引根审核状态为 `reviewed` 的记录。不扫描 `batches`，正在审核的 2000 词批次不进入运行词典。文件或清单故障使整个来源不可用，避免悄悄加载半份词库。源版本由清单内容版本与清单、已审核文件的哈希组成；数据启动时读取，更新后重启才生效。
+`native-reviewed` 默认由 `ReadAgeAuthoredAdapter` 加载 `data/dictionary/readage`（可用 `DICTIONARY_READAGE_DIR` 配置）。启动时校验清单、索引数量及词库哈希，损坏或缺失时明确显示来源不可用，不退回 50 词样本冒充完整词库。显式传入 `revisionFile`/`manifestPath` 或对应编辑环境变量时，仍可使用 `NativeReviewedAdapter` 运行原编辑样本测试；它只加载根审核状态 `reviewed` 的记录，不扫描审核批次。
 
 ECDICT 使用原数据包的惰性查询，不加载或重写整个包。内容版本包含包清单哈希；自定义数据目录另记录文件大小和修改时间。替换自定义包须更新对应清单或文件修改时间并重启。
 
@@ -200,5 +210,7 @@ await service.lookup({ text: 'été', language: 'fr' });
 真实文件导入器应实现同一 `DictionaryAdapter`，将导入、索引及资源定位放在适配器内；独立语言处理器实现 `LanguageAdapter`。新增插件、注册并配置后即可查询，不要求修改公共查询结构。
 
 ## 验证入口
+
+`dictionaryIntegration` 逐一验证所有已发布 ReadAge 词条的查询、详情、完整词卡、例句、导出及设置缓存切换；`readageEntryUi` 验证全部义项直接展示、搭配分组及逐题练习。
 
 `npm run check:dictionary` 检查独立模块及示例；`npm run lint` 和 `npm run check:extension` 检查应用和扩展。`dictionaryContract`、`dictionaryAdapters`、`dictionaryCache`、`dictionaryHttp`、`dictionaryBundle` 测试覆盖注册、独立来源、版本、Unicode、批量顺序、取消、故障、身份稳定、HTTP、离线目录和浏览器产物边界。`dictionarySettings` 与 `dictionarySettingsUi` 覆盖配置持久化、立即应用、重启、校验、冲突、保存失败、拖动排序、设置页面和客户端；`dictionaryMdxImport` 验证文件安装及 MDX 格式，`dictionaryOriginalContent` 验证原文安全转换及资源限制；`myLearningScreen` 验证工具集中于概况底部及说明折叠。现有词典模型、编纂审核、学习、阅读、导出和扩展测试继续运行。

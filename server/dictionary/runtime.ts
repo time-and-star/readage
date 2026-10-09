@@ -5,6 +5,7 @@ import type { DictionaryAdapter, DictionaryService, DictionaryServiceConfig, Lan
 import { englishLanguageAdapter, isEnglishWord } from '../../packages/dictionary/languages/english';
 import { EcdictAdapter } from '../../packages/dictionary/server/ecdict';
 import { NativeReviewedAdapter } from '../../packages/dictionary/server/nativeReviewed';
+import { ReadAgeAuthoredAdapter } from '../../packages/dictionary/server/readageAuthored';
 import { WordNetAdapter } from '../../packages/dictionary/server/wordnet';
 import { LearningWordIdResolver } from '../../src/lib/learningWordIds';
 import { DictionarySettingsManager } from './settings';
@@ -14,6 +15,7 @@ export interface DictionaryRuntimeOptions extends DictionaryServiceConfig {
   dataDir?: string;
   revisionFile?: string;
   manifestPath?: string;
+  readageDir?: string;
   wordnetDir?: string;
   /** Persistence is opt-in for factory users; the application singleton supplies its local file. */
   settingsFile?: string;
@@ -25,7 +27,9 @@ export interface DictionaryRuntimeOptions extends DictionaryServiceConfig {
 /** Application wiring; neither adapters nor core depend on application learning storage. */
 export function createDictionaryRuntime(options: DictionaryRuntimeOptions = {}) {
   const ecdict = new EcdictAdapter({ dataDir: options.dataDir });
-  const native = new NativeReviewedAdapter({ revisionFile: options.revisionFile, manifestPath: options.manifestPath });
+  const native = options.revisionFile || options.manifestPath
+    ? new NativeReviewedAdapter({ revisionFile: options.revisionFile, manifestPath: options.manifestPath })
+    : new ReadAgeAuthoredAdapter({ dataDir: options.readageDir });
   const wordnet = options.wordnetDir ? new WordNetAdapter({ dataDir: options.wordnetDir }) : undefined;
   const additional = [...(wordnet ? [wordnet] : []), ...discoverImportedDictionaries(options.importsDir), ...(options.additionalDictionaries ?? [])];
   const registeredIds = ['native-reviewed', 'ecdict', ...additional.map(adapter => adapter.metadata.id)];
@@ -128,6 +132,7 @@ export function getDictionaryRuntime() {
       enabledSources, sourceOrder: process.env.DICTIONARY_SOURCE_ORDER?.split(',').map(id => id.trim()).filter(Boolean),
       defaultSource: process.env.DICTIONARY_DEFAULT_SOURCE?.trim() || enabledSources?.[0],
       dataDir: process.env.DICTIONARY_DATA_DIR?.trim() || undefined,
+      readageDir: process.env.DICTIONARY_READAGE_DIR?.trim() || undefined,
       revisionFile: process.env.DICTIONARY_REVISIONS_FILE?.trim() || undefined,
       manifestPath: process.env.DICTIONARY_REVISION_MANIFEST?.trim() || undefined,
       wordnetDir: explicitWordnet || (fs.existsSync(path.join(installedWordnet, 'manifest.json')) ? installedWordnet : undefined),

@@ -15,7 +15,7 @@ import { dictionaryCacheKey } from '../packages/dictionary/cache';
 import { dictionaryCatalogCache } from '../src/lib/dictionaryCatalog';
 
 function runtime(options: Parameters<typeof createDictionaryRuntime>[0] = {}) {
-  return createDictionaryRuntime({ additionalDictionaries: [createInMemoryDictionary({ id: 'public-demo', language: 'en', contentVersion: 'v1',
+  return createDictionaryRuntime({ manifestPath: 'data/dictionary/revisions/manifest.json', additionalDictionaries: [createInMemoryDictionary({ id: 'public-demo', language: 'en', contentVersion: 'v1',
     entries: [{ id: 'bank-public', headword: 'bank', definitions: [{ language: 'en', text: 'external dictionary definition, kept separate' }] }] })],
     sourceOrder: ['native-reviewed', 'ecdict', 'public-demo'], ...options });
 }

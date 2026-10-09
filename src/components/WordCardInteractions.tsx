@@ -106,6 +106,14 @@ export const WordCardInteractions: FC<Props> = ({ scopeId, ancestorCardIds = [],
     }
   }, [word, recordExposure, recordClick]);
 
+  const refreshLookupRef = useRef(() => {});
+  refreshLookupRef.current = () => { if (lookup) void lookupWord(lookup.word, lookup.anchor, true); };
+  useEffect(() => {
+    const refresh = () => refreshLookupRef.current();
+    window.addEventListener('dictionary-settings-changed', refresh);
+    return () => window.removeEventListener('dictionary-settings-changed', refresh);
+  }, []);
+
   const translate = useCallback(async (text: string) => {
     translationAbort.current?.abort();
     const controller = new AbortController();

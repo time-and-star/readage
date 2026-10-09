@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./components/wordMemoryDetails.css";
+@import "./components/readageEntry.css";
 
 @theme {
   --font-sans: "Inter", "Aptos", "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
@@ -1371,6 +1372,30 @@ textarea::placeholder {
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
+
+.word-card-alternate-sources {
+  margin-top: 18px;
+  border-top: 1px solid #e3e7df;
+}
+
+.word-card-alternate-sources > summary {
+  padding: 12px 0;
+  color: #74806f;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.word-card-record-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  color: #74806f;
+  font-size: 12px;
+}
+
+.word-card-record-status p { margin: 0; }
 
 .word-card-icon-button,
 .word-card-speak {

@@ -39,7 +39,7 @@ export interface FetchWordCardOptions {
 }
 
 /**
- * Single words use the dictionary and bounded local cache.
+ * Words and phrases use the enabled dictionaries and bounded local cache.
  * AI explanations are temporarily disabled; dictionary misses remain explicit.
  */
 export async function fetchWordCard(
@@ -48,7 +48,7 @@ export async function fetchWordCard(
 ): Promise<GrammarExplanation> {
   const singleWord = isEnglishWord(request.selectedText);
   if (options.signal?.aborted) throw new Error('Lookup cancelled');
-  if (singleWord) {
+  if (request.selectedText.trim()) {
     const catalog = await dictionaryCatalogCache.get(options.signal);
     const cacheKeyFor = (version: string) => `english-ai:v6:word-card:${dictionaryCacheKey('en', version, request.selectedText.toLowerCase())}`;
     const cacheKey = catalog ? cacheKeyFor(catalog.catalogVersion) : undefined;
