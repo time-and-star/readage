@@ -32,7 +32,7 @@ test('transparent hidden colour and unreadable channels cannot leak into the fra
   assert.throws(() => analyzeGalleryPalette({ width: 2, height: 2, data: [] }), RangeError);
 });
 
-test('the same exhibit keeps its direction while an adjacent similar image gets another silhouette', () => {
+test('the same exhibit keeps its direction while adjacent images alternate familiar silhouettes', () => {
   const palette = analyzeGalleryPalette(sample(() => [55, 100, 180, 255]));
   const first = buildGalleryArtDirection('blue-photo', 1600, 1000, palette, .7, 1);
   assert.deepEqual(first, buildGalleryArtDirection('blue-photo', 1600, 1000, palette, .7, 1));
@@ -52,17 +52,42 @@ test('frame colour changes with the picture even when identity and exhibit posit
   assert.notEqual(first.colours.mat, second.colours.mat);
 });
 
-test('all curved mounts preserve the entire source photograph inside their safe aperture', () => {
-  const forms: GalleryForm[] = ['arch', 'vault', 'capsule', 'oval', 'roundel', 'cut-corner', 'sculpted', 'soft'];
-  for (const form of forms) {
-    const inset = galleryImageInsets(form);
-    for (const sourceRatio of [.5, .8, 1, 1.5, 2.5]) {
-      const placement = getGlassImagePlacement(300, 400, 1000 * sourceRatio, 1000, 'contain', .5, .5, inset);
-      assert.ok(placement.x >= 300 * inset.left - 1e-6);
-      assert.ok(placement.y >= 400 * inset.top - 1e-6);
-      assert.ok(placement.x + placement.width <= 300 * (1 - inset.right) + 1e-6);
-      assert.ok(placement.y + placement.height <= 400 * (1 - inset.bottom) + 1e-6);
+test('familiar mounts preserve complete pictures and curved apertures suit their source proportions', () => {
+  const approved = new Set<GalleryForm>(['portrait', 'landscape', 'panorama', 'square', 'soft', 'oval', 'roundel']);
+  const seen = new Set<GalleryForm>();
+  const busy = analyzeGalleryPalette(sample(() => [55, 100, 180, 255]));
+  const quiet = analyzeGalleryPalette(sample((x, y) => x > 20 && x < 44 && y > 16 && y < 48
+    ? [34, 150, 84, 255] : [255, 255, 255, 255]));
+  for (const sourceRatio of [.5, .67, .8, .95, 1, 1.05, 1.2, 1.5, 2.5]) {
+    for (const palette of [busy, quiet]) for (const detail of [.3, .7]) for (let sequence = 1; sequence <= 12; sequence += 1) {
+      const direction = buildGalleryArtDirection('complete-picture', 1000 * sourceRatio, 1000, palette, detail, sequence);
+      assert.ok(approved.has(direction.form));
+      seen.add(direction.form);
+      if (direction.form === 'roundel') {
+        assert.ok(sourceRatio >= .9 && sourceRatio <= 1.1, 'A circle would excessively shrink this source picture');
+        assert.equal(direction.aspect, 1);
+      }
+      if (direction.form === 'oval') {
+        assert.ok(sourceRatio >= .64 && sourceRatio < .9, 'An oval needs a moderate portrait source');
+        assert.ok(detail < .43 || palette.quietEdges > .48, 'Busy pictures need a rectangular aperture');
+      }
+      const inset = galleryImageInsets(direction.form);
+      assert.equal(inset.top, inset.bottom);
+      assert.equal(inset.left, inset.right);
+      const width = 300;
+      const height = width / direction.aspect;
+      const placement = getGlassImagePlacement(width, height, 1000 * sourceRatio, 1000, 'contain', .5, .5, inset);
+      assert.ok(placement.x >= width * inset.left - 1e-6);
+      assert.ok(placement.y >= height * inset.top - 1e-6);
+      assert.ok(placement.x + placement.width <= width * (1 - inset.right) + 1e-6);
+      assert.ok(placement.y + placement.height <= height * (1 - inset.bottom) + 1e-6);
       assert.ok(Math.abs(placement.width / placement.height - sourceRatio) < 1e-6);
+      if (direction.form === 'oval' || direction.form === 'roundel') {
+        const cornerX = (placement.x - width / 2) / (width / 2);
+        const cornerY = (placement.y - height / 2) / (height / 2);
+        assert.ok(cornerX ** 2 + cornerY ** 2 <= 1, 'The source corners must fit inside the elliptical aperture');
+      }
     }
   }
+  assert.deepEqual(seen, approved);
 });

@@ -10,7 +10,7 @@ export interface GalleryPalette {
 }
 
 export type GalleryForm = 'portrait' | 'landscape' | 'panorama' | 'square' | 'soft'
-  | 'arch' | 'vault' | 'capsule' | 'oval' | 'roundel' | 'cut-corner' | 'sculpted';
+  | 'oval' | 'roundel';
 
 export interface GalleryArtDirection {
   form: GalleryForm;
@@ -97,12 +97,13 @@ export function buildGalleryArtDirection(identity: string, width: number, height
   const calm = detail < .43;
   const quiet = (palette?.quietEdges ?? 0) > .48;
   let forms: GalleryForm[];
-  if (ratio > 1.2) forms = ratio > 1.9 ? ['panorama', 'landscape', 'soft', 'cut-corner', 'vault']
-    : ['landscape', 'soft', 'cut-corner', 'sculpted', 'vault'];
-  else if (ratio < .76) forms = ['portrait', 'vault', 'arch', 'capsule', 'sculpted'];
-  else if (ratio < 1.16) forms = ['square', 'soft', 'vault', 'cut-corner', 'sculpted',
-    ...(calm || quiet ? ['oval', 'roundel'] as GalleryForm[] : [])];
-  else forms = ['portrait', 'soft', 'vault', 'arch', 'cut-corner'];
+  // Familiar frames carry the sequence; curved mounts need a compatible source proportion.
+  if (ratio > 1.2) forms = ratio > 1.9 ? ['panorama', 'landscape', 'soft', 'panorama']
+    : ['landscape', 'soft', 'landscape'];
+  else if (ratio < .9) forms = ['portrait', 'soft', 'portrait',
+    ...(ratio >= .64 && (calm || quiet) ? ['oval'] as GalleryForm[] : [])];
+  else if (ratio <= 1.1) forms = ['square', 'soft', 'square', 'roundel'];
+  else forms = ['landscape', 'soft', 'landscape'];
   const slot = sequence && Number.isSafeInteger(sequence) && sequence > 0
     ? sequence - 1 + Math.floor((sequence - 1) / 12) : seed;
   const form = forms[slot % forms.length];
@@ -119,7 +120,7 @@ export function buildGalleryArtDirection(identity: string, width: number, height
     : mix(pigment, dark, .14);
   const mat = mix(calm ? accent : dominant, paper, material === 'paper' ? .95 : .87);
   return { form, material, landscape: ratio > 1.2,
-    aspect: form === 'roundel' ? 1 : form === 'square' ? 1 : form === 'arch' ? clamp(ratio, .66, .88)
+    aspect: form === 'roundel' || form === 'square' ? 1
       : clamp(ratio, form === 'panorama' ? .55 : .64, form === 'panorama' ? 2.3 : 1.85),
     colours: { frame: cssColour(frame), light: cssColour(mix(frame, paper, .30)),
       shade: cssColour(mix(frame, dark, .24)), edge: cssColour(mix(frame, dark, .38)),
@@ -127,14 +128,9 @@ export function buildGalleryArtDirection(identity: string, width: number, height
       accent: cssColour(mix(accent, dark, .55)) } };
 }
 
-/** The complete source fits inside curved apertures; the mount carries the sculptural silhouette. */
+/** Symmetric safe margins keep the complete source inside oval and rounded apertures. */
 export function galleryImageInsets(form: GalleryForm): { top: number; right: number; bottom: number; left: number } {
-  if (form === 'arch') return { top: .22, right: .12, bottom: .035, left: .12 };
   if (form === 'oval' || form === 'roundel') return { top: .17, right: .16, bottom: .17, left: .16 };
-  if (form === 'capsule') return { top: .12, right: .12, bottom: .12, left: .12 };
-  if (form === 'vault') return { top: .10, right: .08, bottom: .025, left: .08 };
-  if (form === 'sculpted') return { top: .10, right: .08, bottom: .10, left: .08 };
-  if (form === 'cut-corner') return { top: .045, right: .045, bottom: .045, left: .045 };
   if (form === 'soft') return { top: .04, right: .04, bottom: .04, left: .04 };
   return { top: 0, right: 0, bottom: 0, left: 0 };
 }
