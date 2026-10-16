@@ -6,7 +6,7 @@
 
 **围绕文章展开的本地阅读与语言学习应用。** 把文章库、上下文查词、选句翻译、朗读和间隔复习连接起来，让一次阅读留下可以继续使用的学习记录。
 
-[下载安装包](https://github.com/time-and-star/readage/releases/latest) · [快速开始](#快速开始) · [功能与学习流程](#功能与学习流程) · [三端架构](#三端架构) · [开发文档](#开发文档) · [Apache 2.0](LICENSE)
+[下载安装包](https://github.com/time-and-star/readage/releases/latest) · [快速开始](#快速开始) · [功能与学习流程](#功能与学习流程) · [模型声明](#大模型与语音模型声明) · [三端架构](#三端架构) · [开发文档](#开发文档) · [Apache 2.0](LICENSE)
 
 ReadAge 以英语学习为主，也提供法语、日语阅读及对应词典和语音接入。应用采用暖纸色阅读界面和橙色启动画面；浏览器、Windows 与 Android 共用界面和学习规则，并通过各自的平台实现处理文件、存储和本机模型。
 
@@ -55,6 +55,21 @@ ReadAge 以英语学习为主，也提供法语、日语阅读及对应词典和
 本机模型和音色属于独立资源，源码克隆不包含全部运行资源。Windows 完整安装包与 Android 完整 APK 按各端构建清单装入离线资源；实际声音来源、速度和听感需要在交付设备上分别验证。
 
 配置与资源说明：[本机翻译](docs/local-translation.md) · [朗读与 TTS](docs/tts.md) · [法语词典](docs/dictionary-french.md) · [日语词典](docs/dictionary-japanese.md)
+
+## 大模型与语音模型声明
+
+ReadAge 使用第三方模型提供翻译和语音能力，感谢相应模型作者与转换、推理项目的贡献。模型权重、音色及推理组件保留各自的版权和许可，项目的 Apache 2.0 许可证仅适用于 ReadAge 自有源码。
+
+| 模型 / 服务 | 用途与平台 | 来源与许可 |
+| --- | --- | --- |
+| 腾讯 Hy-MT2-1.8B | 本机选句翻译；浏览器 / Windows 使用 AngelSlim 1.25bit GGUF，Android 使用官方 Q4_K_M GGUF | 腾讯 / AngelSlim；模型 Apache-2.0，llama.cpp 运行器 MIT |
+| Kokoro-82M v1.0 | 浏览器 / Windows 的英、美、法、日语朗读；Android 的英、美、法语朗读 | hexgrad；ONNX 转换由 onnx-community / Sherpa ONNX 提供，模型 Apache-2.0 |
+| Supertonic 3 | Android 日语朗读，使用 Sherpa ONNX int8 转换 | Supertone；模型 **BigScience Open RAIL-M**，推理源码 MIT，模型适用原许可的使用限制 |
+| DeepSeek、阶跃星辰、Google Gemini | 源码保留可选在线翻译、文本或实时语音接口；是否可用取决于功能开关、配置和服务状态 | 使用各服务商的服务条款；发行包不包含这些在线模型的权重 |
+
+Windows / Android 当前离线发行配置关闭在线 AI；本机翻译文本和本机合成语音的文本由设备上的模型处理。发音前端 eSpeak NG、ONNX Runtime 等运行组件另有 GPL-3.0、MIT 等许可，不能用模型许可证替代。
+
+具体版本、上游链接、量化与修改说明、三端差异及随包许可位置见 **[模型来源与许可声明](docs/ai-models.md)**。模型译文和合成语音可能有错误；使用第三方模型不表示相关作者或服务商为 ReadAge 提供认证或背书。
 
 ## 下载与平台
 
@@ -165,10 +180,11 @@ Windows 与网页构建共用 `dist/`，完整交付先打 Windows 包，再构�
 | [Android 验收记录](docs/android-acceptance.md) | 原生功能与设备验证范围 |
 | [词典接口与来源](docs/dictionary-interface-v1.md) | 多源查询、契约和词典服务 |
 | [翻译](docs/local-translation.md) / [朗读](docs/tts.md) | 本机模型、语音与故障排查 |
+| [模型来源与许可声明](docs/ai-models.md) | 大模型与语音模型的用途、来源、版本、许可及三端对应 |
 | [浏览器插件](extension/README.md) | 安装、选词查词与本地服务连接 |
 
 ## 许可证与第三方资源
 
 ReadAge 自有源码采用 **[Apache License 2.0](LICENSE)**，项目归属说明见 [NOTICE](NOTICE)。
 
-第三方库、词典、模型、音色和外刊内容保留各自原有许可与版权声明；本仓库的许可证不替代这些资源的授权。发行包保留所需的第三方许可、通知和随包源码。已有声明见 [ECDICT 与词典通知](vendor/nextword-local-dictionary/THIRD_PARTY_NOTICES.md)、[WordNet 许可](vendor/wordnet/LICENSE.txt) 及 Android / Windows 的资源清单。请只导入或分发你有权使用的文章和文档。
+第三方库、词典、模型、音色和外刊内容保留各自原有许可与版权声明；本仓库的许可证不替代这些资源的授权。发行包保留所需的第三方许可、通知和随包源码。已有声明见 [模型来源与许可声明](docs/ai-models.md)、[ECDICT 与词典通知](vendor/nextword-local-dictionary/THIRD_PARTY_NOTICES.md)、[WordNet 许可](vendor/wordnet/LICENSE.txt) 及 Android / Windows 的资源清单。请只导入或分发你有权使用的文章和文档。
