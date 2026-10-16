@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Article,
   LearningEvent,
@@ -14,7 +14,10 @@ import {
 import {
   toLemma,
 } from './lib/proficiency';
-import { normalizeArticleSessions, STORAGE_KEYS, usePersistentState } from './lib/storage';
+import { normalizeArticleSessions, STORAGE_KEYS, usePersistentState, usePersistenceError, retryPersistentWrites, mergeChatMessages, readPersistentValue } from './lib/storage';
+import { readReadingBookmark } from './lib/readingBookmark';
+import { summarizeWordLearningViews } from './lib/wordMemoryDetails';
+import { applyDifficultyFeedback, defaultReadingPreference, normalizeReadingPreference } from './lib/readingPreference';
 import {
   buildWeakPointMetrics,
   calculateLearningStreak,
@@ -25,6 +28,8 @@ import {
   toLocalDateKey,
 } from './lib/learningAnalytics';
 import { postTutor, RECOMMENDATION_INTERACTION_BUDGET_MS } from './lib/tutorClient';
+import { ON_DEMAND_TRANSLATION } from './lib/localTranslation';
+import { IS_ANDROID } from './lib/platform/runtime';
 import {
   beginRecommendationPrefetch,
   consumeQueuedRecommendation,
@@ -38,12 +43,12 @@ import {
   startRecommendationFeed,
   type RecommendationFeedState,
 } from './lib/recommendationFeed';
-import {
-  resolveRecommendationArticle,
-  type RecommendationSource,
-} from './lib/resolveRecommendation';
+import type { RecommendationSource } from './lib/resolveRecommendation';
+import { isRecommendationArticleWithinBounds } from './lib/memoryV2/recommendation';
 import { startRecSession } from './lib/recommendationTelemetry';
-import { getRecommendationEntryAction } from './lib/recommendationEntry';
+import {
+  getArticleOnlyRecommendationDefaults,
+} from './lib/recommendationEntry';
 import type { RecommendedArticleCandidate } from './lib/articleValidation';
 import {
   buildRecommendationArticlePool,
@@ -51,6 +56,9 @@ import {
   getCachedMagazineRecommendationPool,
 } from './lib/magazineRecommendationPool';
 import { fetchMagazineLemmaIndex } from './lib/magazineLemmaIndex';
+import { getNextImportedArticle } from './lib/userLibrary';
+import { useMagazineReadingSequence } from './lib/useMagazineReadingSequence';
+import { MagazineReadingNavigation } from './components/MagazineReadingNavigation';
 import {
   getArticleImportQueue,
   needsImportEnrichment,
@@ -59,39 +67,48 @@ import {
 } from './lib/articleImport';
 import { buildIntentionalLevelRating } from './lib/articleLevel';
 import { buildLevelRewriteArticle } from './lib/rewriteArticle';
-import { RecommendationEntryScreen } from './components/RecommendationEntryScreen';
-import { LandingPage } from './components/LandingPage';
-import { ReadingScreen } from './components/ReadingScreen';
-import { MyLearningScreen } from './components/MyLearningScreen';
-import { HistoryScreen } from './components/HistoryScreen';
-import { LibraryScreen } from './components/LibraryScreen';
-import { EnterArticleModal } from './components/EnterArticleModal';
+import { buildReadingStudyItems } from './lib/readingStudy';
+import { useReadingStudyEvidence } from './lib/useReadingStudyEvidence';
+import { useFlashcardLearningActivity } from './lib/useFlashcardLearningActivity';
+import { loadReadingScreen } from './lib/readingScreenModule';
+import { scheduleIdleWork } from './lib/idleWork';
+import { ArticleImportLoading, PageLoadBoundary } from './components/PageLoadBoundary';
 import {
-  ReadingAssessmentScreen,
-  type ReadingAssessmentResult,
-} from './components/ReadingAssessmentScreen';
-import {
-  buildCefrRecommendationProfile,
   suggestedWordCountRange,
-  normalizeUserReadingAssessment,
-  resolveUserCefrLevel,
 } from './lib/userReadingProfile';
 import { buildDefaultV5Profile } from './lib/recommendationV5';
+import { DEFAULT_ARTICLE_TARGET_POOL_SIZE } from './lib/recommendationPolicy';
 import {
   buildAppPath,
   parseAppPath,
   readAppHistoryIndex,
+  readAppHistoryPreviousPath,
   resolveInitialAppRoute,
   withAppHistoryIndex,
   type AppRoute,
 } from './lib/appRoutes';
-import { BookOpen, BarChart3, History, Library } from 'lucide-react';
+import { BookOpen, BarChart3, Library } from 'lucide-react';
 import {
   useDueWords,
-  useProficiencyStats,
+  useConfirmationWords,
   useAllWordProficiency,
   useMemoryStorageError,
+  useMemoryLifecycle,
+  useExternalLearningActivity,
 } from './lib/memoryV2/hooks';
+import { getCanonicalLearningCollections } from './lib/learningWordProficiency';
+import type { WordProficiencyView } from './lib/memoryV2/memorySystem';
+
+const RecommendationEntryScreen = lazy(() => import('./components/RecommendationEntryScreen').then(module => ({ default: module.RecommendationEntryScreen })));
+const FlashcardReviewScreen = lazy(() => import('./components/FlashcardReviewScreen').then(module => ({ default: module.FlashcardReviewScreen })));
+const ReadingScreen = lazy(loadReadingScreen);
+const MyLearningScreen = lazy(() => import('./components/MyLearningScreen').then(module => ({ default: module.MyLearningScreen })));
+const DictionarySettingsScreen = lazy(() => import('./components/DictionarySettingsScreen').then(module => ({ default: module.DictionarySettingsScreen })));
+const DictionaryTrialScreen = lazy(() => import('./components/DictionaryTrialScreen').then(module => ({ default: module.DictionaryTrialScreen })));
+const ReadingStudyScreen = lazy(() => import('./components/ReadingStudyScreen').then(module => ({ default: module.ReadingStudyScreen })));
+const LibraryScreen = lazy(() => import('./components/LibraryScreen').then(module => ({ default: module.LibraryScreen })));
+const EnterArticleModal = lazy(() => import('./components/EnterArticleModal').then(module => ({ default: module.EnterArticleModal })));
+const pageLoading = <p role="status" className="px-6 py-12 text-center text-sm text-[#8E857A]">正在打开页面…</p>;
 
 function emptySession(articleId: string): ArticleSession {
   return {
@@ -131,8 +148,17 @@ type NavigationOptions = {
 };
 
 function getInitialAppRoute(): AppRoute {
-  if (typeof window === 'undefined') return { kind: 'landing' };
-  return resolveInitialAppRoute(window.location.pathname, false);
+  if (typeof window === 'undefined') return { kind: 'library' };
+  if (window.location.pathname === '/') {
+    const bookmark = readReadingBookmark();
+    try {
+      const articles = readPersistentValue<Article[]>(STORAGE_KEYS.history, []);
+      if (bookmark && Array.isArray(articles) && articles.some(article => article.id === bookmark.articleId)) {
+        return { kind: 'reading', articleId: bookmark.articleId };
+      }
+    } catch { /* The ordinary entry remains available if saved data cannot be read. */ }
+  }
+  return resolveInitialAppRoute(window.location.pathname);
 }
 
 function logRecommendationSource(
@@ -181,10 +207,36 @@ export default function App() {
     normalizeArticleSessions
   );
   // Memory V2.2: 使用 Hooks 替代 proficiency 状态
-  const { dueWords, loading: dueWordsLoading } = useDueWords();
-  const { stats, loading: statsLoading } = useProficiencyStats();
-  const { proficiencies, loading: proficienciesLoading } = useAllWordProficiency();
+  const { dueWords: rawDueWords, loading: dueWordsLoading } = useDueWords(DEFAULT_ARTICLE_TARGET_POOL_SIZE);
+  const { confirmationWords: rawConfirmationWords } = useConfirmationWords(DEFAULT_ARTICLE_TARGET_POOL_SIZE);
+  const { proficiencies: rawProficiencies, loading: rawProficienciesLoading,
+    error: proficienciesError, refresh: refreshProficiencies } = useAllWordProficiency();
+  const [canonicalMemory, setCanonicalMemory] = useState<{
+    proficiencies: WordProficiencyView[];
+    dueWords: WordProficiencyView[];
+    confirmationWords: WordProficiencyView[];
+  }>({ proficiencies: [], dueWords: [], confirmationWords: [] });
+  const [canonicalMemoryLoading, setCanonicalMemoryLoading] = useState(true);
+  useEffect(() => {
+    let current = true;
+    setCanonicalMemoryLoading(true);
+    void getCanonicalLearningCollections(rawProficiencies, rawDueWords, rawConfirmationWords)
+      .then((collections) => { if (current) setCanonicalMemory(collections); })
+      .catch(() => {
+        // Keep saved learning progress available during a dictionary outage.
+        if (current) setCanonicalMemory({ proficiencies: rawProficiencies,
+          dueWords: rawDueWords, confirmationWords: rawConfirmationWords });
+      })
+      .finally(() => { if (current) setCanonicalMemoryLoading(false); });
+    return () => { current = false; };
+  }, [rawProficiencies, rawDueWords, rawConfirmationWords]);
+  const { proficiencies, dueWords, confirmationWords } = canonicalMemory;
+  const proficienciesLoading = rawProficienciesLoading || canonicalMemoryLoading;
   const memoryStorageError = useMemoryStorageError();
+  const memoryLifecycle = useMemoryLifecycle();
+  const persistenceError = usePersistenceError();
+  const externalActivity = useExternalLearningActivity();
+  const flashcardActivity = useFlashcardLearningActivity();
 
   const [events, setEvents] = usePersistentState<LearningEvent[]>(STORAGE_KEYS.events, []);
   const [weakPoints, setWeakPoints] = usePersistentState<string[]>(STORAGE_KEYS.weakPoints, []);
@@ -193,19 +245,13 @@ export default function App() {
     [],
     normalizeLearningDateKeys
   );
-  const [assessmentResult, setAssessmentResult] = usePersistentState<ReadingAssessmentResult | null>(
-    STORAGE_KEYS.readingAssessment,
-    null,
-    normalizeUserReadingAssessment
+  const [readingPreference, setReadingPreference] = usePersistentState(STORAGE_KEYS.readingPreference, defaultReadingPreference, normalizeReadingPreference);
+  const articleOnlyRecommendationDefaults = useMemo(
+    () => getArticleOnlyRecommendationDefaults(readingPreference.level),
+    [readingPreference.level],
   );
-  const userCefrLevel = useMemo(
-    () => resolveUserCefrLevel(assessmentResult),
-    [assessmentResult]
-  );
-  const cefrRecommendationProfile = useMemo(
-    () => buildCefrRecommendationProfile(assessmentResult),
-    [assessmentResult]
-  );
+  const userCefrLevel = articleOnlyRecommendationDefaults.userLevel;
+  const cefrRecommendationProfile = articleOnlyRecommendationDefaults.cefrProfile;
   const [isRecommending, setIsRecommending] = useState(false);
   const [recommendPhase, setRecommendPhase] = useState<'local' | 'ai' | null>(null);
   const [isRewriting, setIsRewriting] = useState(false);
@@ -223,10 +269,26 @@ export default function App() {
   const completedArticleIdsRef = useRef(
     new Set(history.filter((article) => article.status === 'Completed').map((article) => article.id))
   );
-  /** Last article opened in the reading tab — survives nav switches away from /read/:id. */
-  const [lastReadingArticleId, setLastReadingArticleId] = useState<string | null>(null);
   const [showEnterArticle, setShowEnterArticle] = useState(false);
+  const [fileImportNotice, setFileImportNotice] = useState<string | null>(null);
   const importQueueSnapshot = useArticleImportQueue();
+
+  const selectBoundedRecommendationFallback = (
+    library: Article[],
+    historyRows: Article[],
+    excludedArticleIds: ReadonlySet<string>,
+    reviewWords: readonly string[] = recommendationContextRef.current?.reviewWords ?? [],
+  ) => selectLibraryFallback(
+    library,
+    historyRows,
+    excludedArticleIds,
+    (article) => isRecommendationArticleWithinBounds(
+      article,
+      cefrRecommendationProfile,
+      { mode: reviewWords.length > 0 ? 'review' : 'normal', checkCefr: true },
+    ),
+    reviewWords.length > 0,
+  );
 
   const navigate = (nextRoute: AppRoute, options: NavigationOptions = {}) => {
     const nextPath = buildAppPath(nextRoute);
@@ -235,7 +297,7 @@ export default function App() {
       const currentIndex = readAppHistoryIndex(window.history.state) ?? 0;
       const nextIndex = options.replace ? currentIndex : currentIndex + 1;
       window.history[method](
-        withAppHistoryIndex(window.history.state, nextIndex),
+        withAppHistoryIndex(window.history.state, nextIndex, options.replace ? undefined : window.location.pathname),
         '',
         nextPath,
       );
@@ -245,14 +307,22 @@ export default function App() {
 
   useEffect(() => {
     const handlePopState = () => {
-      setRoute(parseAppPath(window.location.pathname));
+      const nextRoute = parseAppPath(window.location.pathname);
+      if (['/assessment', '/history', '/flashcards'].includes(window.location.pathname.replace(/\/+$/, ''))) {
+        window.history.replaceState(window.history.state, '', buildAppPath(nextRoute));
+      }
+      setRoute(nextRoute);
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   useEffect(() => {
-    const canonicalPath = buildAppPath(route);
+    const initialRoute = window.location.pathname.replace(/\/+$/, '') === '/history'
+      ? parseAppPath(window.location.pathname)
+      : route;
+    if (initialRoute !== route) setRoute(initialRoute);
+    const canonicalPath = buildAppPath(initialRoute);
     const currentIndex = readAppHistoryIndex(window.history.state) ?? 0;
     window.history.replaceState(
       withAppHistoryIndex(window.history.state, currentIndex),
@@ -270,13 +340,10 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  /**
-   * Boot prewarm for recommend:
-   * 1) full-catalog lemma index (primary ranking path)
-   * 2) small full-body pool (fallback when index unavailable)
-   */
+  /** Optional recommendation prewarm follows the first paint and only loads compact data. */
   useEffect(() => {
     let cancelled = false;
+    const cancelIdle = scheduleIdleWork(() => {
     void fetchMagazineLemmaIndex()
       .then((result) => {
         if (cancelled) return;
@@ -295,24 +362,17 @@ export default function App() {
         console.warn('Magazine lemma index failed to load:', error);
       });
 
-    void fetchMagazineRecommendationPool(48)
-      .then((result) => {
-        if (cancelled) return;
-        if (result.articles.length > 0) {
-          setMagazinePool(result.articles);
-        } else if (result.source === 'error') {
-          console.warn('Magazine recommendation pool unavailable:', result.errorMessage);
-        }
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        if (error instanceof Error && error.name === 'AbortError') return;
-        console.warn('Magazine recommendation pool failed to load:', error);
-      });
+    });
     return () => {
       cancelled = true;
+      cancelIdle();
     };
   }, []);
+
+  useEffect(() => {
+    if (route.kind !== 'library') return;
+    return scheduleIdleWork(() => { void loadReadingScreen().catch(() => {}); });
+  }, [route.kind]);
 
   /** Ranked pool: magazines + demo library + history (status overlay). */
   const recommendationLibrary = useMemo(
@@ -467,7 +527,7 @@ export default function App() {
         console.warn('[import] backfill merge skipped', error);
       }
 
-      if (cancelled) return;
+      if (cancelled || ON_DEMAND_TRANSLATION) return;
 
       // Server-side backfill can pause client queue so Step concurrency is free.
       try {
@@ -581,22 +641,22 @@ export default function App() {
     [routedArticleId, history, recommendationArticles, recommendationLibrary, builtInLibrary]
   );
 
-  useEffect(() => {
-    if (activeArticle) setLastReadingArticleId(activeArticle.id);
-  }, [activeArticle]);
-
   // Memory V2.2: 使用 Hooks 数据
   const dueLemmas = useMemo(
     () => dueWords.map(w => w.wordId),
     [dueWords]
   );
+  const reviewLemmas = useMemo(
+    () => Array.from(new Set([
+      ...dueLemmas,
+      ...confirmationWords.map((word) => word.wordId),
+    ])).slice(0, DEFAULT_ARTICLE_TARGET_POOL_SIZE),
+    [confirmationWords, dueLemmas]
+  );
 
   const bands = useMemo(
-    () => ({
-      learning: (stats?.byLevel[1] || 0) + (stats?.byLevel[2] || 0) + (stats?.byLevel[3] || 0),
-      mastered: stats?.byLevel[4] || 0,
-    }),
-    [stats]
+    () => summarizeWordLearningViews(proficiencies, new Date(reviewClock)),
+    [proficiencies, reviewClock]
   );
 
   const trackedLemmas = useMemo(
@@ -613,12 +673,19 @@ export default function App() {
       clickCount: session?.clickCount ?? 0,
       discussionCount: session?.discussionCount ?? 0,
       hasSession: Boolean(session),
+      lastOpenedAt: session?.lastOpenedAt || article.lastOpenedAt,
     };
   }), [history, sessions]);
 
+  const studyEvidence = useReadingStudyEvidence(events, route.kind === 'learning-records');
+  const readingStudyItems = useMemo(
+    () => buildReadingStudyItems(articleProgress, studyEvidence.evidence, events, studyEvidence.aliases),
+    [articleProgress, studyEvidence.evidence, studyEvidence.aliases, events],
+  );
+
   const activityDateKeys = useMemo(
-    () => getLearningActivityDateKeys(learningDays, events, sessions, history),
-    [learningDays, events, sessions, history]
+    () => getLearningActivityDateKeys(learningDays, [...events, ...externalActivity.events, ...flashcardActivity.events], sessions, history),
+    [learningDays, events, sessions, history, externalActivity.events, flashcardActivity.events]
   );
   const streakDays = useMemo(
     () => calculateLearningStreak(activityDateKeys, new Date(reviewClock)),
@@ -626,8 +693,8 @@ export default function App() {
   );
   const completedArticleCount = useMemo(() => countCompletedArticles(history), [history]);
   const recentEventCount = useMemo(
-    () => countRecentLearningEvents(events, new Date(reviewClock), 7),
-    [events, reviewClock]
+    () => countRecentLearningEvents([...events, ...externalActivity.events, ...flashcardActivity.events], new Date(reviewClock), 7),
+    [events, reviewClock, externalActivity.events, flashcardActivity.events]
   );
   const weakPointMetrics = useMemo(
     () => buildWeakPointMetrics(events, weakPoints),
@@ -683,7 +750,7 @@ export default function App() {
   ) => {
     const open = options?.open !== false;
     const source = options?.source ?? 'manual';
-    const needs = needsImportEnrichment(article);
+    const needs = !ON_DEMAND_TRANSLATION && needsImportEnrichment(article);
     const openedAt = new Date().toISOString();
 
     const withMeta: Article = {
@@ -707,13 +774,12 @@ export default function App() {
     setHistory((previous) => {
       const exists = previous.some((item) => item.id === withMeta.id);
       return exists
-        ? previous.map((item) => (item.id === withMeta.id ? { ...item, ...withMeta } : item))
+        ? previous.map((item) => (item.id === withMeta.id ? { ...item, ...withMeta, status: item.status === 'Completed' ? 'Completed' : withMeta.status } : item))
         : [withMeta, ...previous];
     });
 
     if (open) {
       if (!options?.preserveRecommendationFeed) resetRecommendationFeed();
-      setLastReadingArticleId(withMeta.id);
       touchSession(withMeta.id, (session) => ({ ...session, lastOpenedAt: openedAt }));
       navigate({ kind: 'reading', articleId: withMeta.id });
       pushEvent('article_open', { articleId: withMeta.id });
@@ -729,18 +795,11 @@ export default function App() {
     }
   };
 
-  /**
-   * Open any article as the head of a recommendation continuous-reading feed
-   * (scroll-end / left-swipe advance to the next recommended piece).
-   */
+  /** Library/history articles retain their source's order. Recommendations start explicitly. */
   const beginReadingSession = (
     article: Article,
     options?: {
       source?: ImportJobSource;
-      /** When true, keep the current feed (advance path). */
-      continueFeed?: boolean;
-      topic?: string;
-      reviewWords?: string[];
     }
   ) => {
     const source = options?.source
@@ -750,26 +809,7 @@ export default function App() {
           ? 'recommend'
           : 'history');
 
-    if (!options?.continueFeed) {
-      resetRecommendationFeed();
-      recommendationContextRef.current = {
-        topic: options?.topic ?? 'English Idioms & Daily Practice',
-        reviewWords: options?.reviewWords ?? dueLemmas.slice(0, 5),
-      };
-      updateRecommendationFeed(startRecommendationFeed(article.id));
-      updateRecommendationArticles([article]);
-    }
-
-    setLastReadingArticleId(article.id);
-    ingestArticle(article, {
-      open: true,
-      source,
-      preserveRecommendationFeed: true,
-    });
-
-    if (!options?.continueFeed && recommendationFeedRef.current.status === 'active') {
-      void prefetchNextRecommendationArticle();
-    }
+    ingestArticle(article, { open: true, source });
   };
 
   const openArticle = (article: Article) => {
@@ -884,7 +924,6 @@ export default function App() {
   };
 
   const openRecommendationArticle = (article: Article) => {
-    setLastReadingArticleId(article.id);
     ingestArticle(article, {
       open: true,
       source: article.source === 'ai_generated' ? 'recommend' : 'history',
@@ -912,7 +951,8 @@ export default function App() {
     });
 
     // Small in-memory pool remains as fallback when full-catalog index is unavailable.
-    const magazines = await ensureMagazineRecommendationPool(signal);
+    const index = await fetchMagazineLemmaIndex({ signal });
+    const magazines = index.index?.articleCount ? magazinePool : await ensureMagazineRecommendationPool(signal);
     const library = buildRecommendationArticlePool(
       magazines.length ? magazines : magazinePool,
       builtInLibrary,
@@ -929,6 +969,7 @@ export default function App() {
       catalogSize?: number;
     } | undefined;
 
+    const { resolveRecommendationArticle } = await import('./lib/resolveRecommendation');
     const resolved = await resolveRecommendationArticle(
       request,
       {
@@ -994,10 +1035,11 @@ export default function App() {
     } catch (error) {
       if (requestId !== recommendationRequestIdRef.current || controller.signal.aborted) return;
       console.warn('Recommendation prefetch failed; using the local library.', error);
-      const fallback = selectLibraryFallback(
+      const fallback = selectBoundedRecommendationFallback(
         recommendationLibraryRef.current,
         history,
-        new Set(loading.seenArticleIds)
+        new Set(loading.seenArticleIds),
+        context.reviewWords,
       );
       updateRecommendationFeed((latest) => fallback
         ? finishRecommendationPrefetch(latest, fallback)
@@ -1041,10 +1083,11 @@ export default function App() {
       } catch (error) {
         if (requestId !== recommendationRequestIdRef.current || controller.signal.aborted) return;
         console.warn('Recommendation failed; using the local library.', error);
-        article = selectLibraryFallback(
+        article = selectBoundedRecommendationFallback(
           recommendationLibraryRef.current,
           history,
-          new Set()
+          new Set(),
+          reviewWords,
         );
         if (article) logRecommendationSource('timeout_fallback', article.title);
       }
@@ -1075,32 +1118,15 @@ export default function App() {
     }
   };
 
-  const handleRecommendForMe = () => {
-    const reviewWords = dueLemmas.slice(0, 5);
-    void startRecommendationReading('English Idioms & Daily Practice', reviewWords);
-  };
-
-  const handleStartTargetedReview = () => {
-    const words = dueLemmas.slice(0, 5);
-    void startRecommendationReading(
-      `Contextual review of: ${words.join(', ') || 'core vocabulary'}`,
-      words
-    );
-  };
-
   const startRecommendationFromEntry = () => {
     if (isRecommending) return;
-    if (getRecommendationEntryAction(Boolean(assessmentResult)) === 'assessment') {
-      navigate({ kind: 'assessment' }, { replace: true });
-      return;
-    }
     // Keep /recommend as a loading/empty shell for cold-start recommendation.
     if (route.kind !== 'recommendation' && route.kind !== 'reading') {
       navigate({ kind: 'recommendation' });
     }
     void startRecommendationReading(
       'English Idioms & Daily Practice',
-      dueLemmas.slice(0, 5)
+      reviewLemmas
     );
   };
 
@@ -1124,10 +1150,11 @@ export default function App() {
     let nextArticle = consumed.article;
 
     if (!nextArticle) {
-      nextArticle = selectLibraryFallback(
+      nextArticle = selectBoundedRecommendationFallback(
         recommendationLibraryRef.current,
         history,
-        new Set(nextState.seenArticleIds)
+        new Set(nextState.seenArticleIds),
+        recommendationContextRef.current?.reviewWords ?? [],
       );
       if (nextArticle) {
         nextState = markRecommendationArticleSeen(nextState, nextArticle.id);
@@ -1143,7 +1170,6 @@ export default function App() {
     // Close the previous article as soon as the next one takes over. The
     // reader keeps at most the current article plus one prefetched successor.
     updateRecommendationArticles([nextArticle]);
-    setLastReadingArticleId(nextArticle.id);
     ingestArticle(nextArticle, {
       open: true,
       source: nextArticle.source === 'ai_generated' ? 'recommend' : 'history',
@@ -1152,11 +1178,20 @@ export default function App() {
     void prefetchNextRecommendationArticle();
   };
 
-  const handleAddNewCustomArticle = (newArticle: Article) => {
+  const handleAddImportedArticles = (articles: Article[], notice?: string) => {
+    if (articles.length === 0) return;
     setShowEnterArticle(false);
-    // Manual import: store + open immediately; import module enriches in background.
+    setFileImportNotice(notice || null);
+    const [first, ...rest] = articles;
+    for (const article of rest) {
+      if (history.some(existing => existing.id === article.id)) continue;
+      ingestArticle(
+        { ...article, source: article.source || 'user_input' },
+        { open: false, source: 'manual' }
+      );
+    }
     beginReadingSession(
-      { ...newArticle, source: newArticle.source || 'user_input' },
+      history.find(existing => existing.id === first.id) ?? { ...first, source: first.source || 'user_input' },
       { source: 'manual' }
     );
   };
@@ -1239,8 +1274,15 @@ export default function App() {
   const isRecommendationReading = Boolean(
     recommendationFeed.status === 'active'
     && activeArticle
+    && !activeArticle.importBatchId
     && recommendationFeed.seenArticleIds.includes(activeArticle.id)
   );
+  const nextImportedArticle = activeArticle ? getNextImportedArticle(activeArticle, history) : undefined;
+  const magazineSequence = useMagazineReadingSequence(activeArticle, Boolean(
+    route.kind === 'reading' && !isRecommendationReading && activeArticle?.magazineIssueId
+  ));
+  const magazineContinuation = magazineSequence.state?.status === 'ready'
+    ? magazineSequence.state.continuation : undefined;
   const continuousReadingArticles = useMemo(() => {
     if (!isRecommendationReading) return undefined;
     const current = activeArticle || recommendationArticles[0];
@@ -1259,55 +1301,48 @@ export default function App() {
     fallback();
   };
   const goBackOrLibrary = () => goBackOrFallback(goToLibrary);
-  const goBackFromAssessment = () => goBackOrFallback(() => {
-    if (!assessmentResult) {
-      navigate({ kind: 'library' }, { replace: true });
-      return;
+  const returnToLearning = () => {
+    const index = readAppHistoryIndex(window.history.state);
+    if (index != null && index > 0 && readAppHistoryPreviousPath(window.history.state) === '/learning') {
+      window.history.back();
+    } else {
+      navigate({ kind: 'learning' }, { replace: true });
     }
-    goToLibrary();
-  });
-  const returnHome = goBackOrLibrary;
-  const openReadingTab = () => {
-    if (route.kind === 'reading' && activeArticle) return;
-    if (isRecommending) {
-      if (route.kind !== 'recommendation') navigate({ kind: 'recommendation' });
-      return;
-    }
-    const last = lastReadingArticleId ? findArticleById(lastReadingArticleId) : null;
-    if (last) {
-      const feed = recommendationFeedRef.current;
-      if (feed.status === 'active' && feed.seenArticleIds.includes(last.id)) {
-        navigate({ kind: 'reading', articleId: last.id });
-        return;
-      }
-      beginReadingSession(last, {
-        source: last.source === 'magazine'
-          ? 'magazine'
-          : last.source === 'ai_generated'
-            ? 'recommend'
-            : 'history',
-      });
-      return;
-    }
-    startRecommendationFromEntry();
   };
+  const returnHome = goBackOrLibrary;
+  const openRecommendationEntry = () => navigate({ kind: 'recommendation' });
+  const resumeReadingRef = useRef(route.kind === 'reading');
+  useEffect(() => {
+    if (resumeReadingRef.current && activeArticle) {
+      resumeReadingRef.current = false;
+      beginReadingSession(activeArticle);
+    }
+  }, [activeArticle?.id]);
+  const lastPreferenceRef = useRef(readingPreference.level);
+  useEffect(() => {
+    if (lastPreferenceRef.current === readingPreference.level) return;
+    lastPreferenceRef.current = readingPreference.level;
+    recommendationAbortControllerRef.current?.abort();
+    recommendationRequestIdRef.current += 1;
+    updateRecommendationFeed(latest => ({ ...latest, queuedArticle: null, isPrefetching: false }));
+    void prefetchNextRecommendationArticle();
+  }, [readingPreference.level]);
   const appNavigation = (
     <nav
-      className="w-full max-w-full flex items-center justify-center text-xs font-medium text-[#5B544C]"
+      className="app-navigation w-full max-w-full flex items-center justify-center text-xs font-medium text-[#5B544C]"
       aria-label="Primary navigation"
     >
-      <div className="nav-scroll-x flex items-center gap-0.5 sm:gap-1.5 px-0.5">
+      <div className="app-navigation__track nav-scroll-x flex items-center gap-0.5 sm:gap-1.5 px-0.5">
         {(
           [
             { id: 'library' as const, label: 'Library', icon: Library },
-            { id: 'reading' as const, label: '阅读', icon: BookOpen },
+            { id: 'reading' as const, label: '推荐阅读', icon: BookOpen },
             { id: 'learning' as const, label: '数据', icon: BarChart3 },
-            { id: 'history' as const, label: '历史', icon: History },
           ] as const
         ).map(({ id, label, icon: Icon }) => {
           const isCurrent = id === 'reading'
-            ? route.kind === 'reading' || route.kind === 'recommendation'
-            : route.kind === id;
+            ? isRecommendationReading || route.kind === 'recommendation'
+            : route.kind === id || (id === 'learning' && (route.kind === 'flashcards' || route.kind === 'learning-records' || route.kind === 'dictionary-settings' || route.kind === 'dictionary-trial')) || (id === 'library' && route.kind === 'reading' && !isRecommendationReading);
           return (
           <button
             key={id}
@@ -1317,33 +1352,29 @@ export default function App() {
             title={label}
             onClick={() => {
               if (id === 'reading') {
-                openReadingTab();
+                openRecommendationEntry();
+                return;
+              }
+              if (id === 'learning' && route.kind === 'flashcards') {
+                returnToLearning();
                 return;
               }
               navigate({ kind: id });
             }}
-            className={`tap-target min-h-10 px-2.5 py-2 sm:min-h-0 sm:px-2.5 sm:py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 shrink-0 ${
+            className={`app-navigation__item tap-target min-h-10 px-2.5 py-2 sm:min-h-0 sm:px-2.5 sm:py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 shrink-0 ${
               isCurrent
                 ? 'bg-white text-[#C35E37] shadow-2xs font-semibold'
                 : 'hover:bg-[#E4DFD5] active:bg-[#E0DBCF]'
             }`}
           >
             <Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-            <span className="hidden sm:inline">{label}</span>
+            <span className="app-navigation__label">{label}</span>
           </button>
           );
         })}
       </div>
     </nav>
   );
-
-  if (route.kind === 'landing') {
-    return (
-      <LandingPage
-        onStartAssessment={() => navigate({ kind: 'assessment' })}
-      />
-    );
-  }
 
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] font-sans flex flex-col overflow-x-clip safe-px">
@@ -1369,6 +1400,26 @@ export default function App() {
           {memoryStorageError}
         </div>
       )}
+      {memoryLifecycle.error && (
+        <div role="alert" className="bg-red-50 border-b border-red-200 text-center text-sm text-red-900 py-2 px-3 flex items-center justify-center gap-3 flex-wrap">
+          <span>学习记忆系统暂时不可用：{memoryLifecycle.error}</span>
+          {memoryLifecycle.retryable && (
+            <button
+              type="button"
+              className="rounded border border-red-300 bg-white px-2.5 py-1 text-xs font-semibold hover:bg-red-100"
+              onClick={() => { void memoryLifecycle.retry().catch(() => undefined); }}
+            >
+              重试
+            </button>
+          )}
+        </div>
+      )}
+      {(persistenceError || externalActivity.error || flashcardActivity.error) && (
+        <div role="alert" className="bg-amber-50 border-b border-amber-200 p-3 text-sm text-amber-900">
+          {persistenceError || externalActivity.error || flashcardActivity.error}
+          {persistenceError && <button className="ml-3 underline" onClick={retryPersistentWrites}>重试保存</button>}
+        </div>
+      )}
 
       {isRewriting && (
         <div className="bg-[#FCE7F3] border-b border-[#FBCFE8] text-center text-xs text-[#9D174D] py-2 font-medium px-3">
@@ -1376,7 +1427,16 @@ export default function App() {
         </div>
       )}
 
-      {importQueueSnapshot.bannerMessage && (
+      {fileImportNotice && (
+        <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] text-center text-xs text-[#075985] py-2 font-medium px-3">
+          <span>{fileImportNotice}</span>
+          <button type="button" className="ml-3 underline" onClick={() => setFileImportNotice(null)}>
+            关闭
+          </button>
+        </div>
+      )}
+
+      {importQueueSnapshot.bannerMessage && route.kind !== 'reading' && (
         <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] text-center text-xs text-[#075985] py-2 font-medium px-3 flex items-center justify-center gap-3 flex-wrap">
           <span>{importQueueSnapshot.bannerMessage}</span>
           <button
@@ -1405,49 +1465,39 @@ export default function App() {
       )}
 
       <div className="flex-1">
+        <PageLoadBoundary key={route.kind}><Suspense fallback={pageLoading}>
         {route.kind === 'recommendation' && (
           <RecommendationEntryScreen
             isLoading={isRecommending}
             phase={recommendPhase}
             feedEnded={recommendationFeed.status === 'ended'}
+            onSelectArticle={article => {
+              const saved = history.find(item => item.id === article.id);
+              beginReadingSession(saved ? { ...article, ...saved, media: article.media } : article, { source: 'magazine' });
+            }}
             onStartRecommendation={startRecommendationFromEntry}
+            onContinueRecommendation={recommendationFeed.status === 'active' && recommendationArticles[0]
+              ? () => navigate({ kind: 'reading', articleId: recommendationArticles[0].id }) : undefined}
             onOpenLibrary={() => {
               resetRecommendationFeed();
               navigate({ kind: 'library' });
-            }}
-            onStartAssessment={() => {
-              resetRecommendationFeed();
-              navigate({ kind: 'assessment' });
             }}
             onBack={goBackOrLibrary}
             navigation={appNavigation}
           />
         )}
 
-        {route.kind === 'assessment' && (
-          <ReadingAssessmentScreen
-            onBack={goBackFromAssessment}
-            previousResult={assessmentResult}
-            onComplete={(result) => {
-              setAssessmentResult(result);
-              pushEvent('review_start', {
-                detail: `cefr_assessment:${result.recommendedBand}`,
-              });
-            }}
-            onStartRecommendedReading={(band) => {
-              void startRecommendationReading(
-                `CEFR ${band} reading practice`,
-                dueLemmas.slice(0, 5)
-              );
-            }}
+        {route.kind === 'flashcards' && (
+          <FlashcardReviewScreen
+            navigation={appNavigation}
+            onBack={returnToLearning}
+            onOpenReading={openRecommendationEntry}
           />
         )}
 
         {route.kind === 'library' && (
           <LibraryScreen
             userArticles={userArticles}
-            userCefrLevel={userCefrLevel}
-            hasAssessment={Boolean(assessmentResult)}
             onSelectArticle={(article) =>
               beginReadingSession(article, {
                 source: article.source === 'magazine' ? 'magazine' : 'history',
@@ -1463,6 +1513,30 @@ export default function App() {
           <ReadingScreen
             key={isRecommendationReading ? 'recommendation-reading-stream' : activeArticle.id}
             article={activeArticle}
+            difficultyFeedback={readingPreference.feedback[activeArticle.id]}
+            onDifficultyFeedback={rating => setReadingPreference(previous => applyDifficultyFeedback(previous,
+              activeArticle.id, activeArticle.levelRating?.level || activeArticle.level, rating))}
+            onNextArticle={activeArticle.importBatchId
+              ? nextImportedArticle ? () => beginReadingSession(nextImportedArticle, { source: 'manual' }) : undefined
+              : isRecommendationReading ? startRecommendationFromEntry : undefined}
+            nextArticleLabel={activeArticle.importBatchId
+              ? activeArticle.importBatchFormat === 'pdf' ? '下一页正文' : '下一章'
+              : '下一篇推荐'}
+            readingPathLabel={isRecommendationReading ? '推荐阅读'
+              : magazineContinuation
+                ? `Library · ${magazineContinuation.issueTitle} · 第 ${magazineContinuation.position} / ${magazineContinuation.total} 篇`
+                : activeArticle.magazineIssueId ? 'Library · 按阅读目录阅读' : 'Library'}
+            reviewWordCandidates={isRecommendationReading ? recommendationContextRef.current?.reviewWords : undefined}
+            readingContinuation={magazineSequence.state && <MagazineReadingNavigation
+              continuation={magazineContinuation}
+              error={magazineSequence.state.status === 'error' ? magazineSequence.state.message : undefined}
+              onNext={() => {
+                const next = magazineContinuation?.nextArticle;
+                if (next) beginReadingSession(findArticleById(next.id) || next, { source: 'magazine' });
+              }}
+              onRetry={magazineSequence.reload}
+              onOpenLibrary={goToLibrary}
+            />}
             navigation={appNavigation}
             continuousArticles={continuousReadingArticles}
             importJob={importQueueSnapshot.jobs.find((j) => j.articleId === activeArticle.id) ?? null}
@@ -1490,7 +1564,7 @@ export default function App() {
             onChatMessagesChange={(messages) => {
               touchSession(activeArticle.id, (s) => ({
                 ...s,
-                chatMessages: messages,
+                chatMessages: mergeChatMessages(s.chatMessages, messages),
                 lastOpenedAt: new Date().toISOString(),
               }));
             }}
@@ -1510,7 +1584,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={returnHome}
-                className="mt-6 rounded-xl bg-[#C35E37] px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#A94E2D]"
+                className="app-primary-action mt-6 rounded-xl px-5 py-2.5 text-sm font-medium transition-colors"
               >
                 返回上一页
               </button>
@@ -1530,7 +1604,7 @@ export default function App() {
                 type="button"
                 onClick={startRecommendationFromEntry}
                 disabled={isRecommending}
-                className="px-4 py-2 bg-[#C35E37] text-white rounded-xl text-sm disabled:opacity-60"
+                className="app-primary-action px-4 py-2 rounded-xl text-sm disabled:opacity-60"
               >
                 开始推荐阅读
               </button>
@@ -1549,48 +1623,73 @@ export default function App() {
           <MyLearningScreen
             onBack={goBackOrLibrary}
             navigation={appNavigation}
-            onStartTargetedReview={handleStartTargetedReview}
+            onOpenRecommendedReading={openRecommendationEntry}
+            onOpenFlashcards={() => navigate({ kind: 'flashcards' })}
+            onOpenReadingRecords={() => navigate({ kind: 'learning-records' })}
+            onOpenDictionarySettings={() => navigate({ kind: 'dictionary-settings' })}
             onOpenArticle={(id) => {
               const art = history.find((a) => a.id === id);
               if (art) beginReadingSession(art, { source: 'history' });
             }}
-            onStartEnglishTest={() => navigate({ kind: 'assessment' })}
-            onStartRecommendedReading={handleRecommendForMe}
-            assessedBand={assessmentResult?.recommendedBand ?? null}
-            assessmentCompletedAt={assessmentResult?.completedAt ?? null}
             articlesReadCount={completedArticleCount}
+            introducedWordsCount={bands.introduced}
+            learnedWordsCount={bands.learned}
             masteredWordsCount={bands.mastered}
             learningWordsCount={bands.learning}
             streakDaysCount={streakDays}
             recentEventCount={recentEventCount}
-            dueWordCount={dueLemmas.length}
+            dueWordCount={bands.due}
+            proficiencies={proficiencies}
+            proficienciesLoading={proficienciesLoading}
+            proficienciesError={proficienciesError}
+            onRetryProficiencies={() => { void refreshProficiencies(); }}
             weakPointMetrics={weakPointMetrics}
-            isTargetedReviewLoading={isRecommending}
             articleProgress={articleProgress}
           />
         )}
 
-        {route.kind === 'history' && (
-          <HistoryScreen
-            articles={history}
-            sessions={sessions}
-            onSelectArticle={(article) =>
-              beginReadingSession(article, { source: 'history' })
-            }
-            onBack={goBackOrLibrary}
+        {route.kind === 'learning-records' && (
+          <ReadingStudyScreen
+            items={readingStudyItems}
+            selectedArticleId={route.articleId}
             navigation={appNavigation}
+            onBack={() => goBackOrFallback(() => navigate(route.articleId ? { kind: 'learning-records' } : { kind: 'learning' }, { replace: true }))}
+            onOverview={() => navigate({ kind: 'learning' })}
+            onSelectItem={(articleId) => navigate({ kind: 'learning-records', articleId })}
+            onOpenArticle={(id) => {
+              const article = history.find(item => item.id === id);
+              if (article) beginReadingSession(article, { source: 'history' });
+            }}
+            loading={studyEvidence.loading}
+            error={studyEvidence.error}
+            onRetry={studyEvidence.retry}
           />
         )}
+
+        {route.kind === 'dictionary-settings' && (
+          <DictionarySettingsScreen
+            navigation={appNavigation}
+            onTryFrench={() => navigate({ kind: 'dictionary-trial' })}
+            onTryJapanese={() => navigate({ kind: 'dictionary-trial', language: 'ja' })}
+            onBack={() => goBackOrFallback(() => navigate({ kind: 'learning' }, { replace: true }))}
+          />
+        )}
+
+        {route.kind === 'dictionary-trial' && <DictionaryTrialScreen key={route.language ?? 'fr'} language={route.language ?? 'fr'} navigation={appNavigation}
+          onImport={article => handleAddImportedArticles([article])}
+          onSettings={() => navigate({ kind: 'dictionary-settings' })}
+          onBack={() => goBackOrFallback(() => navigate({ kind: 'dictionary-settings' }, { replace: true }))} />}
+
+        </Suspense></PageLoadBoundary>
       </div>
 
       {showEnterArticle && (
-        <EnterArticleModal
+        <PageLoadBoundary onClose={() => setShowEnterArticle(false)}><Suspense fallback={<ArticleImportLoading onClose={() => setShowEnterArticle(false)} />}><EnterArticleModal
           onClose={() => setShowEnterArticle(false)}
-          onSubmitCustomArticle={handleAddNewCustomArticle}
-        />
+          onSubmitCustomArticles={handleAddImportedArticles}
+        /></Suspense></PageLoadBoundary>
       )}
 
     </div>
   );
 }
-

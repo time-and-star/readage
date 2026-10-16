@@ -13,10 +13,15 @@ import {
   scheduleReviewArticles,
   scoreArticlesForReview,
   diversifyRecommendations,
+  getArticleWordCount,
+  isRecommendationArticleWithinBounds,
 } from './memoryV2/recommendation';
 import { memoryV2 } from './memoryV2/hooks';
-import { getNewLemmas } from './readingExposure';
+import { extractRecommendationLemmas } from './recommendationLearningUnits';
+import { DEFAULT_ARTICLE_TARGET_WORD_COUNT, DEFAULT_ARTICLE_TARGET_POOL_SIZE } from './recommendationPolicy';
 import { toLemma } from './proficiency';
+import { resolveLearningWordIds } from './dictionaryClient';
+import { getCanonicalWordProficiencyMap } from './learningWordProficiency';
 import type { WordProficiencyView } from './memoryV2/memorySystem';
 import {
   projectBandsOntoCatalog,
@@ -32,29 +37,46 @@ import {
 /**
  * 从文章中提取所有 lemmas
  */
-function extractLemmasFromArticle(article: Article): string[] {
-  const allLemmas = new Set<string>();
-  const exposedSet = new Set<string>();
-
-  for (const paragraph of article.content) {
-    const newLemmas = getNewLemmas(paragraph, exposedSet);
-    newLemmas.forEach(lemma => {
-      allLemmas.add(lemma);
-      exposedSet.add(lemma);
-    });
-  }
-
-  return Array.from(allLemmas);
+async function convertToArticleCandidates(articles: Article[]): Promise<ArticleCandidate[]> {
+  const candidates = articles.map(article => ({
+    article,
+    lemmas: extractRecommendationLemmas(article),
+  }));
+  const surfaces = [...new Set(candidates.flatMap((candidate) => candidate.lemmas))];
+  const canonicalIds = await resolveRecommendationWordIds(surfaces);
+  const bySurface = new Map(surfaces.map((word, index) => [word, canonicalIds[index]]));
+  return candidates.map((candidate) => ({ ...candidate,
+    lemmas: [...new Set(candidate.lemmas.map((word) => bySurface.get(word) ?? word))],
+  }));
 }
 
-/**
- * 将文章库转换为候选文章列表
- */
-function convertToArticleCandidates(articles: Article[]): ArticleCandidate[] {
-  return articles.map(article => ({
-    article,
-    lemmas: extractLemmasFromArticle(article),
-  }));
+/** Ranking remains usable while the dictionary API is temporarily unavailable. */
+async function resolveRecommendationWordIds(words: readonly string[]): Promise<string[]> {
+  try { return await resolveLearningWordIds(words); }
+  catch { return words.map(toLemma); }
+}
+
+async function canonicalProficiencyMap(words: readonly WordProficiencyView[]): Promise<Map<string, WordProficiencyView>> {
+  try { return await getCanonicalWordProficiencyMap(words); }
+  catch { return new Map(words.map((word) => [toLemma(word.wordId), word])); }
+}
+
+function pendingLearningTargets(proficiencyMap: ReadonlyMap<string, WordProficiencyView>): Set<string> {
+  const now = Date.now();
+  return new Set([...proficiencyMap].filter(([, proficiency]) =>
+    proficiency.isFlashcardEligible !== false && (
+      proficiency.level <= 2
+      || (!proficiency.isIntroduced && Date.parse(proficiency.nextReview) <= now)
+    )
+  ).map(([wordId]) => toLemma(wordId)).filter(Boolean));
+}
+
+function countPendingLearningHits(lemmas: readonly string[], targets: ReadonlySet<string>): number {
+  let hits = 0;
+  for (const lemma of new Set(lemmas.map(toLemma))) {
+    if (targets.has(lemma)) hits += 1;
+  }
+  return hits;
 }
 
 function applyOpportunityRanking(
@@ -64,10 +86,15 @@ function applyOpportunityRanking(
   v5Profile?: V5RecommendationProfile,
 ): RecommendationScore[] {
   const opportunityByWord = new Map<string, number>();
+  const learningTargets = pendingLearningTargets(proficiencyMap);
   for (const [wordId, proficiency] of proficiencyMap) {
     const opportunity = proficiency.opportunityScore;
-    if (typeof opportunity === 'number' && Number.isFinite(opportunity) && opportunity > 0) {
-      opportunityByWord.set(toLemma(wordId), opportunity);
+    const needsLearning = learningTargets.has(toLemma(wordId));
+    if (typeof opportunity === 'number' && Number.isFinite(opportunity)) {
+      if (opportunity > 0) opportunityByWord.set(toLemma(wordId), opportunity);
+    } else if (needsLearning) {
+      // Older memory snapshots have no V4 opportunity score yet.
+      opportunityByWord.set(toLemma(wordId), 40);
     }
   }
   const candidateById = new Map(candidates.map((candidate) => [candidate.article.id, candidate]));
@@ -87,6 +114,7 @@ function applyOpportunityRanking(
         ...recommendation,
         score: scored.articleScore,
         opportunityCoverage: scored.opportunityCoverage,
+        learningTargetCount: countPendingLearningHits(candidate.lemmas, learningTargets),
         reason: scored.opportunityCoverage > 0
           ? `${recommendation.reason || '推荐'} · ${scored.coveredWords.length} 个高机会词`
           : recommendation.reason,
@@ -106,10 +134,29 @@ function applyOpportunityRanking(
       level: candidate?.article.levelRating?.level
         || candidate?.article.level
         || candidate?.article.rewriteTargetLevel,
-      estimatedWordCount: candidate?.article.estimatedWordCount,
+      estimatedWordCount: candidate ? getArticleWordCount(candidate.article) ?? undefined : undefined,
     };
   });
   return rerankRecommendationScoresV5(ranked, v5Candidates, v5Profile);
+}
+
+/** Prefer a useful amount of distinct pending words without emptying sparse libraries. */
+function prioritizeLearningCoverage(
+  recommendations: RecommendationScore[],
+  minimum: number,
+): RecommendationScore[] {
+  if (!Number.isFinite(minimum) || minimum <= 0) return recommendations;
+  const bestCoverage = recommendations.reduce(
+    (best, row) => Math.max(best, row.learningTargetCount ?? 0), 0,
+  );
+  const threshold = Math.min(Math.ceil(minimum), bestCoverage);
+  if (threshold === 0) return recommendations;
+  return recommendations.filter((row) => (row.learningTargetCount ?? 0) >= threshold);
+}
+
+function compareReviewCoverage(left: RecommendationScore, right: RecommendationScore): number {
+  return (right.reviewWordsCount ?? 0) - (left.reviewWordsCount ?? 0)
+    || right.score - left.score;
 }
 
 /**
@@ -132,6 +179,8 @@ export interface MemoryV2RecommendationOptions {
   preferredTopics?: string[];
   /** 最小学习区单词数 */
   minLearningZoneWords?: number;
+  /** Desired distinct pending-word coverage per article; defaults to 15. */
+  targetLearningWords?: number;
   /** 最大未知单词占比 */
   maxUnknownWordsRatio?: number;
   /** 最近阅读的文章 ID（用于多样性推荐） */
@@ -164,6 +213,7 @@ export class MemoryV2RecommendationAdapter {
   private strategy: RecommendationStrategy;
   private engineOptions: RecommendationParams;
   private v5Profile?: V5RecommendationProfile;
+  private targetLearningWords: number;
 
   constructor(options: MemoryV2RecommendationOptions = {}) {
     const {
@@ -176,6 +226,9 @@ export class MemoryV2RecommendationAdapter {
 
     this.strategy = strategy;
     this.v5Profile = options.v5Profile;
+    this.targetLearningWords = options.targetLearningWords
+      ?? options.minLearningZoneWords
+      ?? DEFAULT_ARTICLE_TARGET_WORD_COUNT;
     const weights = this.getStrategyWeights(strategy);
     this.engineOptions = {
       userLevel,
@@ -280,20 +333,32 @@ export class MemoryV2RecommendationAdapter {
       allowedBands: effectiveBands,
       // Local pools use the CEFR window only when the caller keeps hard filters on.
       cefrHardFilter: applyHardFilters
-        ? options.cefrHardFilter ?? this.engineOptions.cefrHardFilter ?? Boolean(this.engineOptions.cefrProfile?.hasAssessment)
+        ? options.cefrHardFilter ?? this.engineOptions.cefrHardFilter ?? Boolean(this.engineOptions.cefrProfile?.useLevelFilter)
         : false,
     });
 
     const userId = memoryV2.getUserId();
     const system = memoryV2.getSystem();
     const allProficiency = await system.getAllWordProficiency(userId);
-    const proficiencyMap = new Map(
-      allProficiency.map((p) => [p.wordId, p])
-    );
+    const proficiencyMap = await canonicalProficiencyMap(allProficiency);
 
-    const filtered = applyHardFilters
+    let filtered = applyHardFilters
       ? engine.filterCandidates(articleCandidates, proficiencyMap)
       : articleCandidates.filter((candidate) => candidate.lemmas.length > 0);
+
+    // A sparse memory log cannot establish that every unrecorded word is unknown.
+    // If that filter removed all target-bearing articles, retain readable matches
+    // and let the engine's difficulty penalty handle the uncertain vocabulary.
+    if (applyHardFilters && (options.strategy ?? this.strategy) !== 'consolidate') {
+      const targets = pendingLearningTargets(proficiencyMap);
+      if (targets.size > 0 && !filtered.some((candidate) => countPendingLearningHits(candidate.lemmas, targets) > 0)) {
+        const readableMatches = articleCandidates.filter((candidate) =>
+          countPendingLearningHits(candidate.lemmas, targets) > 0
+          && isRecommendationArticleWithinBounds(candidate.article, engine.getCefrProfile())
+        );
+        if (readableMatches.length > 0) filtered = readableMatches;
+      }
+    }
 
     let recommendations = engine.recommend(
       filtered,
@@ -319,6 +384,13 @@ export class MemoryV2RecommendationAdapter {
       );
     }
 
+    const strategy = options.strategy ?? this.strategy;
+    if (strategy !== 'consolidate') {
+      recommendations = prioritizeLearningCoverage(
+        recommendations,
+        options.targetLearningWords ?? options.minLearningZoneWords ?? this.targetLearningWords,
+      );
+    }
     return recommendations.slice(0, limit);
   }
 
@@ -329,7 +401,7 @@ export class MemoryV2RecommendationAdapter {
     candidates: Article[],
     options: MemoryV2RecommendationOptions = {}
   ): Promise<RecommendationScore[]> {
-    const articleCandidates = convertToArticleCandidates(candidates);
+    const articleCandidates = await convertToArticleCandidates(candidates);
     return this.recommendCandidates(articleCandidates, options);
   }
 
@@ -349,7 +421,7 @@ export class MemoryV2RecommendationAdapter {
   ): Promise<RecommendationScore[]>;
   async recommendForReview(
     candidates: Article[],
-    targetWordsOrCount: readonly string[] | number = 10,
+    targetWordsOrCount: readonly string[] | number = DEFAULT_ARTICLE_TARGET_POOL_SIZE,
     limit: number = 5
   ): Promise<RecommendationScore[]> {
     const userId = memoryV2.getUserId();
@@ -357,8 +429,7 @@ export class MemoryV2RecommendationAdapter {
     const explicitTargetWords = Array.isArray(targetWordsOrCount)
       ? Array.from(
           new Set(
-            targetWordsOrCount
-              .map(toLemma)
+            (await resolveRecommendationWordIds(targetWordsOrCount))
               .filter(Boolean)
           )
         )
@@ -367,18 +438,38 @@ export class MemoryV2RecommendationAdapter {
       ? targetWordsOrCount
       : explicitTargetWords.length > 0
         ? explicitTargetWords.length
-        : 10;
+        : DEFAULT_ARTICLE_TARGET_POOL_SIZE;
 
     const allProficiency = await system.getAllWordProficiency(userId);
-    const proficiencyMap = new Map(
-      allProficiency.map(p => [p.wordId, p])
-    );
+    const proficiencyMap = await canonicalProficiencyMap(allProficiency);
 
     let priorityWords: WordProficiencyView[];
+    let confirmationWordsForRanking: WordProficiencyView[] = [];
+    const confirmationProvider = system as typeof system & {
+      getConfirmationWords?: (
+        userId: string,
+        currentTime: Date,
+        limit?: number,
+      ) => Promise<WordProficiencyView[]>;
+    };
     if (explicitTargetWords.length > 0) {
       // Explicit targets take precedence and must not trigger a due-word query.
+      // Refresh the confirmation metadata when available so an explicit target
+      // from the UI still avoids articles already used as effective contexts.
+      if (typeof confirmationProvider.getConfirmationWords === 'function') {
+        const confirmationWords = await confirmationProvider.getConfirmationWords(
+          userId,
+          new Date(),
+          explicitTargetWords.length,
+        );
+        const confirmationByWord = await canonicalProficiencyMap(confirmationWords);
+        confirmationWordsForRanking = explicitTargetWords
+          .map((wordId) => confirmationByWord.get(wordId))
+          .filter((word): word is WordProficiencyView => Boolean(word));
+      }
       priorityWords = explicitTargetWords.map(wordId => {
-        const existing = proficiencyMap.get(wordId);
+        const existing = confirmationWordsForRanking.find((word) => toLemma(word.wordId) === wordId)
+          ?? proficiencyMap.get(wordId);
         if (existing) return existing;
 
         // A requested word may not have memory state yet, but it is still a valid target.
@@ -395,19 +486,38 @@ export class MemoryV2RecommendationAdapter {
         return target;
       });
     } else {
-      // Preserve the legacy behavior when no concrete target set is supplied.
-      priorityWords = await system.getDueWords(userId, new Date(), targetReviewCount);
+      // Confirmation targets are pre-FSRS words and must be surfaced alongside
+      // due reviews without changing the meaning of getDueWords(). Keep the
+      // optional guard for older test/storage adapters that only implement the
+      // original review API.
+      const now = new Date();
+      const confirmationWords = typeof confirmationProvider.getConfirmationWords === 'function'
+        ? await confirmationProvider.getConfirmationWords(userId, now, targetReviewCount)
+        : [];
+      confirmationWordsForRanking = [...(await canonicalProficiencyMap(confirmationWords)).values()]
+        .map((word) => proficiencyMap.get(word.wordId) ?? word)
+        .filter((word) => word.isIntroduced);
+      const dueWords = await system.getDueWords(userId, now, targetReviewCount);
+      const canonicalDueWords = [...(await canonicalProficiencyMap(dueWords)).values()]
+        .map((word) => proficiencyMap.get(word.wordId) ?? word)
+        .filter((word) => !word.isIntroduced && new Date(word.nextReview) <= now);
+      const merged = new Map([...confirmationWordsForRanking, ...canonicalDueWords]
+        .map((word) => [word.wordId, word]));
+      priorityWords = [...merged.values()].slice(0, targetReviewCount);
     }
 
     if (priorityWords.length === 0) {
       return this.recommend(candidates, { limit });
     }
 
-    const articleCandidates = convertToArticleCandidates(candidates);
+    const articleCandidates = await convertToArticleCandidates(candidates);
+    // A reread of the same article on a later local day is valid evidence, so
+    // confirmation targets use the same article candidate pool as FSRS targets.
+    const reviewCandidates = articleCandidates;
     // Unique-hit schedule first (drops zero-hit articles).
     const reviewArticles = scheduleReviewArticles(
       priorityWords,
-      articleCandidates,
+      reviewCandidates,
       targetReviewCount
     );
 
@@ -431,14 +541,14 @@ export class MemoryV2RecommendationAdapter {
       targetIds,
       proficiencyMap,
       this.createEngine({ allowedBands: effectiveBands, cefrHardFilter: false }),
-      limit
+      Math.max(reviewArticles.length, limit)
     );
     return applyOpportunityRanking(
       ranked,
       articleCandidates,
       proficiencyMap,
       this.v5Profile,
-    ).slice(0, limit);
+    ).sort(compareReviewCoverage).slice(0, limit);
   }
 
   /**
@@ -466,6 +576,8 @@ export class MemoryV2RecommendationAdapter {
       this.engineOptions.minCandidatesAfterCefrFilter = options.minCandidatesAfterCefrFilter;
     }
     if (options.v5Profile !== undefined) this.v5Profile = options.v5Profile;
+    if (options.targetLearningWords !== undefined) this.targetLearningWords = options.targetLearningWords;
+    else if (options.minLearningZoneWords !== undefined) this.targetLearningWords = options.minLearningZoneWords;
   }
 }
 
@@ -512,13 +624,12 @@ export async function rankMagazineLemmaCandidates(
     // Full-catalog C1 text: hard unknown-ratio filters collapse the pool to ~0.
     applyHardFilters: rest.applyHardFilters ?? false,
     maxUnknownWordsRatio: rest.maxUnknownWordsRatio ?? 0.95,
-    minLearningZoneWords: rest.minLearningZoneWords ?? 1,
   });
 
   if (reviewWords.length > 0) {
     // Prefer articles containing target review lemmas, then score.
     const target = new Set(
-      reviewWords.map(toLemma).filter(Boolean)
+      (await resolveRecommendationWordIds(reviewWords)).filter(Boolean)
     );
     const hitById = new Map<string, number>();
     const withTargets = filtered
@@ -535,8 +646,9 @@ export async function rankMagazineLemmaCandidates(
     const ranked = await adapter.recommendCandidates(pool, {
       ...rest,
       strategy: 'review-first',
-      // Rank a wider head so target-hit boost can surface the best coverage.
-      limit: Math.max(limit * 3, 48),
+      // Compare every eligible article before trimming by requested-word coverage.
+      limit: pool.length,
+      minLearningZoneWords: 0,
       recentArticleIds: recentIds,
       applyHardFilters: false,
     });
@@ -549,14 +661,14 @@ export async function rankMagazineLemmaCandidates(
         return {
           ...score,
           dueWordsCount: Math.max(score.dueWordsCount, hits),
-          score: score.score + hits * 40,
+          reviewWordsCount: hits,
           reason:
             hits > 0
               ? `${score.reason || '全库推荐'} · 命中 ${hits} 个复习词`
               : score.reason,
         };
       })
-      .sort((a, b) => b.score - a.score);
+      .sort(compareReviewCoverage);
 
     return boosted.slice(0, limit);
   }
@@ -581,11 +693,12 @@ export async function memoryV2RecommendationProvider(
   const { topic, reviewWords, excludeArticleIds } = request;
   const excluded = new Set(excludeArticleIds.filter(Boolean));
 
-  // Drop feed-session excludes and already-finished pieces so the same article
-  // is never re-served for review ranking.
+  // Keep normal recommendations fresh, while allowing a targeted review to
+  // reopen a completed article so a later-local-day reread can count.
+  const allowCompletedReread = reviewWords.length > 0;
   const candidates = articleLibrary.filter((article) => {
     if (!article?.id || excluded.has(article.id)) return false;
-    if (article.status === 'Completed') return false;
+    if (!allowCompletedReread && article.status === 'Completed') return false;
     return true;
   });
 

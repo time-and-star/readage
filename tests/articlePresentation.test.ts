@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   classifyArticleParagraph,
   getArticleInlineParts,
+  isDuplicateArticleTitle,
 } from '../src/lib/articlePresentation';
 
 test('classifies an imported article title and byline for editorial layout', () => {
@@ -73,4 +74,31 @@ test('keeps normal article paragraphs in the reading flow', () => {
     classifyArticleParagraph('In 2007, the artists put a new twist on a famous sculpture.', 'An article title'),
     'body'
   );
+});
+
+test('matches duplicate headings across capitalization, Unicode quotes, dashes and spacing', () => {
+  for (const paragraph of [
+    'AI HELPS WOMEN IN KENYA – LEVEL 2',
+    '“AI helps women in Kenya—level 2”',
+    '«AI helps women in Kenya - level 2»',
+    ' AI helps women\n in Kenya – level 2 ',
+  ]) {
+    assert.equal(isDuplicateArticleTitle(paragraph, 'AI helps women in Kenya – level 2'), true);
+    assert.equal(classifyArticleParagraph(paragraph, 'AI helps women in Kenya – level 2'), 'title');
+  }
+});
+
+test('preserves ordinary sentences and section headings that are not duplicate titles', () => {
+  const title = 'When America walks away';
+  for (const paragraph of [
+    'When America walks away.',
+    'When America walks away, the region will change.',
+    'Leaders | The Middle East',
+    'For decades America has enjoyed hegemony over the Middle East.',
+  ]) {
+    assert.equal(isDuplicateArticleTitle(paragraph, title), false);
+    assert.equal(classifyArticleParagraph(paragraph, title), 'body');
+  }
+  assert.equal(isDuplicateArticleTitle(' ', ''), false);
+  assert.equal(isDuplicateArticleTitle('If we dont change', "If we don't change"), false);
 });

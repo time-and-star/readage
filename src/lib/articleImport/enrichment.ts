@@ -250,7 +250,7 @@ function alignTranslationsToSourceParagraphs(
 }
 
 type EnrichableArticle = Pick<Article, 'content'> &
-  Partial<Pick<Article, 'paragraphTranslations' | 'levelRating' | 'source' | 'rewriteTargetLevel'>>;
+  Partial<Pick<Article, 'paragraphTranslations' | 'levelRating' | 'source' | 'rewriteTargetLevel' | 'language'>>;
 
 function isUsableTranslation(t: unknown): boolean {
   return (
@@ -289,6 +289,8 @@ export function hasOfficialLevelRating(
  * Whether import still needs work (missing translations and/or official rating).
  */
 export function needsImportEnrichment(article: EnrichableArticle): boolean {
+  // The existing CEFR/rewrite jobs are English-specific; other languages translate on demand.
+  if (article.language && article.language.split('-')[0].toLowerCase() !== 'en') return false;
   if ((article.content?.length ?? 0) === 0) return false;
   return !hasCompleteParagraphTranslations(article) || !hasOfficialLevelRating(article);
 }
@@ -505,6 +507,7 @@ async function runRating(
   prepared: { wordCount: number; charCount: number },
   options: {
     title: string;
+    sourceLevel?: string;
     fetcher?: typeof fetch;
     onProgress?: (progress: EnrichProgress) => void;
     parallelWithTranslation?: boolean;
@@ -547,9 +550,9 @@ async function runRating(
     const reason = error instanceof Error ? error.message : '评级失败';
     return {
       levelRating: {
-        level: 'B1',
+        level: options.sourceLevel?.trim() || 'B1',
         difficultyScore: 50,
-        summary: `AI 评级失败（${reason}），暂用默认 B1。可稍后重新导入。`,
+        summary: `AI 评级失败（${reason}），保留文章原始等级 ${options.sourceLevel?.trim() || 'B1'}。可稍后重新导入。`,
       },
       ratingTruncated,
     };
@@ -563,7 +566,7 @@ async function runRating(
  * - Article-level queue concurrency is independent (queue.ts).
  */
 export async function enrichArticleOnImport(
-  article: Pick<Article, 'title' | 'content'>,
+  article: Pick<Article, 'title' | 'content'> & Partial<Pick<Article, 'level'>>,
   options?: {
     targetLanguage?: string;
     onProgress?: (progress: EnrichProgress) => void;
@@ -626,15 +629,16 @@ export async function enrichArticleOnImport(
   const ratingPromise = needRating
     ? runRating(paragraphs, prepared, {
         title: article.title,
+        sourceLevel: article.level,
         fetcher,
         onProgress,
         parallelWithTranslation: parallel,
       })
     : Promise.resolve({
         levelRating: {
-          level: 'B1',
+          level: article.level?.trim() || 'B1',
           difficultyScore: 50,
-          summary: '未能完成 AI 评级，暂用默认 B1。',
+          summary: `未能完成 AI 评级，暂保留原始等级 ${article.level?.trim() || 'B1'}。`,
         } satisfies ArticleLevelRating,
         ratingTruncated: false,
       });

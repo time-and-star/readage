@@ -1,4 +1,4 @@
-import type { Article, MagazineArticleStub, MagazineIssue, MagazineSourceMeta } from '../../src/types';
+import type { Article, MagazineArticleStub, MagazineFormat, MagazineIssue, MagazineSourceMeta } from '../../src/types';
 import { makeArticleId, makeIssueId } from './config';
 import type { ParsedChapter } from './parseEpub';
 
@@ -13,7 +13,9 @@ export function chaptersToArticles(
   issueLabel: string
 ): Article[] {
   return chapters.map((ch, index) => {
-    const id = makeArticleId(source.id, issueLabel, ch.title, index);
+    const id = source.provider === 'rss_fulltext'
+      ? `mag:${source.id}:${issueLabel}:article-${index + 1}`
+      : makeArticleId(source.id, issueLabel, ch.title, index);
     return {
       id,
       title: ch.title,
@@ -26,6 +28,7 @@ export function chaptersToArticles(
       magazineIssueId: makeIssueId(source.id, issueLabel),
       magazineSourceId: source.id,
       content: ch.paragraphs,
+      media: ch.media,
       keyWords: [],
     };
   });
@@ -43,19 +46,22 @@ export function articlesToStubs(articles: Article[]): MagazineArticleStub[] {
 export function buildIssueMeta(opts: {
   source: MagazineSourceMeta;
   issueLabel: string;
-  format: 'epub' | 'pdf';
+  format: MagazineFormat;
   remotePath: string;
   remoteSha?: string;
   articleCount: number;
   status: MagazineIssue['status'];
   errorMessage?: string;
+  title?: string;
+  publishedAt?: string;
 }): MagazineIssue {
   return {
     id: makeIssueId(opts.source.id, opts.issueLabel),
     sourceId: opts.source.id,
     issueLabel: opts.issueLabel,
-    title: `${opts.source.displayName} · ${opts.issueLabel}`,
-    publishedAt: opts.issueLabel,
+    title: opts.title || `${opts.source.displayName} · ${opts.issueLabel}`,
+    publishedAt: opts.publishedAt || opts.issueLabel,
+    sourceKind: opts.source.sourceKind,
     importedAt: new Date().toISOString(),
     format: opts.format,
     remotePath: opts.remotePath,

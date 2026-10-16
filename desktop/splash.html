@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+  <title>ReadAge</title>
+  <style>
+    html, body { margin: 0; background: #ff5b22; }
+    body {
+      box-sizing: border-box; min-height: 100vh; min-height: 100dvh;
+      padding: 24px 28px; color: #211a16;
+      font-family: Arial, "Helvetica Neue", "Microsoft YaHei", sans-serif;
+      -webkit-text-size-adjust: 100%; -webkit-font-smoothing: antialiased;
+    }
+    main { display: flex; flex-direction: column; width: 100%; min-height: calc(100vh - 48px); min-height: calc(100dvh - 48px); }
+    .hero { position: relative; display: flex; flex: 1; align-items: center; min-height: 144px; overflow: hidden; margin: 0 -28px 18px 0; }
+    h1 { position: relative; z-index: 1; margin: 0; font: 750 68px/.95 Arial, "Helvetica Neue", sans-serif; letter-spacing: -.075em; }
+    h1::after { content: "."; }
+    .composition { position: absolute; top: 50%; right: -37px; display: block; width: 290px; height: 264px; transform: translateY(-50%); }
+    .loading { position: relative; }
+    .activity { position: relative; display: block; width: 100%; height: 2px; overflow: hidden; background: rgba(33, 26, 22, .2); }
+    .activity::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 27%; background: #211a16; animation: sweep 2s ease-in-out infinite alternate; }
+    #status { margin: 14px 0 0; font-size: 13px; line-height: 1.7; letter-spacing: .2px; overflow-wrap: anywhere; }
+    @keyframes sweep { to { transform: translateX(270%); } }
+    @media (prefers-reduced-motion: reduce) { .activity::before { animation: none; } }
+    @media (max-height: 290px) {
+      body { padding-top: 18px; padding-bottom: 18px; }
+      main { min-height: calc(100vh - 36px); min-height: calc(100dvh - 36px); }
+      .hero { min-height: 126px; margin-bottom: 14px; }
+      h1 { font-size: 64px; }
+      .composition { height: 236px; }
+      #status { margin-top: 12px; }
+    }
+    @media (max-width: 420px) {
+      body { padding-left: 20px; padding-right: 20px; }
+      .hero { margin-right: -20px; }
+      h1 { font-size: 48px; }
+      .composition { right: -54px; width: 220px; height: 224px; }
+    }
+  </style>
+</head>
+<body>
+  <main aria-busy="true">
+    <div class="hero">
+      <h1>ReadAge</h1>
+      <svg class="composition" aria-hidden="true" viewBox="0 0 360 370" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <g transform="rotate(-19 180 185)">
+          <rect x="-43" y="61" width="345" height="43" rx="21.5" fill="#FFBB8D"/>
+          <rect x="72" y="136" width="256" height="114" rx="33" fill="#FFF7E9"/>
+          <circle cx="72" cy="136" r="35" fill="#211A16"/>
+          <circle cx="328" cy="250" r="35" fill="#211A16"/>
+          <rect x="-26" y="279" width="189" height="29" rx="14.5" fill="#FFBB8D"/>
+          <rect x="351" y="156" width="84" height="29" rx="14.5" fill="#FFBB8D"/>
+        </g>
+      </svg>
+    </div>
+    <div class="loading">
+      <span class="activity" aria-hidden="true"></span>
+      <p id="status" role="status" aria-live="polite">正在核对本机学习档案…</p>
+    </div>
+  </main>
+</body>
+</html>

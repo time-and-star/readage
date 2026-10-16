@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import test from 'node:test';
+
+test('manual full-text sync persists pictures, keeps stable article IDs and retains readable content after an upstream failure', async () => {
+  const cwd = process.cwd();
+  const workspace = await fs.mkdtemp(path.resolve('tmp/fulltext-sync-'));
+  process.chdir(workspace);
+  const { configureMagazineNetwork, runWithManualMagazineNetwork } = await import('../server/magazines/network');
+  const { runMagazineSync } = await import('../server/magazines/sync');
+  const { loadIndex, loadArticle } = await import('../server/magazines/store');
+  const { loadMagazineGalleryPage, loadMagazineGalleryStream } = await import('../server/magazines/gallery');
+  const image = Buffer.from([255,216,255,0,0,0,0,0,0,0,0,0]);
+  const prose = 'Society changes and learning from history helps us understand its many different possibilities. '.repeat(12).trim();
+  let title = 'A history story', failImage = false;
+  const requests: string[] = [];
+  configureMagazineNetwork(async input => {
+    const url = String(input); requests.push(url);
+    if (url.endsWith('/feed/')) return new Response(`<rss><channel><item><title>${title}</title><link>https://daily.jstor.org/example/</link><pubDate>Tue, 13 Oct 2026 12:00:00 GMT</pubDate><dc:creator>A Historian</dc:creator><content:encoded><![CDATA[<p>${prose}</p><figure><img src="https://daily.jstor.org/image.jpg"/><figcaption>Archive credit</figcaption></figure>]]></content:encoded></item></channel></rss>`);
+    return failImage ? new Response('', { status: 503 }) : new Response(image);
+  }, { offline: true, manualSyncEnabled: true });
+  const update = () => runWithManualMagazineNetwork(() => runMagazineSync({ sources: ['jstor_daily'], maxIssuesPerSource: 1 }));
+  try {
+    assert.equal((await update()).importedIssues, 1);
+    const index = await loadIndex();
+    assert.equal(index.sources.length, 10);
+    const issue = index.issues[0];
+    assert.equal(issue.sourceKind, 'web_articles');
+    const articleId = `mag:jstor_daily:${issue.issueLabel}:article-1`;
+    const article = (await loadArticle(articleId))!;
+    assert.equal(article.title, title);
+    assert.equal(article.date, '2026-10-13');
+    assert.equal(article.content[0], 'By A Historian');
+    assert.equal(article.media?.[0].caption, 'Archive credit');
+    const asset = path.join(workspace, 'data/magazines/assets', path.basename(article.media![0].src));
+    assert.deepEqual(await fs.readFile(asset), image);
+    assert.equal((await loadMagazineGalleryPage({}, path.join(workspace, 'data/magazines'))).items[0]?.articleId, articleId);
+    assert.equal((await loadMagazineGalleryStream({ limit: 1 }, path.join(workspace, 'data/magazines'))).items[0]?.articleId, articleId);
+    requests.length = 0;
+    assert.equal((await update()).skippedIssues, 1);
+    assert.equal(requests.length, 1);
+    await fs.writeFile(asset, 'damaged image');
+    requests.length = 0;
+    assert.equal((await update()).importedIssues, 1);
+    assert.equal(requests.length, 2);
+    assert.deepEqual(await fs.readFile(asset), image);
+    await fs.unlink(asset);
+    assert.equal((await update()).importedIssues, 1);
+    assert.deepEqual(await fs.readFile(asset), image);
+    title = 'Updated history title';
+    assert.equal((await update()).importedIssues, 1);
+    assert.equal((await loadArticle(articleId))?.title, title);
+    title = 'This unavailable revision must not hide old content'; failImage = true;
+    assert.equal((await update()).failedIssues, 1);
+    assert.equal((await loadIndex()).issues[0].status, 'ready');
+    assert.equal((await loadArticle(articleId))?.title, 'Updated history title');
+    assert.equal((await fs.readdir(path.join(workspace, 'data/magazines/blobs'))).filter(name => name.endsWith('.html')).length, 3);
+  } finally { process.chdir(cwd); configureMagazineNetwork(globalThis.fetch.bind(globalThis), { offline: false, manualSyncEnabled: false }); }
+});

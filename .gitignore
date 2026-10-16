@@ -1,13 +1,35 @@
 node_modules/
 build/
 dist/
+dist-android/
+release-desktop/
+android/.gradle/
+android/app/.cxx/
+android/local.properties
+android/**/build/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/src/main/assets/readage-dictionaries/
+android/app/src/main/assets/readage-runtime/
+android/app/src/main/assets/readage-runtime.stage/
+android/app/src/androidTest/assets/readage-benchmark/
+android/capacitor-cordova-android-plugins/
 coverage/
+# Generated verification reports, APK copies and emulator images are not UI source.
+# Keep build-time automatic CSS discovery out of these large/binary artifacts.
+output/
 .DS_Store
 *.log
 .env*
 !.env.example
 data/magazines/
 local-data/
+tmp/
+tmp-*.out
+tmp-*.err
+/tmp-*.jpg
+/tmp-*.png
 *.pid
 *.wav
 # Local packaging / export archives (too large for git)
@@ -15,8 +37,18 @@ local-data/
 # 113MB offline dictionary binary pack (restore from the dictionary distribution)
 vendor/nextword-local-dictionary/data/*.pack
 
+# Reproducible dictionary extraction and QA outputs are generated locally from
+# the ignored binary pack; reviewed revisions and manifests remain trackable.
+data/dictionary/source/
+data/dictionary/reports/
+data/dictionary/build/
+# Re-downloadable third-party offline dictionaries (manifest/license stay in the pack).
+data/dictionary/imported/
+
 # Deploy secrets / local deploy artifacts
 .env.production
 .deploy_key.pem
 .deploy_token.txt
 
+public/readage-extension.zip
+public/readge-extension.zip

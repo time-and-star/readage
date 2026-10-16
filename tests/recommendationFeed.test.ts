@@ -83,6 +83,21 @@ test('library fallback skips completed and already-seen articles in stable order
   );
 });
 
+test('library fallback can skip candidates outside the active recommendation bounds', () => {
+  const long = { ...article('long'), content: [Array.from({ length: 1200 }, () => 'word').join(' ')] };
+  const short = { ...article('short'), content: ['word '.repeat(220)] };
+
+  assert.equal(
+    selectLibraryFallback(
+      [long, short],
+      [],
+      new Set(),
+      (candidate) => candidate.id === 'short',
+    )?.id,
+    'short',
+  );
+});
+
 test('collectExcludedArticleIds merges feed excludes with every history id', () => {
   const history = [article('h1', 'Completed'), article('h2', 'In Progress')];
   const excluded = collectExcludedArticleIds(['feed-a', 'h1'], history);

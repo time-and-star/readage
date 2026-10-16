@@ -6,6 +6,7 @@
 import { WordProficiencyView } from './memorySystem';
 import {
   buildCefrRecommendationProfile,
+  CEFR_BAND_ORDER,
   getCefrRelation,
   projectBandsOntoCatalog,
   resolveUserCefrLevel,
@@ -15,13 +16,15 @@ import {
 } from '../userReadingProfile';
 import { normalizeCefrBand, type CefrBand } from '../articleLevel';
 import { toLemma } from '../proficiency';
+import { DEFAULT_ARTICLE_TARGET_POOL_SIZE } from '../recommendationPolicy';
+import { isNonStoryArticleTitle } from '../articleEligibility';
 
 export interface Article {
   id: string;
   title: string;
   content: string[];
   level?: string;
-  levelRating?: { level?: string };
+  levelRating?: { level?: string; estimatedWordCount?: number };
   rewriteTargetLevel?: string;
   topic?: string;
   estimatedWordCount?: number;
@@ -33,11 +36,72 @@ export interface ArticleCandidate {
   lemmas: string[];
 }
 
+export type RecommendationMode = 'normal' | 'review';
+
+export const RECOMMENDATION_WORD_COUNT_LIMITS: Record<RecommendationMode, number> = {
+  normal: 600,
+  review: 800,
+};
+
+export function getArticleWordCount(
+  article: Pick<Article, 'content' | 'estimatedWordCount' | 'levelRating'>
+): number | null {
+  const estimated = article.estimatedWordCount ?? article.levelRating?.estimatedWordCount;
+  if (typeof estimated === 'number' && Number.isFinite(estimated) && estimated > 0) {
+    return estimated;
+  }
+
+  const actual = article.content
+    .join(' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .length;
+  return actual > 0 ? actual : null;
+}
+
+export function isRecommendationArticleWithinBounds(
+  article: Pick<Article, 'content' | 'estimatedWordCount' | 'levelRating' | 'level' | 'rewriteTargetLevel'>
+    & Partial<Pick<Article, 'title'>>,
+  profile: CefrRecommendationProfile,
+  options: {
+    mode?: RecommendationMode;
+    checkCefr?: boolean;
+    allowedBands?: readonly CefrBand[];
+  } = {},
+): boolean {
+  if (isNonStoryArticleTitle(article.title)) return false;
+  const mode = options.mode ?? 'normal';
+  const wordCount = getArticleWordCount(article);
+  if (wordCount !== null && wordCount > RECOMMENDATION_WORD_COUNT_LIMITS[mode]) {
+    return false;
+  }
+
+  if (options.checkCefr === false) return true;
+  const level = normalizeCefrBand(
+    article.levelRating?.level || article.level || article.rewriteTargetLevel
+  );
+  if (!level) return true;
+  const allowed = options.allowedBands?.length
+    ? options.allowedBands
+    : profile.idealBands.length > 0
+      ? [
+          ...profile.idealBands,
+          CEFR_BAND_ORDER[Math.max(0, CEFR_BAND_ORDER.indexOf(profile.userLevel) - 1)],
+        ]
+      : [profile.userLevel];
+  return allowed.includes(level);
+}
+
 export interface RecommendationScore {
   articleId: string;
   score: number;
   /** 需要复习的单词�?*/
   dueWordsCount: number;
+  /** Distinct requested review targets found in this article. */
+  reviewWordsCount?: number;
+  /** Distinct pending learning/review words found in this article. */
+  learningTargetCount?: number;
   /** L0-L2 的单词数（学习区�?*/
   learningZoneCount: number;
   /** L3-L4 的单词数（巩固区�?*/
@@ -132,17 +196,33 @@ export function isGlobalColdStart(
   return proficiencyMap.size < Math.max(1, params.minLearningZoneWords);
 }
 
-/** Fraction of article lemmas that already have a proficiency record. */
+/** Resolve each normalized article word once, retaining legacy raw-key lookups. */
+function distinctArticleWordProficiencies(
+  lemmas: readonly string[],
+  proficiencyMap: Map<string, WordProficiencyView>
+): Map<string, WordProficiencyView | undefined> {
+  const words = new Map<string, WordProficiencyView | undefined>();
+  for (const rawLemma of lemmas) {
+    const lemma = toLemma(rawLemma);
+    if (!lemma) continue;
+    const proficiency = proficiencyMap.get(lemma) ?? proficiencyMap.get(rawLemma);
+    if (!words.has(lemma) || !words.get(lemma)) words.set(lemma, proficiency);
+  }
+  return words;
+}
+
+/** Fraction of distinct article lemmas that already have a proficiency record. */
 export function articleProficiencyCoverage(
   lemmas: readonly string[],
   proficiencyMap: Map<string, WordProficiencyView>
 ): number {
-  if (lemmas.length === 0) return 0;
+  const words = distinctArticleWordProficiencies(lemmas, proficiencyMap);
+  if (words.size === 0) return 0;
   let known = 0;
-  for (const lemma of lemmas) {
-    if (proficiencyMap.has(lemma)) known += 1;
+  for (const proficiency of words.values()) {
+    if (proficiency) known += 1;
   }
-  return known / lemmas.length;
+  return known / words.size;
 }
 
 /**
@@ -174,12 +254,9 @@ export class RecommendationEngine {
     this.params = { ...DEFAULT_RECOMMENDATION_PARAMS, ...params };
   }
 
-  private getCefrProfile(): CefrRecommendationProfile {
+  getCefrProfile(): CefrRecommendationProfile {
     const profile = this.params.cefrProfile
-      ?? buildCefrRecommendationProfile(
-        null,
-        resolveUserCefrLevel({ recommendedBand: this.params.userLevel })
-      );
+      ?? buildCefrRecommendationProfile(resolveUserCefrLevel(this.params.userLevel));
     return this.params.cefrWeight === undefined
       ? profile
       : { ...profile, cefrWeight: this.params.cefrWeight };
@@ -213,7 +290,7 @@ export class RecommendationEngine {
     const relation = getCefrRelation(articleLevel, profile.userLevel);
     if (relation === 'unknown') return { score: 0, relation };
     if (
-      !profile.hasAssessment
+      !profile.useLevelFilter
       && (relation === 'far-higher' || relation === 'far-lower')
     ) {
       return { score: 0, relation };
@@ -264,6 +341,7 @@ export class RecommendationEngine {
     now: Date = new Date()
   ): RecommendationScore {
     const { article, lemmas } = candidate;
+    const articleWords = distinctArticleWordProficiencies(lemmas, proficiencyMap);
     const params = this.params;
     const personalized = shouldUsePersonalizedFilters(candidate, proficiencyMap, params);
     const globallyColdStart = isGlobalColdStart(proficiencyMap, params);
@@ -277,9 +355,7 @@ export class RecommendationEngine {
     let knownWordsCount = 0;
 
     // 统计各类单词
-    for (const lemma of lemmas) {
-      const proficiency = proficiencyMap.get(lemma);
-
+    for (const proficiency of articleWords.values()) {
       if (!proficiency) {
         // Untracked lemmas only count as hard "unknown" once personalization is reliable.
         if (personalized) unknownWordsCount++;
@@ -302,7 +378,7 @@ export class RecommendationEngine {
       }
     }
 
-    const totalWords = lemmas.length || 1;
+    const totalWords = articleWords.size || 1;
     const unknownWordsRatio = unknownWordsCount / totalWords;
     const averageMemoryScore = knownWordsCount > 0 ? totalMemoryScore / knownWordsCount : 0;
 
@@ -380,12 +456,13 @@ export class RecommendationEngine {
     if (
       profile.preferShorter
       && isGlobalColdStart(proficiencyMap, params)
-      && typeof article.estimatedWordCount === 'number'
+      && getArticleWordCount(article) !== null
     ) {
       const range = suggestedWordCountRange(profile.userLevel);
-      if (article.estimatedWordCount <= range.max * 1.5) {
+      const wordCount = getArticleWordCount(article) ?? 0;
+      if (wordCount <= range.max * 1.5) {
         wordCountScore = 1;
-      } else if (article.estimatedWordCount > range.max * 3) {
+      } else if (wordCount > range.max * 3) {
         wordCountScore = -2;
       }
     }
@@ -402,7 +479,7 @@ export class RecommendationEngine {
       consolidationZoneCount,
       unknownWordsCount: personalized
         ? unknownWordsCount
-        : Math.max(0, lemmas.length - knownWordsCount),
+        : Math.max(0, articleWords.size - knownWordsCount),
       averageMemoryScore,
       reason,
       cefrScore: cefr.score,
@@ -461,7 +538,16 @@ export class RecommendationEngine {
   ): ArticleCandidate[] {
     const params = this.params;
     const filtered = candidates.filter((candidate) => {
-      if (candidate.lemmas.length === 0) return false;
+      const articleWords = distinctArticleWordProficiencies(candidate.lemmas, proficiencyMap);
+      if (articleWords.size === 0) return false;
+
+      if (!isRecommendationArticleWithinBounds(
+        candidate.article,
+        this.getCefrProfile(),
+        { checkCefr: false },
+      )) {
+        return false;
+      }
 
       // Global cold start, or this article has too little tracked coverage:
       // keep the candidate so the library is never emptied for new/low-sample users.
@@ -472,7 +558,7 @@ export class RecommendationEngine {
       const score = this.scoreArticle(candidate, proficiencyMap);
 
       // 未知单词过多
-      const totalWords = candidate.lemmas.length || 1;
+      const totalWords = articleWords.size || 1;
       const unknownRatio = score.unknownWordsCount / totalWords;
       if (unknownRatio > params.maxUnknownWordsRatio) {
         return false;
@@ -490,8 +576,8 @@ export class RecommendationEngine {
     });
 
     const profile = this.getCefrProfile();
-    const shouldUseCefrHardFilter = params.cefrHardFilter ?? profile.hasAssessment;
-    if (!shouldUseCefrHardFilter || !profile.hasAssessment || filtered.length === 0) {
+    const shouldUseCefrHardFilter = params.cefrHardFilter ?? profile.useLevelFilter;
+    if (!shouldUseCefrHardFilter || !profile.useLevelFilter || filtered.length === 0) {
       return filtered;
     }
 
@@ -623,7 +709,7 @@ export function rankCandidatesByReviewHits(
 export function scheduleReviewArticles(
   dueWords: WordProficiencyView[],
   candidates: ArticleCandidate[],
-  targetReviewCount: number = 10
+  targetReviewCount: number = DEFAULT_ARTICLE_TARGET_POOL_SIZE
 ): ArticleCandidate[] {
   // 按到期紧急程度排�?
   const sortedDueWords = [...dueWords].sort((a, b) => {
@@ -657,7 +743,7 @@ export function scoreArticlesForReview(
   const targets = [
     ...new Set(
       targetWords
-        .map((word) => word.trim().toLowerCase())
+        .map(toLemma)
         .filter(Boolean)
     ),
   ];
@@ -665,8 +751,15 @@ export function scoreArticlesForReview(
 
   const targetSet = new Set(targets);
   const scored: RecommendationScore[] = [];
+  const profile = engine.getCefrProfile();
+  const eligibleCandidates = candidates.filter((candidate) =>
+    isRecommendationArticleWithinBounds(candidate.article, profile, {
+      mode: 'review',
+      checkCefr: true,
+    })
+  );
 
-  for (const candidate of candidates) {
+  for (const candidate of eligibleCandidates) {
     const hits = countUniqueReviewHits(candidate.lemmas, targetSet);
     if (hits <= 0) continue;
 
@@ -675,10 +768,12 @@ export function scoreArticlesForReview(
       ...base,
       score: hits * REVIEW_HIT_SCORE_WEIGHT + base.score,
       dueWordsCount: Math.max(base.dueWordsCount, hits),
-      reason: `���� ${hits}/${targets.length} ����ϰ��${base.reason ? `��${base.reason}` : ''}`,
+      reviewWordsCount: hits,
+      reason: `命中 ${hits}/${targets.length} 个复习词${base.reason ? `，${base.reason}` : ''}`,
     });
   }
 
-  scored.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => (b.reviewWordsCount ?? 0) - (a.reviewWordsCount ?? 0)
+    || b.score - a.score);
   return scored.slice(0, Math.max(1, limit));
 }

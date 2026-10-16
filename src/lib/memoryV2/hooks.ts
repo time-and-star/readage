@@ -3,15 +3,39 @@
  * Subscribe to the shared MemoryV2Store for ready state and invalidation.
  */
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import type { WordProficiencyView } from './memorySystem';
-import type { MemoryExposureSignals } from './types';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  DEFAULT_REVIEW_QUEUE_LIMIT,
+  type WordProficiencyStats,
+  type WordProficiencyView,
+} from './memorySystem';
+
+export { DEFAULT_REVIEW_QUEUE_LIMIT } from './memorySystem';
+import type { MemoryExposureSignals, ReadingVerificationInput } from './types';
 import { useMemoryStore } from './MemoryProvider';
 import {
   getDefaultMemoryStore,
   type MemoryV2Store,
 } from './memoryStore';
 import { getLocalDateInTimeZone, getSystemTimeZone } from './dateUtils';
+import type { LearningEvent } from '../../types';
+import { seedCanonicalMemoryBaselines } from '../canonicalMemoryBaseline';
+
+export function useExternalLearningActivity() {
+  const store = useMemoryStore();
+  const version = useStoreActivityVersion(store);
+  const ready = useStoreReady(store);
+  const [events, setEvents] = useState<LearningEvent[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    if (ready) void store.system.getExternalLearningActivity(store.userId).then(value => {
+      if (active) { setEvents(value); setError(null); }
+    }).catch(() => { if (active) setError('插件学习统计暂未加载，重新连接后会自动恢复。'); });
+    return () => { active = false; };
+  }, [store, version, ready]);
+  return { events, error };
+}
 
 function getUserId(): string {
   return getDefaultMemoryStore().userId;
@@ -40,6 +64,10 @@ function useStoreVersion(store: MemoryV2Store): number {
   );
 }
 
+function useStoreActivityVersion(store: MemoryV2Store): number {
+  return useSyncExternalStore(store.subscribe, () => store.getSnapshot().activityVersion, () => store.getSnapshot().activityVersion);
+}
+
 function useStoreReady(store: MemoryV2Store): boolean {
   return useSyncExternalStore(
     store.subscribe,
@@ -63,26 +91,37 @@ export function useMemorySystem() {
   }, [store]);
 
   const recordExposure = useCallback(
-    (wordId: string, articleId: string, occurrenceId: string, signals?: MemoryExposureSignals) =>
-      store.recordExposure(wordId, articleId, occurrenceId, signals),
+    async (wordId: string, articleId: string, occurrenceId: string, signals?: MemoryExposureSignals) => {
+      await seedCanonicalMemoryBaselines(store, [wordId]);
+      await store.recordExposure(wordId, articleId, occurrenceId, signals);
+    },
     [store]
   );
 
   const recordExposures = useCallback(
-    (items: ReadonlyArray<{
+    async (items: ReadonlyArray<{
       wordId: string;
       articleId: string;
       occurrenceId: string;
-    } & MemoryExposureSignals>) =>
-      store.recordExposures(items),
+    } & MemoryExposureSignals>) => {
+      await seedCanonicalMemoryBaselines(store, items.map((item) => item.wordId));
+      await store.recordExposures(items);
+    },
     [store]
   );
 
   const recordClick = useCallback(
-    (wordId: string, articleId: string, occurrenceId: string) =>
-      store.recordClick(wordId, articleId, occurrenceId),
+    async (wordId: string, articleId: string, occurrenceId: string) => {
+      await seedCanonicalMemoryBaselines(store, [wordId]);
+      await store.recordClick(wordId, articleId, occurrenceId);
+    },
     [store]
   );
+
+  const recordVerification = useCallback(async (input: ReadingVerificationInput) => {
+    await seedCanonicalMemoryBaselines(store, [input.wordId]);
+    await store.recordVerification(input);
+  }, [store]);
 
   return {
     memorySystem: store.system,
@@ -90,8 +129,10 @@ export function useMemorySystem() {
     recordExposure,
     recordExposures,
     recordClick,
+    recordVerification,
     ready,
     version,
+    activityVersion: store.getSnapshot().activityVersion,
     storageError: store.getSnapshot().storageError,
   };
 }
@@ -143,17 +184,20 @@ export function useAllWordProficiency() {
   const ready = useStoreReady(store);
   const [proficiencies, setProficiencies] = useState<WordProficiencyView[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = true) => {
+    const token = ++request.current;
     setLoading(true);
     try {
       await store.ensureReady();
-      const result = await store.system.getAllWordProficiency(store.userId);
-      setProficiencies(result);
-    } catch (error) {
-      console.error('Failed to load all word proficiencies:', error);
+      const result = (await store.getLearningSnapshot(force)).proficiencies;
+      if (token === request.current) { setProficiencies(result); setError(null); }
+    } catch {
+      if (token === request.current) setError('词汇学习记录暂时无法读取，请重试。');
     } finally {
-      setLoading(false);
+      if (token === request.current) setLoading(false);
     }
   }, [store]);
 
@@ -162,32 +206,37 @@ export function useAllWordProficiency() {
       setLoading(true);
       return;
     }
-    void refresh();
+    void refresh(false);
+    return () => { request.current += 1; };
   }, [refresh, version, ready]);
 
-  return { proficiencies, loading: loading || !ready, refresh };
+  return { proficiencies, loading: loading || !ready, error, refresh };
 }
 
 /**
  * 获取到期单词的 Hook
  */
-export function useDueWords(limit?: number) {
+export function useDueWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT) {
   const store = useMemoryStore();
   const version = useStoreVersion(store);
   const ready = useStoreReady(store);
   const [dueWords, setDueWords] = useState<WordProficiencyView[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = true) => {
+    const token = ++request.current;
     setLoading(true);
     try {
       await store.ensureReady();
-      const result = await store.system.getDueWords(store.userId, new Date(), limit);
-      setDueWords(result);
-    } catch (error) {
-      console.error('Failed to load due words:', error);
+      const words = (await store.getLearningSnapshot(force)).dueWords;
+      const result = limit > 0 ? words.slice(0, Math.floor(limit)) : [];
+      if (token === request.current) { setDueWords(result); setError(null); }
+    } catch {
+      if (token === request.current) setError('到期复习记录暂时无法读取，请重试。');
     } finally {
-      setLoading(false);
+      if (token === request.current) setLoading(false);
     }
   }, [store, limit]);
 
@@ -196,10 +245,48 @@ export function useDueWords(limit?: number) {
       setLoading(true);
       return;
     }
-    void refresh();
+    void refresh(false);
+    return () => { request.current += 1; };
   }, [refresh, version, ready]);
 
-  return { dueWords, loading: loading || !ready, refresh };
+  return { dueWords, loading: loading || !ready, error, refresh };
+}
+
+/** 获取尚未进入 FSRS、需要再次确认的单词 */
+export function useConfirmationWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT) {
+  const store = useMemoryStore();
+  const version = useStoreVersion(store);
+  const ready = useStoreReady(store);
+  const [confirmationWords, setConfirmationWords] = useState<WordProficiencyView[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
+
+  const refresh = useCallback(async (force = true) => {
+    const token = ++request.current;
+    setLoading(true);
+    try {
+      await store.ensureReady();
+      const words = (await store.getLearningSnapshot(force)).confirmationWords;
+      const result = limit > 0 ? words.slice(0, Math.floor(limit)) : [];
+      if (token === request.current) { setConfirmationWords(result); setError(null); }
+    } catch {
+      if (token === request.current) setError('阅读确认记录暂时无法读取，请重试。');
+    } finally {
+      if (token === request.current) setLoading(false);
+    }
+  }, [store, limit]);
+
+  useEffect(() => {
+    if (!ready) {
+      setLoading(true);
+      return;
+    }
+    void refresh(false);
+    return () => { request.current += 1; };
+  }, [refresh, version, ready]);
+
+  return { confirmationWords, loading: loading || !ready, error, refresh };
 }
 
 /**
@@ -209,24 +296,22 @@ export function useProficiencyStats() {
   const store = useMemoryStore();
   const version = useStoreVersion(store);
   const ready = useStoreReady(store);
-  const [stats, setStats] = useState<{
-    total: number;
-    byLevel: Record<number, number>;
-    averageScore: number;
-    dueCount: number;
-  } | null>(null);
+  const [stats, setStats] = useState<WordProficiencyStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = true) => {
+    const token = ++request.current;
     setLoading(true);
     try {
       await store.ensureReady();
-      const result = await store.system.getProficiencyStats(store.userId);
-      setStats(result);
-    } catch (error) {
-      console.error('Failed to load proficiency stats:', error);
+      const result = (await store.getLearningSnapshot(force)).stats;
+      if (token === request.current) { setStats(result); setError(null); }
+    } catch {
+      if (token === request.current) setError('学习统计暂时无法读取，请重试。');
     } finally {
-      setLoading(false);
+      if (token === request.current) setLoading(false);
     }
   }, [store]);
 
@@ -235,10 +320,11 @@ export function useProficiencyStats() {
       setLoading(true);
       return;
     }
-    void refresh();
+    void refresh(false);
+    return () => { request.current += 1; };
   }, [refresh, version, ready]);
 
-  return { stats, loading: loading || !ready, refresh };
+  return { stats, loading: loading || !ready, error, refresh };
 }
 
 /** Surface storage quota / write failures to the UI. */
@@ -249,6 +335,23 @@ export function useMemoryStorageError(): string | null {
     () => store.getSnapshot().storageError,
     () => store.getSnapshot().storageError
   );
+}
+
+/** Lifecycle state for showing recoverable memory initialization failures. */
+export function useMemoryLifecycle() {
+  const store = useMemoryStore();
+  // getSnapshot returns a fresh object, so subscribe through the stable
+  // primitive version value and read the current fields during render.
+  useStoreVersion(store);
+  const snapshot = store.getSnapshot();
+  const retry = useCallback(() => store.start(), [store]);
+  return {
+    ready: snapshot.ready,
+    status: snapshot.status,
+    retryable: snapshot.retryable,
+    error: snapshot.lifecycleError,
+    retry,
+  };
 }
 
 /**

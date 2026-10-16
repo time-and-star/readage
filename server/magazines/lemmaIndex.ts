@@ -8,8 +8,11 @@ import fs from 'fs/promises';
 import path from 'path';
 import { createHash } from 'crypto';
 import type { Article } from '../../src/types';
-import { getNewLemmas } from '../../src/lib/readingExposure';
+import { extractRecommendationLemmas } from '../../src/lib/recommendationLearningUnits';
 import { getDataRoot, loadArticle, loadIndex, readJsonFile, writeFileAtomic } from './store';
+import { getDictionaryContentVersion } from '../dictionary/service';
+import { resolveDictionaryLearningWordIds } from '../dictionary/learningWordIds';
+import { isNonStoryArticleTitle } from '../../src/lib/articleEligibility';
 
 export interface MagazineLemmaIndexArticle {
   id: string;
@@ -34,24 +37,12 @@ export interface MagazineLemmaIndex {
 }
 
 // Bump when lemma extraction changes so persisted indexes are rebuilt.
-const INDEX_VERSION = 2 as const;
+const INDEX_VERSION = 6 as const;
 let memoryCache: MagazineLemmaIndex | null = null;
 let buildInflight: Promise<MagazineLemmaIndex> | null = null;
 
 function lemmaIndexPath(): string {
   return path.join(getDataRoot(), 'lemma-index.json');
-}
-
-function extractLemmasFromContent(content: readonly string[]): string[] {
-  const all = new Set<string>();
-  const exposed = new Set<string>();
-  for (const paragraph of content) {
-    for (const lemma of getNewLemmas(paragraph, exposed)) {
-      all.add(lemma);
-      exposed.add(lemma);
-    }
-  }
-  return Array.from(all);
 }
 
 async function computeCatalogFingerprint(): Promise<string> {
@@ -77,6 +68,7 @@ async function computeCatalogFingerprint(): Promise<string> {
 
   const raw = [
     `v${INDEX_VERSION}`,
+    getDictionaryContentVersion(),
     index.lastSyncAt || 'none',
     `issues:${index.issues.length}`,
     `files:${fileCount}`,
@@ -112,6 +104,7 @@ async function loadAllArticles(): Promise<Article[]> {
     for (const article of loaded) {
       if (
         article?.id
+        && !isNonStoryArticleTitle(article.title)
         && Array.isArray(article.content)
         && article.content.length > 0
       ) {
@@ -134,12 +127,18 @@ export async function buildMagazineLemmaIndex(): Promise<MagazineLemmaIndex> {
   }> = [];
 
   for (const article of articles) {
-    const lemmas = extractLemmasFromContent(article.content);
+    const lemmas = extractRecommendationLemmas(article);
     for (const lemma of lemmas) vocabSet.add(lemma);
     perArticleLemmas.push({ article, lemmas });
   }
 
-  const vocab = Array.from(vocabSet).sort((a, b) => a.localeCompare(b));
+  const surfaces = Array.from(vocabSet);
+  const resolved = await resolveDictionaryLearningWordIds(surfaces);
+  const canonicalBySurface = new Map(surfaces.map((word, index) => [word, resolved[index]]));
+  for (const row of perArticleLemmas) {
+    row.lemmas = [...new Set(row.lemmas.map((word) => canonicalBySurface.get(word) ?? word))];
+  }
+  const vocab = [...new Set(resolved)].sort((a, b) => a.localeCompare(b));
   const vocabIndex = new Map(vocab.map((word, i) => [word, i]));
 
   const indexArticles: MagazineLemmaIndexArticle[] = perArticleLemmas.map(({ article, lemmas }) => {

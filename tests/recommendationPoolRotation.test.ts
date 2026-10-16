@@ -6,6 +6,22 @@ import {
   selectDailyRecommendationStubIds,
   seededShuffle,
 } from '../src/lib/recommendationPoolRotation';
+import { pickDailyRankedRecommendation } from '../src/lib/resolveRecommendation';
+import type { RecommendationScore } from '../src/lib/memoryV2/recommendation';
+
+test('daily exploration cannot choose fewer requested review hits from a V5 score tie', () => {
+  const base = {
+    score: 50, dueWordsCount: 5, learningZoneCount: 5,
+    consolidationZoneCount: 0, unknownWordsCount: 0, averageMemoryScore: 0, reason: '',
+  };
+  const ranked: RecommendationScore[] = [
+    { ...base, articleId: 'five-hits', reviewWordsCount: 5 },
+    { ...base, articleId: 'one-hit', reviewWordsCount: 1 },
+  ];
+  for (let day = 1; day <= 31; day += 1) {
+    assert.equal(pickDailyRankedRecommendation(ranked, `2026-10-${String(day).padStart(2, '0')}`)?.articleId, 'five-hits');
+  }
+});
 
 test('rotation date uses local calendar YYYY-MM-DD', () => {
   const date = new Date(2026, 6, 24, 15, 30, 0); // local July 24, 2026

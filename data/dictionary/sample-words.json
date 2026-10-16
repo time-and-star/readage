@@ -1,0 +1,358 @@
+{
+  "format": "dictionary-sample.v1",
+  "schemaVersion": "dictionary.v2",
+  "selection": "required ten words plus 40 eligible lemma rows sorted by numeric frq then alphabetically",
+  "sourceSha256": "eeb7ef4ac67d30f781eb78a4da2278dcb1f925e4d04db9aaffe8d62db0772db1",
+  "words": [
+    {
+      "word": "run",
+      "rank": 1,
+      "frequency": 202,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "bank",
+      "rank": 2,
+      "frequency": 663,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "better",
+      "rank": 3,
+      "frequency": 452,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "charge",
+      "rank": 4,
+      "frequency": 923,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "sanction",
+      "rank": 5,
+      "frequency": 3217,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "set",
+      "rank": 6,
+      "frequency": 294,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "go",
+      "rank": 7,
+      "frequency": 35,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "see",
+      "rank": 8,
+      "frequency": 67,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "take",
+      "rank": 9,
+      "frequency": 63,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "get",
+      "rank": 10,
+      "frequency": 39,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "the",
+      "rank": 11,
+      "frequency": 1,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "be",
+      "rank": 12,
+      "frequency": 2,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "and",
+      "rank": 13,
+      "frequency": 3,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "of",
+      "rank": 14,
+      "frequency": 4,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "in",
+      "rank": 15,
+      "frequency": 6,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "to",
+      "rank": 16,
+      "frequency": 7,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "have",
+      "rank": 17,
+      "frequency": 8,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "it",
+      "rank": 18,
+      "frequency": 10,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "that",
+      "rank": 19,
+      "frequency": 12,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "for",
+      "rank": 20,
+      "frequency": 13,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "you",
+      "rank": 21,
+      "frequency": 14,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "he",
+      "rank": 22,
+      "frequency": 15,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "with",
+      "rank": 23,
+      "frequency": 16,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "on",
+      "rank": 24,
+      "frequency": 17,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "do",
+      "rank": 25,
+      "frequency": 18,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "say",
+      "rank": 26,
+      "frequency": 19,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "this",
+      "rank": 27,
+      "frequency": 20,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "they",
+      "rank": 28,
+      "frequency": 21,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "at",
+      "rank": 29,
+      "frequency": 22,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "but",
+      "rank": 30,
+      "frequency": 23,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "we",
+      "rank": 31,
+      "frequency": 24,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "his",
+      "rank": 32,
+      "frequency": 25,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "from",
+      "rank": 33,
+      "frequency": 26,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "not",
+      "rank": 34,
+      "frequency": 28,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "by",
+      "rank": 35,
+      "frequency": 30,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "she",
+      "rank": 36,
+      "frequency": 31,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "or",
+      "rank": 37,
+      "frequency": 32,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "as",
+      "rank": 38,
+      "frequency": 33,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "what",
+      "rank": 39,
+      "frequency": 34,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "their",
+      "rank": 40,
+      "frequency": 36,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "can",
+      "rank": 41,
+      "frequency": 37,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "who",
+      "rank": 42,
+      "frequency": 38,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "if",
+      "rank": 43,
+      "frequency": 40,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "would",
+      "rank": 44,
+      "frequency": 41,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "her",
+      "rank": 45,
+      "frequency": 42,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "all",
+      "rank": 46,
+      "frequency": 43,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "my",
+      "rank": 47,
+      "frequency": 44,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "make",
+      "rank": 48,
+      "frequency": 45,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "about",
+      "rank": 49,
+      "frequency": 46,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    },
+    {
+      "word": "know",
+      "rank": 50,
+      "frequency": 47,
+      "sourcePartOfSpeech": "",
+      "pureWordForm": false
+    }
+  ]
+}

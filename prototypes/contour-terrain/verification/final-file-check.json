@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-14",
+  "file": "C:\\Users\\19891\\Desktop\\english-ai---active-reading-app\\prototypes\\contour-terrain\\terrain.html",
+  "sha256": "5f650fc84775ec786dfe199e14dd3b7ad1819b46b71e43c8d2e220c176d3a847",
+  "bytes": 40494,
+  "offline": true,
+  "passed": [
+    "离线加载",
+    "桌面操作提示",
+    "品牌链接留在原型",
+    "抬高",
+    "撤销",
+    "无页面异常"
+  ],
+  "errors": []
+}

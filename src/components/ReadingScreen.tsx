@@ -1,4 +1,7 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { getArticleLanguage, isEnglishArticle } from '../lib/articleLanguage';
+import { createDictionaryClient } from '../../packages/dictionary/client';
+import type { LookupResult } from '../../packages/dictionary/contracts';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
@@ -15,6 +18,7 @@ import {
 } from 'lucide-react';
 import {
   Article,
+  ArticleSource,
   GrammarExplanation,
   TranslationResult,
   StructuredAssessResult,
@@ -26,13 +30,39 @@ import {
 import {
   extractLearningUnits,
   findLearningUnitAtTokenIndex,
+  getMinimumExposureDwellMs,
   hasSufficientExposureVisibility,
+  limitConcurrentExposureCandidates,
+  shouldAdvanceRecommendationAtScrollEnd,
 } from '../lib/readingExposure';
-import { getPhraseHighlightMatches } from '../lib/textHighlight';
+import {
+  createReadingDwellState,
+  getExpectedReadingDwellMs,
+  getReadingIdleAllowanceMs,
+  hasQualifiedReadingDwell,
+  pauseReadingDwell,
+  readReadingDwell,
+  refreshReadingDwellActivity,
+  resumeReadingDwell,
+  type ReadingDwellState,
+} from '../lib/readingDwell';
+import { getArticleLearningTerms, getArticleReviewWords } from '../lib/readingLearningTerms';
 import { postTutor } from '../lib/tutorClient';
+import { ON_DEMAND_TRANSLATION, translateSelection, translatePassage } from '../lib/localTranslation';
+import { ARTICLE_DISCUSSION_ENABLED } from '../lib/readingFeatures';
+import { SelectionTranslationNote } from './SelectionTranslationNote';
+import { ReadingSelectionToolbar } from './ReadingSelectionToolbar';
+import { ReadingTouchSelection } from './ReadingTouchSelection';
+import { useSpeech } from '../lib/speech/useSpeech';
+import type { SpeechTarget } from '../lib/speech';
+import { speechWords } from '../lib/speech/wordTiming';
+import { buildReadingSpeech, createReadingWordSpeechTarget } from '../lib/readingSpeech';
+import { SpeechWordHighlighter } from './SpeechWordHighlighter';
+import { SpeechControls, SpeechFeedback } from './SpeechControls';
 import type { ImportJob } from '../lib/articleImport';
 import { needsImportEnrichment } from '../lib/articleImport';
-import { classifyArticleParagraph, getArticleInlineParts } from '../lib/articlePresentation';
+import { classifyArticleParagraph } from '../lib/articlePresentation';
+import { splitReadingTokensForAnnotation, tokenizeReadingParagraph, type ReadingToken } from '../lib/readingTokens';
 import {
   buildReadingAdvancePayload,
   hasArticleExitedViewport,
@@ -41,39 +71,83 @@ import {
 } from '../lib/continuousReading';
 import { useMemoryV2Integration } from '../lib/memoryV2Integration';
 import { createWordCardRequest, fetchWordCard } from '../lib/wordCard';
-import { formatSelectionQuote } from '../lib/readingSelection';
-import { WordCardPanel } from './WordCardPanel';
+import { resolveDictionaryLearningWordId } from '../lib/dictionaryClient';
+import { saveLookupEvidenceOnce, type LookupEvidenceState } from '../lib/lookupEvidence';
+import { formatSelectionQuote, isDesktopReadingContextMenu, READING_TEXT_BLOCK_SELECTOR } from '../lib/readingSelection';
+import { observeReadingSelection } from '../lib/observeReadingSelection';
+import { ReadingLookupCard, type LookupAnchor } from './ReadingLookupCard';
+import { getCompactWordCard } from '../lib/compactWordCard';
+import { useReadingBookmark } from '../lib/readingBookmark';
+import { usePersistentState, STORAGE_KEYS } from '../lib/storage';
+import {
+  completedReadingParagraphs, hasCompletedReading, markReadingParagraphComplete,
+  normalizeReadingProgressCollection, readingContentVersion, type ReadingProgressCollection,
+} from '../lib/readingProgress';
+import type { DifficultyFeedback } from '../lib/readingPreference';
+import { ReadingDifficultyControl } from './ReadingDifficultyControl';
+import { ReadingVerificationPause } from './ReadingVerificationPause';
+import { ArticleMediaFigures } from './ArticleMediaFigures';
+import { PdfPagePreview } from './PdfPagePreview';
+import { useArticleMedia } from '../lib/useArticleMedia';
 import {
   emitVocabArticleComplete,
   startVocabSession,
   toVocabSnapshot,
 } from '../lib/vocabTelemetry';
 
+const languageDictionary = createDictionaryClient();
 let recommendationNavigationHintShown = false;
 
 const REWRITE_CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const;
+const ARTICLE_SOURCE_LABELS: Record<ArticleSource, string> = {
+  user_input: '导入内容',
+  library: '阅读库',
+  ai_generated: 'AI 生成',
+  oral_session: '口语练习',
+  magazine: '外刊',
+  level_rewrite: '按等级改写',
+};
 
-export function getArticleHighlightTerms(readingArticle?: Article): string[] {
-  if (
-    !readingArticle
-    || readingArticle.source === 'level_rewrite'
-    || readingArticle.generationKind === 'level-rewrite'
-  ) return [];
-  return [
-    ...(readingArticle.keyWords || []),
-    ...(readingArticle.embeddedReviewWords || []),
-  ];
+interface ReadingTextLocation { articleId: string; paragraphIndex: number; endOffset: number }
+interface ReadingSelectionAction {
+  text: string;
+  context: string;
+  anchor: LookupAnchor;
+  location: ReadingTextLocation;
+  speechTarget?: SpeechTarget;
+  touchSelection: boolean;
 }
 
-function getArticleReviewWords(readingArticle: Article): string[] {
-  if (readingArticle.source === 'level_rewrite') return [];
-  return Array.from(
-    new Set((readingArticle.embeddedReviewWords || []).map((word) => word.trim()).filter(Boolean)),
-  );
+function originalRangeText(range: Range): string {
+  const fragment = range.cloneContents();
+  fragment.querySelectorAll('[data-selection-translation="true"]').forEach(note => note.remove());
+  return fragment.textContent ?? '';
+}
+
+function getReadingTextLocation(node: Node | null, endOffset?: number): ReadingTextLocation | null {
+  const element = node?.nodeType === Node.ELEMENT_NODE ? node as Element : node?.parentElement;
+  const context = element?.closest<HTMLElement>('[data-reading-paragraph], [data-reading-context]');
+  if (!context?.dataset.readingArticleId) return null;
+  const prefix = document.createRange();
+  prefix.selectNodeContents(context);
+  if (endOffset === undefined) prefix.setEndAfter(node!);
+  else prefix.setEnd(node!, endOffset);
+  return { articleId: context.dataset.readingArticleId, paragraphIndex: Number(context.dataset.readingParagraph ?? -1), endOffset: originalRangeText(prefix).length };
+}
+
+export function getArticleHighlightTerms(readingArticle?: Article): string[] {
+  return getArticleLearningTerms(readingArticle);
 }
 
 interface ReadingScreenProps {
   article: Article;
+  difficultyFeedback?: DifficultyFeedback;
+  onDifficultyFeedback?: (rating: DifficultyFeedback) => void;
+  onNextArticle?: () => void;
+  nextArticleLabel?: string;
+  readingPathLabel?: string;
+  readingContinuation?: React.ReactNode;
+  reviewWordCandidates?: readonly string[];
   /** App-level navigation rendered in place of the article title header. */
   navigation?: React.ReactNode;
   /** Live job from the independent import module (translate + rate). */
@@ -83,7 +157,7 @@ interface ReadingScreenProps {
   isRewriting?: boolean;
   /** Generate a new article version at the chosen CEFR level. */
   onRewriteAtLevel?: (level: string) => void;
-  /** User reading level from English test — highlight preferred rewrite target. */
+  /** Preferred reading level for rewrite targets. */
   preferredCefrLevel?: string;
   /** Open the parent article this rewrite was based on. */
   onOpenParentArticle?: () => void;
@@ -105,6 +179,13 @@ interface ReadingScreenProps {
 
 export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   article,
+  difficultyFeedback,
+  onDifficultyFeedback,
+  onNextArticle,
+  nextArticleLabel = '换一篇',
+  readingPathLabel,
+  readingContinuation,
+  reviewWordCandidates,
   navigation,
   importJob = null,
   onRetryImport,
@@ -125,16 +206,88 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   trackedLemmas = [],
   onChatMessagesChange,
 }) => {
+  const language = getArticleLanguage(article);
+  const english = isEnglishArticle(article);
+  const discussionEnabled = english && ARTICLE_DISCUSSION_ENABLED;
+  const speech = useSpeech(english ? undefined : language);
+  const wordCardSpeechOwnedRef = useRef(false);
+  const readingSpeechSources = useMemo(() => new Map([article, ...(continuousArticles || [])]
+    .map(item => [item.id, buildReadingSpeech(item)] as const)), [article, continuousArticles]);
+  useEffect(() => () => speech.stop(), [article.id, speech.stop]);
   const [selectedText, setSelectedText] = useState<string>('');
   const [selectedContext, setSelectedContext] = useState<string>('');
   const [showRewriteLevels, setShowRewriteLevels] = useState(false);
 
   const [isExplaining, setIsExplaining] = useState(false);
   const [grammarResult, setGrammarResult] = useState<GrammarExplanation | null>(null);
+  const [languageLookupResult, setLanguageLookupResult] = useState<LookupResult | null>(null);
   const [wordCardOpen, setWordCardOpen] = useState(false);
+  const [wordCardError, setWordCardError] = useState<string | null>(null);
+  const [lookupAnchor, setLookupAnchor] = useState<LookupAnchor | null>(null);
+  const [lookupRecordStatus, setLookupRecordStatus] = useState<string | null>(null);
+  const retryLookupRef = useRef<() => void>(() => {});
+  const retryRecordRef = useRef<(() => void) | null>(null);
+  const lookupLocationRef = useRef<ReadingTextLocation | null>(null);
+  const lookupSpeechTargetRef = useRef<SpeechTarget | undefined>(undefined);
+  const [selectionAction, setSelectionAction] = useState<ReadingSelectionAction | null>(null);
+  const speechPreparationText = selectionAction?.text || (wordCardOpen && selectedText
+    ? grammarResult ? getCompactWordCard(grammarResult, selectedText).word : selectedText
+    : readingSpeechSources.get(article.id)?.text || '');
+  useEffect(() => {
+    let cancel: (() => void) | undefined;
+    const timer = setTimeout(() => { cancel = speech.prepare(speechPreparationText); }, selectionAction || wordCardOpen ? 150 : 300);
+    return () => { clearTimeout(timer); cancel?.(); };
+  }, [speechPreparationText, !!selectionAction, wordCardOpen, speech.prepare, speech.preferences.lang, speech.preferences.rate]);
+  useEffect(() => {
+    if (!selectionAction) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!(event.target as Element).closest('.reading-selection-actions, [data-reading-touch-handle]')) setSelectionAction(null);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); setSelectionAction(null); } };
+    const onScroll = () => { if (!selectionAction.touchSelection) setSelectionAction(null); };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', onKey); window.removeEventListener('scroll', onScroll); };
+  }, [selectionAction]);
 
   const [isTranslating, setIsTranslating] = useState(false);
   const [translationResult, setTranslationResult] = useState<TranslationResult | null>(null);
+  const [translationText, setTranslationText] = useState<string | null>(null);
+  const [translationLocation, setTranslationLocation] = useState<ReadingTextLocation | null>(null);
+  const [translationError, setTranslationError] = useState<string | null>(null);
+  const translationAbortRef = useRef<AbortController | null>(null);
+  const closeTranslation = useCallback(() => {
+    translationAbortRef.current?.abort();
+    translationAbortRef.current = null;
+    setTranslationText(null);
+    setTranslationLocation(null);
+    setTranslationResult(null);
+    setTranslationError(null);
+    setIsTranslating(false);
+  }, []);
+  useEffect(() => {
+    closeTranslation();
+    return () => translationAbortRef.current?.abort();
+  }, [article.id, closeTranslation]);
+
+  useEffect(() => {
+    if (translationText === null) return;
+    const dismiss = (event: MouseEvent) => {
+      // Keep a note while the reader drags a new selection; clicking elsewhere dismisses it.
+      if (!(event.target as Element).closest('[data-selection-translation="true"]')
+        && window.getSelection()?.isCollapsed !== false) closeTranslation();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); closeTranslation(); }
+    };
+    document.addEventListener('click', dismiss, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('click', dismiss, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [translationText, closeTranslation]);
 
   const [addedWordSuccess, setAddedWordSuccess] = useState<string | null>(null);
   const [copyHint, setCopyHint] = useState<string | null>(null);
@@ -142,7 +295,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const [userInput, setUserInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialChatMessages);
-  const [showChatPanel, setShowChatPanel] = useState(initialChatMessages.length > 0);
+  const [showChatPanel, setShowChatPanel] = useState(false);
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const composerInputRef = useRef<HTMLInputElement>(null);
   const [articleVisible, setArticleVisible] = useState(false);
@@ -161,14 +314,17 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   // Restore chat when switching articles / session
   useEffect(() => {
     setChatMessages(initialChatMessages);
-    setShowChatPanel(initialChatMessages.length > 0);
+    wordCardAbortRef.current?.abort();
+    wordCardAbortRef.current = null;
+    setShowChatPanel(false);
     setIsComposerExpanded(false);
     setWordCardOpen(false);
     setGrammarResult(null);
+    setLanguageLookupResult(null);
     setIsExplaining(false);
     // Real vocab particle session for this article (due/tracked lemmas if known)
     const dueWords = (trackedLemmas || []).slice(0, 40).map((wordId) => toVocabSnapshot(wordId, null));
-    startVocabSession({ articleId: article.id, dueWords });
+    if (english) startVocabSession({ articleId: article.id, dueWords });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [article.id]);
 
@@ -177,12 +333,44 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   }, [isComposerExpanded]);
 
   const [showMenu, setShowMenu] = useState(false);
+  useEffect(() => {
+    if (!showMenu) return;
+    const dismiss = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); setShowMenu(false); } };
+    document.addEventListener('keydown', dismiss);
+    return () => document.removeEventListener('keydown', dismiss);
+  }, [showMenu]);
   const [fontSize, setFontSize] = useState<'normal' | 'large' | 'xlarge'>('normal');
   /** Show Chinese paragraph translations produced on import. */
   const [showParagraphTranslations, setShowParagraphTranslations] = useState(false);
   const [showLevelDetail, setShowLevelDetail] = useState(false);
+  const [activeVerificationArticleIds, setActiveVerificationArticleIds] = useState<Set<string>>(new Set());
+  const [verificationReadyArticleIds, setVerificationReadyArticleIds] = useState<Set<string>>(new Set());
+  const markVerificationReady = useCallback((articleId: string) => {
+    setVerificationReadyArticleIds(previous => {
+      if (previous.has(articleId)) return previous;
+      return new Set([...previous, articleId]);
+    });
+  }, []);
+  const handleVerificationActiveChange = useCallback((articleId: string, active: boolean) => {
+    setActiveVerificationArticleIds(previous => {
+      if (previous.has(articleId) === active) return previous;
+      const next = new Set(previous);
+      if (active) next.add(articleId);
+      else next.delete(articleId);
+      return next;
+    });
+  }, []);
 
   const contentRef = useRef<HTMLDivElement>(null);
+  const selectionRef = useRef<HTMLElement>(null);
+  useReadingBookmark(article.id, contentRef, article);
+  const contentVersion = useMemo(() => readingContentVersion(article), [article.title, article.content]);
+  const [readingProgress, setReadingProgress] = usePersistentState<ReadingProgressCollection>(
+    STORAGE_KEYS.readingParagraphProgress, {}, normalizeReadingProgressCollection,
+  );
+  const readingProgressRef = useRef(readingProgress);
+  readingProgressRef.current = readingProgress;
+  const completionCheckRef = useRef<(() => void) | null>(null);
   const wordCardAbortRef = useRef<AbortController | null>(null);
   /** Staged lemmas per article id for continuous-stream completion payloads. */
   const exposedLemmasByArticleRef = useRef(new Map<string, Set<string>>());
@@ -191,6 +379,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const onAdvanceRef = useRef(onAdvance);
   const hasAdvancedRef = useRef(false);
   const suppressNextWordClickRef = useRef(false);
+  const suppressTouchWordClickUntilRef = useRef(0);
+  const lastPointerTypeRef = useRef('mouse');
   const swipeStartRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const touchSwipeStartRef = useRef<{ identifier: number; x: number; y: number } | null>(null);
   const pendingSwipeScrollArticleIdRef = useRef<string | null>(null);
@@ -198,6 +388,14 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const continuousArticlesRef = useRef(continuousArticles);
   const primaryArticleRef = useRef(article);
   const exposureObserveNewRef = useRef<(() => void) | null>(null);
+  const exposureActivityChangedRef = useRef<(() => void) | null>(null);
+  const exposureFlushRef = useRef<((articleId?: string) => Promise<void>) | null>(null);
+  const readingOverlayOpen = wordCardOpen || isExplaining
+    || (discussionEnabled && (showChatPanel || isComposerExpanded))
+    || showMenu || showRewriteLevels || showLevelDetail
+    || activeVerificationArticleIds.size > 0;
+  const readingOverlayOpenRef = useRef(readingOverlayOpen);
+  readingOverlayOpenRef.current = readingOverlayOpen;
 
   useEffect(() => {
     continuousArticlesRef.current = continuousArticles;
@@ -229,13 +427,14 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     hasAdvancedRef.current = false;
     exposedLemmasByArticleRef.current = new Map();
     completedContinuousArticleIdsRef.current.clear();
+    setActiveVerificationArticleIds(new Set());
+    setVerificationReadyArticleIds(new Set());
     setArticleVisible(false);
     const frame = window.requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, behavior: 'auto' });
       setArticleVisible(true);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [article.id]);
+  }, [article.id, contentVersion]);
 
   useEffect(() => {
     if (mode !== 'recommendation-feed' || recommendationNavigationHintShown) return;
@@ -258,17 +457,40 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     return staged;
   };
 
-  // A paragraph counts as read only after it stays at least 60% visible for 800ms.
+  // Progress needs sustained visibility. Memory evidence keeps measuring actual
+  // foreground dwell after that checkpoint, including rereads of the paragraph.
   useEffect(() => {
     const container = contentRef.current;
     if (!container || typeof IntersectionObserver === 'undefined') return;
 
     let isActive = true;
+    let windowFocused = document.hasFocus();
     const visibleParagraphs = new Set<Element>();
     const completedParagraphs = new Set<Element>();
     const observedParagraphs = new Set<Element>();
+    const activeParagraphs = new Set<Element>();
+    const idleParagraphs = new Set<Element>();
     const exposureTimers = new Map<Element, number>();
+    const retryTimers = new Map<Element, number>();
+    const paragraphReadings = new Map<Element, {
+      state: ReadingDwellState;
+      article: Article;
+      articleId: string;
+      paragraphIndex: number;
+      text: string;
+      units: ReturnType<typeof extractLearningUnits>;
+      minimumDwellTimeMs: number;
+      expectedDwellTimeMs: number;
+      exposureOccurredAt?: string;
+      lastSavedMs: number;
+      lastRequestedMs: number;
+      retryCount: number;
+      writeChain: Promise<void>;
+    }>();
     exposedLemmasByArticleRef.current = new Map();
+
+    const canTrackReading = () => isActive && windowFocused
+      && document.visibilityState === 'visible' && !readingOverlayOpenRef.current;
 
     const clearExposureTimer = (paragraph: Element) => {
       const timerId = exposureTimers.get(paragraph);
@@ -277,18 +499,179 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       exposureTimers.delete(paragraph);
     };
 
+    const readingFor = (paragraph: Element) => {
+      const existing = paragraphReadings.get(paragraph);
+      if (existing) return existing;
+      const element = paragraph as HTMLElement;
+      const primary = primaryArticleRef.current;
+      const paragraphIndex = Number(element.dataset.readingParagraph);
+      const articleId = element.dataset.readingArticleId || primary.id;
+      const readingArticle = articleId === primary.id ? primary
+        : continuousArticlesRef.current?.find((candidate) => candidate.id === articleId);
+      const text = readingArticle?.content[paragraphIndex] ?? element.textContent ?? '';
+      const reading = {
+        state: createReadingDwellState(),
+        article: readingArticle ?? primary,
+        articleId,
+        paragraphIndex,
+        text,
+        units: isEnglishArticle(readingArticle ?? primary)
+          ? extractLearningUnits(text, getArticleHighlightTerms(readingArticle)) : [],
+        minimumDwellTimeMs: getMinimumExposureDwellMs(text),
+        expectedDwellTimeMs: getExpectedReadingDwellMs(text),
+        exposureOccurredAt: undefined as string | undefined,
+        lastSavedMs: -1,
+        lastRequestedMs: -1,
+        retryCount: 0,
+        writeChain: Promise.resolve(),
+      };
+      paragraphReadings.set(paragraph, reading);
+      return reading;
+    };
+
+    const persistParagraph = (paragraph: Element, now: number): Promise<void> => {
+      const reading = readingFor(paragraph);
+      if (!hasQualifiedReadingDwell(reading.state, now, reading.minimumDwellTimeMs)
+        || reading.units.length === 0) return reading.writeChain;
+      const dwellTimeMs = Math.round(readReadingDwell(reading.state, now).dwellTimeMs);
+      if (dwellTimeMs <= reading.lastRequestedMs) return reading.writeChain;
+      reading.exposureOccurredAt ??= new Date().toISOString();
+      reading.lastRequestedMs = dwellTimeMs;
+      reading.writeChain = reading.writeChain.then(async () => {
+        try {
+          await recordParagraphExposure(reading.paragraphIndex, reading.units, reading.articleId, {
+            contextText: reading.text.slice(0, 2_000),
+            dwellTimeMs,
+            expectedDwellTimeMs: reading.expectedDwellTimeMs,
+            exposureOccurredAt: reading.exposureOccurredAt,
+          });
+          reading.lastSavedMs = dwellTimeMs;
+          reading.retryCount = 0;
+        } catch (error) {
+          if (reading.lastRequestedMs === dwellTimeMs) reading.lastRequestedMs = reading.lastSavedMs;
+          console.error('Memory V2.2 exposure recording failed:', error);
+          // A failed persistent write can retry without needing another scroll.
+          if (isActive && reading.retryCount < 2 && !retryTimers.has(paragraph)) {
+            reading.retryCount += 1;
+            retryTimers.set(paragraph, window.setTimeout(() => {
+              retryTimers.delete(paragraph);
+              if (isActive) void persistParagraph(paragraph, performance.now());
+            }, 2_000));
+          }
+        }
+      });
+      return reading.writeChain;
+    };
+
+    const pauseParagraph = (paragraph: Element, now: number) => {
+      clearExposureTimer(paragraph);
+      activeParagraphs.delete(paragraph);
+      const reading = paragraphReadings.get(paragraph);
+      if (!reading) return;
+      reading.state = pauseReadingDwell(reading.state, now);
+      stageParagraph(paragraph, now);
+      void persistParagraph(paragraph, now);
+    };
+
+    const flushParagraphs = async (articleId?: string, pause = true) => {
+      const now = performance.now();
+      const writes: Promise<void>[] = [];
+      for (const [paragraph, reading] of paragraphReadings) {
+        if (articleId && reading.articleId !== articleId) continue;
+        if (pause) pauseParagraph(paragraph, now);
+        writes.push(persistParagraph(paragraph, now));
+      }
+      await Promise.all(writes);
+    };
+
     const finishSingleReading = () => {
       if (!isActive || hasAdvancedRef.current || mode === 'recommendation-feed') return;
       hasAdvancedRef.current = true;
+      if (!isEnglishArticle(article)) {
+        onReadingCompleteRef.current?.();
+        return;
+      }
       const exposed = [...(exposedLemmasByArticleRef.current.get(article.id) ?? new Set<string>())];
-      void snapshotWordsRef.current(exposed).then((words) => {
+      // Completion bookkeeping does not stop measuring paragraphs still being read.
+      void flushParagraphs(article.id, false).then(() => snapshotWordsRef.current(exposed)).then((words) => {
         emitVocabArticleComplete({
           articleId: article.id,
           exposedLemmas: exposed,
           words,
         });
+        if (isActive) markVerificationReady(article.id);
       });
       onReadingCompleteRef.current?.();
+    };
+
+    const persistQualifiedProgress = (paragraph: Element, now: number) => {
+      const reading = readingFor(paragraph);
+      if (!hasQualifiedReadingDwell(reading.state, now, reading.minimumDwellTimeMs)
+        || completedReadingParagraphs(readingProgressRef.current, reading.article).includes(reading.paragraphIndex)) return;
+      const completedAt = new Date().toISOString();
+      readingProgressRef.current = markReadingParagraphComplete(readingProgressRef.current, reading.article, reading.paragraphIndex, completedAt);
+      setReadingProgress(previous => markReadingParagraphComplete(previous, reading.article, reading.paragraphIndex, completedAt));
+    };
+
+    const stageParagraph = (paragraph: Element, now: number) => {
+      if (!isActive) return;
+      const reading = readingFor(paragraph);
+      if (completedParagraphs.has(paragraph)
+        || !hasQualifiedReadingDwell(reading.state, now, reading.minimumDwellTimeMs)) return;
+      const staged = stagedExposuresFor(reading.articleId);
+      const newWordIds = [...new Set(reading.units.map((unit) => unit.wordId))]
+        .filter((wordId) => !staged.has(wordId));
+      newWordIds.forEach((wordId) => staged.add(wordId));
+      completedParagraphs.add(paragraph);
+      persistQualifiedProgress(paragraph, now);
+      if (newWordIds.length > 0 && mode === 'single') onExposuresRef.current?.(newWordIds);
+      if (mode === 'single' && hasCompletedReading(readingProgressRef.current, article)) finishSingleReading();
+    };
+
+    const scheduleExposureTimer = (paragraph: Element) => {
+      clearExposureTimer(paragraph);
+      if (!canTrackReading() || !activeParagraphs.has(paragraph)) return;
+      const reading = readingFor(paragraph);
+      const now = performance.now();
+      const snapshot = readReadingDwell(reading.state, now);
+      const checkpoints = [reading.expectedDwellTimeMs, reading.expectedDwellTimeMs * 2];
+      const nextCheckpoint = checkpoints.find((checkpoint) => checkpoint > snapshot.dwellTimeMs);
+      const remainingContinuousMs = completedParagraphs.has(paragraph) ? Infinity
+        : Math.max(0, reading.minimumDwellTimeMs - snapshot.continuousTimeMs);
+      const remainingCheckpointMs = completedParagraphs.has(paragraph) && nextCheckpoint !== undefined
+        ? nextCheckpoint - snapshot.dwellTimeMs : Infinity;
+      const idleRemainingMs = Math.max(0, (reading.state.idleDeadline ?? now) - now);
+      const waitMs = Math.max(1, Math.min(remainingContinuousMs, remainingCheckpointMs, idleRemainingMs));
+      exposureTimers.set(paragraph, window.setTimeout(() => {
+        exposureTimers.delete(paragraph);
+        if (!canTrackReading() || !visibleParagraphs.has(paragraph)) {
+          pauseParagraph(paragraph, performance.now());
+          return;
+        }
+        const tickNow = performance.now();
+        stageParagraph(paragraph, tickNow);
+        void persistParagraph(paragraph, tickNow);
+        if (!readReadingDwell(reading.state, tickNow).isActive) {
+          idleParagraphs.add(paragraph);
+          pauseParagraph(paragraph, tickNow);
+          scheduleVisibleExposureTimers();
+        } else scheduleExposureTimer(paragraph);
+      }, waitMs));
+    };
+
+    const scheduleVisibleExposureTimers = () => {
+      if (!canTrackReading()) return;
+      const candidates = (Array.from(container.querySelectorAll('[data-reading-paragraph]')) as Element[])
+        .filter((paragraph) => visibleParagraphs.has(paragraph) && !idleParagraphs.has(paragraph)
+          && !activeParagraphs.has(paragraph)
+          && !completedContinuousArticleIdsRef.current.has(readingFor(paragraph).articleId));
+      for (const paragraph of limitConcurrentExposureCandidates(candidates, activeParagraphs.size)) {
+        const reading = readingFor(paragraph);
+        reading.state = resumeReadingDwell(reading.state, performance.now(),
+          getReadingIdleAllowanceMs(reading.expectedDwellTimeMs));
+        activeParagraphs.add(paragraph);
+        scheduleExposureTimer(paragraph);
+      }
     };
 
     const observer = new IntersectionObserver(
@@ -298,8 +681,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
           const paragraph = entry.target as HTMLElement;
           const isSufficientlyVisible =
-            document.visibilityState === 'visible'
-            && entry.isIntersecting
+            entry.isIntersecting
             && hasSufficientExposureVisibility(
               entry.intersectionRect.height,
               entry.boundingClientRect.height,
@@ -308,65 +690,13 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
           if (!isSufficientlyVisible) {
             visibleParagraphs.delete(paragraph);
-            clearExposureTimer(paragraph);
+            pauseParagraph(paragraph, performance.now());
             return;
           }
 
           visibleParagraphs.add(paragraph);
-          if (exposureTimers.has(paragraph)) return;
-
-          const timerId = window.setTimeout(() => {
-            exposureTimers.delete(paragraph);
-            if (
-              !isActive
-              || document.visibilityState !== 'visible'
-              || !visibleParagraphs.has(paragraph)
-            ) return;
-
-            const primary = primaryArticleRef.current;
-            const paragraphIndex = Number(paragraph.dataset.readingParagraph);
-            const paragraphArticleId = paragraph.dataset.readingArticleId || primary.id;
-            const paragraphArticle = paragraphArticleId === primary.id
-              ? primary
-              : continuousArticlesRef.current?.find((candidate) => candidate.id === paragraphArticleId);
-            const paragraphText = paragraphArticle?.content[paragraphIndex] ?? paragraph.textContent ?? '';
-            const articleHighlightTerms = getArticleHighlightTerms(paragraphArticle);
-            const learningUnits = extractLearningUnits(paragraphText, articleHighlightTerms);
-            const staged = stagedExposuresFor(paragraphArticleId);
-            const newWordIds = [...new Set(
-              learningUnits.map((unit) => unit.wordId),
-            )].filter((wordId) => !staged.has(wordId));
-
-            newWordIds.forEach((wordId) => staged.add(wordId));
-            completedParagraphs.add(paragraph);
-            observer.unobserve(paragraph);
-            visibleParagraphs.delete(paragraph);
-
-            // Memory V2.2: record for every article in the continuous stream
-            if (learningUnits.length > 0) {
-              const wordCount = paragraphText.trim().split(/\s+/).filter(Boolean).length;
-              recordParagraphExposure(paragraphIndex, learningUnits, paragraphArticleId, {
-                contextText: paragraphText.slice(0, 2_000),
-                dwellTimeMs: 800,
-                expectedDwellTimeMs: Math.max(300, wordCount * 300),
-              }).catch(err =>
-                console.error('Memory V2.2 exposure recording failed:', err)
-              );
-            }
-
-            if (newWordIds.length > 0 && mode === 'single') {
-              onExposuresRef.current?.(newWordIds);
-            }
-            if (mode === 'single') {
-              const paragraphCount = container.querySelectorAll('[data-reading-paragraph]').length;
-              if (paragraphCount > 0 && completedParagraphs.size === paragraphCount) {
-                finishSingleReading();
-              }
-            }
-          }, 800);
-
-          exposureTimers.set(paragraph, timerId);
         });
+        scheduleVisibleExposureTimers();
       },
       { threshold: Array.from({ length: 101 }, (_, index) => index / 100) },
     );
@@ -377,45 +707,104 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         container.querySelectorAll('[data-reading-paragraph]')
       ) as HTMLElement[];
       for (const paragraph of paragraphs) {
-        if (completedParagraphs.has(paragraph) || observedParagraphs.has(paragraph)) continue;
+        if (observedParagraphs.has(paragraph)) continue;
         observedParagraphs.add(paragraph);
         observer.observe(paragraph);
       }
     };
 
     exposureObserveNewRef.current = observeNewParagraphs;
+    exposureFlushRef.current = (articleId) => flushParagraphs(articleId);
+    completionCheckRef.current = () => {
+      if (mode === 'single' && hasCompletedReading(readingProgressRef.current, article)) finishSingleReading();
+    };
     observeNewParagraphs();
+    completionCheckRef.current();
 
     const pauseExposureTracking = () => {
-      exposureTimers.forEach((timerId) => window.clearTimeout(timerId));
-      exposureTimers.clear();
-      visibleParagraphs.clear();
+      const now = performance.now();
+      [...activeParagraphs].forEach((paragraph) => pauseParagraph(paragraph, now));
     };
 
-    const handleVisibilityChange = () => {
-      pauseExposureTracking();
-      if (document.visibilityState !== 'visible') return;
+    const refreshVisibleParagraphs = () => {
       observedParagraphs.forEach((paragraph) => {
-        if (completedParagraphs.has(paragraph)) return;
-        observer.unobserve(paragraph);
-        observer.observe(paragraph);
+        const bounds = paragraph.getBoundingClientRect();
+        const visibleHeight = Math.max(0, Math.min(window.innerHeight, bounds.bottom) - Math.max(0, bounds.top));
+        if (hasSufficientExposureVisibility(visibleHeight, bounds.height, window.innerHeight)) {
+          visibleParagraphs.add(paragraph);
+        } else {
+          visibleParagraphs.delete(paragraph);
+          pauseParagraph(paragraph, performance.now());
+        }
       });
     };
 
+    const handleActivityChanged = () => {
+      if (!canTrackReading()) { pauseExposureTracking(); return; }
+      refreshVisibleParagraphs();
+      scheduleVisibleExposureTimers();
+    };
+    exposureActivityChangedRef.current = handleActivityChanged;
+    const handleVisibilityChange = () => {
+      windowFocused = document.hasFocus();
+      handleActivityChanged();
+    };
+    const handleBlur = () => { windowFocused = false; pauseExposureTracking(); };
+    const handleFocus = () => { windowFocused = true; handleActivityChanged(); };
+    const handleUserActivity = (event: Event) => {
+      if (!event.isTrusted || !canTrackReading()) return;
+      idleParagraphs.clear();
+      const now = performance.now();
+      for (const paragraph of activeParagraphs) {
+        const reading = readingFor(paragraph);
+        reading.state = refreshReadingDwellActivity(reading.state, now,
+          getReadingIdleAllowanceMs(reading.expectedDwellTimeMs));
+        scheduleExposureTimer(paragraph);
+      }
+      scheduleVisibleExposureTimers();
+    };
+    const handlePageHide = () => { pauseExposureTracking(); };
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('pagehide', handlePageHide);
+    const activityEvents = ['pointerdown', 'pointermove', 'keydown', 'scroll', 'touchstart'];
+    activityEvents.forEach((event) => document.addEventListener(event, handleUserActivity, { passive: true, capture: true }));
 
     return () => {
+      // Snapshot before discarding this article's state, including the last visible paragraph.
       isActive = false;
-      exposureObserveNewRef.current = null;
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      observer.disconnect();
       pauseExposureTracking();
+      // A navigation can run before the scheduled dwell checkpoint. Persist its
+      // qualified old-article snapshot without completing the page being left.
+      const cleanupNow = performance.now();
+      paragraphReadings.forEach((_reading, paragraph) => persistQualifiedProgress(paragraph, cleanupNow));
+      void flushParagraphs();
+      exposureObserveNewRef.current = null;
+      exposureActivityChangedRef.current = null;
+      exposureFlushRef.current = null;
+      completionCheckRef.current = null;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('pagehide', handlePageHide);
+      activityEvents.forEach((event) => document.removeEventListener(event, handleUserActivity, true));
+      observer.disconnect();
+      retryTimers.forEach((timerId) => window.clearTimeout(timerId));
       completedParagraphs.clear();
       observedParagraphs.clear();
     };
     // The exposure set intentionally resets only when the article lifecycle changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [article.id, mode]);
+  }, [article.id, mode, contentVersion]);
+
+  useEffect(() => {
+    completionCheckRef.current?.();
+  }, [readingProgress, mode, contentVersion]);
+
+  useEffect(() => {
+    exposureActivityChangedRef.current?.();
+  }, [readingOverlayOpen]);
 
   // When continuous articles are appended, observe their new paragraphs without
   // resetting exposure progress for articles already on screen.
@@ -459,21 +848,38 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         const articleId = section.dataset.readingArticleId;
         if (!articleId || completedContinuousArticleIdsRef.current.has(articleId)) return;
         const lastParagraph = section.querySelector('[data-reading-last-paragraph="true"]') as HTMLElement | null;
-        if (!lastParagraph || !hasArticleExitedViewport(lastParagraph.getBoundingClientRect().bottom)) return;
+        if (!lastParagraph) return;
+        const documentHeight = Math.max(
+          document.documentElement.scrollHeight,
+          document.body?.scrollHeight ?? 0,
+        );
+        const lastParagraphBottom = lastParagraph.getBoundingClientRect().bottom;
+        const canAdvance = window.innerWidth >= 768
+          ? shouldAdvanceRecommendationAtScrollEnd(
+            lastParagraphBottom,
+            window.scrollY,
+            window.innerHeight,
+            documentHeight,
+          )
+          : hasArticleExitedViewport(lastParagraphBottom);
+        if (!canAdvance) return;
         completedContinuousArticleIdsRef.current.add(articleId);
         completedOne = true;
-        const exposed = exposedLemmasByArticleRef.current.get(articleId) ?? new Set<string>();
-        const exposedList = [...exposed];
-        void snapshotWordsRef.current(exposedList).then((words) => {
+        const flush = exposureFlushRef.current?.(articleId) ?? Promise.resolve();
+        void flush.then(async () => {
+          const exposed = exposedLemmasByArticleRef.current.get(articleId) ?? new Set<string>();
+          const exposedList = [...exposed];
+          const words = await snapshotWordsRef.current(exposedList);
           emitVocabArticleComplete({
             articleId,
             exposedLemmas: exposedList,
             words,
           });
+          markVerificationReady(articleId);
+          onAdvanceRef.current?.(
+            buildReadingAdvancePayload(articleId, 'completed', exposed)
+          );
         });
-        onAdvanceRef.current?.(
-          buildReadingAdvancePayload(articleId, 'completed', exposed)
-        );
       });
     };
     const handleScroll = () => {
@@ -498,29 +904,41 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     };
   }, [article.id, mode, continuousArticles]);
 
-  const highlightTerms = getArticleHighlightTerms(article);
-  const reviewWords = getArticleReviewWords(article);
-  const currentLastParagraphIndex = article.content.reduce(
-    (lastIndex, paragraph, index) =>
-      classifyArticleParagraph(paragraph, article.title) === 'furniture' ? lastIndex : index,
+  const reviewWords = useMemo(() => getArticleReviewWords(article, reviewWordCandidates), [article, reviewWordCandidates]);
+  const currentLastParagraphIndex = useMemo(() => article.content.reduce(
+    (lastIndex, paragraph, index) => {
+      const kind = classifyArticleParagraph(paragraph, article.title);
+      return kind === 'furniture' || kind === 'title' ? lastIndex : index;
+    },
     -1,
-  );
-  const continuationArticleList = mode === 'recommendation-feed'
+  ), [article.content, article.title]);
+  const continuationArticleList = useMemo(() => mode === 'recommendation-feed'
     ? (continuousArticles || []).filter((candidate) => candidate.id !== article.id)
-    : [];
+    : [], [mode, continuousArticles, article.id]);
+  const mediaArticles = useMemo(() => [article, ...continuationArticleList], [article, continuationArticleList]);
+  const articleMedia = useArticleMedia(mediaArticles);
 
   const closeWordCard = useCallback(() => {
+    if (wordCardSpeechOwnedRef.current) speech.stop();
+    wordCardSpeechOwnedRef.current = false;
     wordCardAbortRef.current?.abort();
     wordCardAbortRef.current = null;
     setWordCardOpen(false);
     setIsExplaining(false);
     setGrammarResult(null);
-  }, []);
+    setLanguageLookupResult(null);
+    setWordCardError(null);
+    lookupSpeechTargetRef.current = undefined;
+  }, [speech.stop]);
 
   const openWordCard = useCallback(
-    async (wordOrPhrase: string, contextSentence = '', contextArticle: Article = article) => {
-      const request = createWordCardRequest(wordOrPhrase, contextSentence);
+    async (wordOrPhrase: string, contextSentence = '', contextArticle: Article = article,
+      onResolved?: (result: GrammarExplanation) => Promise<void>, retryState?: LookupEvidenceState, speechTarget?: SpeechTarget) => {
+      const request = isEnglishArticle(contextArticle) ? createWordCardRequest(wordOrPhrase, contextSentence)
+        : wordOrPhrase.trim() ? { selectedText: wordOrPhrase.trim(), contextSentence } : null;
       if (!request) return;
+      const evidence = retryState ?? { saved: false };
+      lookupSpeechTargetRef.current = speechTarget;
 
       wordCardAbortRef.current?.abort();
       const controller = new AbortController();
@@ -531,18 +949,45 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       setWordCardOpen(true);
       setIsExplaining(true);
       setGrammarResult(null);
-      onGrammarQuery?.(request.selectedText, contextArticle.id);
+      setLanguageLookupResult(null);
+      setWordCardError(null);
+      setLookupRecordStatus(null);
+      retryRecordRef.current = null;
+      retryLookupRef.current = () => { void openWordCard(wordOrPhrase, contextSentence, contextArticle, onResolved, evidence, speechTarget); };
 
       try {
+        if (!isEnglishArticle(contextArticle)) {
+          const result = await languageDictionary.lookup({ text: request.selectedText, language: getArticleLanguage(contextArticle),
+            context: request.contextSentence.slice(0, 32_768), preferredDefinitionLanguages: ['zh', getArticleLanguage(contextArticle), 'en'] }, controller.signal);
+          if (!controller.signal.aborted) setLanguageLookupResult(result);
+          return;
+        }
         const result = await fetchWordCard(request, {
           articleId: contextArticle.id,
           signal: controller.signal,
+          forceRefresh: Boolean(retryState),
         });
         if (controller.signal.aborted) return;
         setGrammarResult(result);
+        setIsExplaining(false);
+        if (onResolved) setLookupRecordStatus(evidence.saved ? '学习记录已保存' : '正在保存学习记录…');
+        if (onResolved) {
+          const save = async () => {
+            try {
+              await saveLookupEvidenceOnce(evidence, () => onResolved(result));
+              if (!controller.signal.aborted) { retryRecordRef.current = null; setLookupRecordStatus('学习记录已保存'); }
+            } catch {
+              if (!controller.signal.aborted) { retryRecordRef.current = () => { void save(); }; setLookupRecordStatus('释义已显示，学习记录待保存'); }
+            }
+          };
+          await save();
+        } else if (!evidence.saved) {
+          onGrammarQuery?.(request.selectedText, contextArticle.id);
+          evidence.saved = true;
+        }
       } catch (error) {
         if (error instanceof Error && /cancelled|abort/i.test(error.message)) return;
-        // fetchWordCard already falls back offline; keep panel open on unexpected errors.
+        if (!controller.signal.aborted) setWordCardError(error instanceof Error ? error.message : '查询暂时不可用，请重试。');
       } finally {
         if (!controller.signal.aborted) {
           setIsExplaining(false);
@@ -552,47 +997,62 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     [article, onGrammarQuery],
   );
 
+  useEffect(() => {
+    if (!wordCardOpen) return;
+    const refresh = () => retryLookupRef.current();
+    window.addEventListener('dictionary-settings-changed', refresh);
+    return () => window.removeEventListener('dictionary-settings-changed', refresh);
+  }, [wordCardOpen]);
+
   const handleWordClick = (
     word: string,
     paragraph: string,
     tokenIndex: number,
     e: React.MouseEvent,
     readingArticle: Article = article,
-    readingHighlightTerms: string[] = highlightTerms,
   ) => {
     // Right-click is reserved for copy-and-quote; never open a word card from it.
     if (e.button !== 0 && e.nativeEvent.button !== 0) return;
-    if (suppressNextWordClickRef.current) {
+    if (suppressNextWordClickRef.current || performance.now() < suppressTouchWordClickUntilRef.current) {
       suppressNextWordClickRef.current = false;
+      suppressTouchWordClickUntilRef.current = 0;
       e.preventDefault();
       e.stopPropagation();
       return;
     }
     e.stopPropagation();
-    const request = createWordCardRequest(word, paragraph);
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    const request = isEnglishArticle(readingArticle) ? createWordCardRequest(word, paragraph)
+      : word.trim() ? { selectedText: word.trim() } : null;
     if (!request) return;
     const cleanWord = request.selectedText;
 
-    onWordClick?.(cleanWord, readingArticle.id);
-
     // Memory V2.2: record clicks for any article in the continuous stream
-    const paragraphElement = (e.target as HTMLElement).closest('[data-reading-paragraph]');
+    const paragraphElement = (e.target as HTMLElement).closest('[data-reading-paragraph], [data-reading-context]');
+    lookupLocationRef.current = getReadingTextLocation(e.currentTarget as HTMLElement);
+    const clickedElement = e.currentTarget as HTMLElement;
+    const speechTarget = createReadingWordSpeechTarget(readingArticle.id, clickedElement.dataset.speechStart, clickedElement.dataset.speechEnd);
+    setSelectionAction(null);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setLookupAnchor({ left: rect.left, top: rect.top, bottom: rect.bottom });
+    if (!isEnglishArticle(readingArticle)) {
+      void openWordCard(cleanWord, paragraph, readingArticle, undefined, undefined, speechTarget);
+      return;
+    }
+    // A word lookup records the clicked word even inside an article learning phrase.
     const learningUnit = findLearningUnitAtTokenIndex(
       paragraph,
-      readingHighlightTerms,
+      [cleanWord],
       tokenIndex,
     );
-    if (paragraphElement && learningUnit) {
-      const paragraphIndex = Number(paragraphElement.getAttribute('data-reading-paragraph'));
-
-      recordWordClick(learningUnit, paragraphIndex, readingArticle.id, {
-        contextText: paragraph.slice(0, 2_000),
-      }).catch(err =>
-        console.error('Memory V2.2 click recording failed:', err)
-      );
-    }
-
-    void openWordCard(cleanWord, paragraph, readingArticle);
+    // Title lookups have their own occurrence; they must not collide with body paragraph 0.
+    const paragraphIndex = Number(paragraphElement?.getAttribute('data-reading-paragraph') ?? -1);
+    void openWordCard(cleanWord, paragraph, readingArticle, async result => {
+      const lemma = await resolveDictionaryLearningWordId(cleanWord, result.learningTermRef);
+      if (learningUnit) await recordWordClick(learningUnit, paragraphIndex, readingArticle.id, { contextText: paragraph.slice(0, 2_000) }, lemma);
+      onWordClick?.(lemma, readingArticle.id);
+    }, undefined, speechTarget);
   };
 
   const copyTextToClipboard = async (text: string): Promise<boolean> => {
@@ -627,11 +1087,17 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   const isArticleSelection = (selection: Selection | null): selection is Selection => {
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
-    if (!contentRef.current) return false;
-    return contentRef.current.contains(selection.getRangeAt(0).commonAncestorContainer);
+    if (!selectionRef.current) return false;
+    const range = selection.getRangeAt(0);
+    return selectionRef.current.contains(range.commonAncestorContainer)
+      && [range.startContainer, range.endContainer].every(node => {
+        const element = node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+        return Boolean(element?.closest(READING_TEXT_BLOCK_SELECTOR));
+      });
   };
 
   const quoteSelectedText = (text: string) => {
+    if (!discussionEnabled) return;
     setUserInput((currentInput) => formatSelectionQuote(text, currentInput));
     setShowChatPanel(true);
     setIsComposerExpanded(true);
@@ -640,19 +1106,76 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     });
   };
 
-  /** Left-button drag selection copies the source text and quotes it in discussion. */
-  const handleTextSelection = (e: React.MouseEvent) => {
-    const button = e.button ?? e.nativeEvent.button;
-    if (button !== 0) return;
-
+  /** Read the native range after mouse, touch-handle, or keyboard selection changes. */
+  const readTextSelection = useCallback((): ReadingSelectionAction | null => {
+    if (readingOverlayOpenRef.current) return null;
     const selection = window.getSelection();
-    if (!isArticleSelection(selection)) return;
+    if (!isArticleSelection(selection)) return null;
 
-    const text = selection.toString().trim();
+    const range = selection.getRangeAt(0);
+    const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer as Element : range.startContainer.parentElement;
+    if (startElement?.closest('[data-reading-interaction="true"]')) return null;
+    const selectedOriginalText = range.cloneContents().querySelector('[data-selection-translation="true"]')
+      ? originalRangeText(range) : selection.toString();
+    const text = selectedOriginalText.trim();
     // Ignore pure click noise; require a real selection (phrase/sentence)
-    if (text.length < 2 || text.length > 4000) return;
+    if (text.length < 2 || text.length > 4000) return null;
 
-    quoteSelectedText(text);
+    // Dragging native selection handles must never become a recommendation swipe.
+    swipeStartRef.current = null;
+    touchSwipeStartRef.current = null;
+
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    const location = getReadingTextLocation(range.endContainer, range.endOffset) ?? getReadingTextLocation(range.startContainer, range.startOffset);
+    if (!location) return null;
+    const paragraph = startElement?.closest<HTMLElement>('[data-speech-paragraph-start]');
+    let speechTarget: SpeechTarget | undefined;
+    if (paragraph?.dataset.readingArticleId) {
+      const prefix = document.createRange();
+      prefix.selectNodeContents(paragraph);
+      prefix.setEnd(range.startContainer, range.startOffset);
+      speechTarget = { articleId: paragraph.dataset.readingArticleId,
+        startOffset: Number(paragraph.dataset.speechParagraphStart) + originalRangeText(prefix).length + selectedOriginalText.length - selectedOriginalText.trimStart().length };
+    }
+    const contextElement = startElement?.closest('[data-reading-paragraph], [data-reading-context]');
+    const contextRange = document.createRange();
+    if (contextElement) contextRange.selectNodeContents(contextElement);
+    return { text, context: contextElement ? originalRangeText(contextRange) : text,
+      speechTarget, location,
+      touchSelection: ['touch', 'pen'].includes(lastPointerTypeRef.current) || window.matchMedia('(pointer: coarse)').matches,
+      anchor: { left: rect.left, top: rect.top, bottom: rect.bottom } };
+  }, []);
+
+  const handleTextSelection = useCallback(() => {
+    setSelectionAction(readTextSelection());
+  }, [readTextSelection]);
+
+  const beginTouchSelection = useCallback(() => {
+    lastPointerTypeRef.current = 'touch';
+    swipeStartRef.current = null;
+    touchSwipeStartRef.current = null;
+    suppressTouchWordClickUntilRef.current = performance.now() + 800;
+  }, []);
+  const finishTouchSelection = useCallback(() => {
+    suppressTouchWordClickUntilRef.current = performance.now() + 400;
+  }, []);
+
+  useEffect(() => {
+    setSelectionAction(null);
+    const content = selectionRef.current;
+    if (content) return observeReadingSelection(content, handleTextSelection);
+  }, [article.id, handleTextSelection]);
+
+  const actOnTextSelection = (action: (selection: ReadingSelectionAction) => void) => {
+    // The reader may tap before the debounced handle update. Snapshot the final
+    // native range now, falling back when the toolbar has taken browser focus.
+    const current = readTextSelection() ?? selectionAction;
+    setSelectionAction(null);
+    // Action handlers already have a snapshot. Clearing the consumed native range
+    // prevents queued selection events from reopening it when an inline note renders.
+    window.getSelection()?.removeAllRanges();
+    if (current) action(current);
   };
 
   /** Look up a related word from the word-card panel (word-family chips). */
@@ -660,33 +1183,46 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     void openWordCard(word, selectedContext || '');
   };
 
-  const handleTranslate = async () => {
-    const text = selectedText || grammarResult?.wordOrPhrase;
-    if (!text) return;
+  const handleTranslate = async (selection?: string, location = lookupLocationRef.current) => {
+    const text = (selection ?? (selectedText || grammarResult?.wordOrPhrase))?.trim();
+    if (!text || !location) return;
+    translationAbortRef.current?.abort();
+    const controller = new AbortController();
+    translationAbortRef.current = controller;
+    setSelectionAction(null);
+    closeWordCard();
+    setTranslationText(text);
+    setTranslationLocation(location);
     setIsTranslating(true);
     setTranslationResult(null);
+    setTranslationError(null);
 
     try {
-      const response = await postTutor<TranslationResult>({
-        intent: 'translate',
-        articleId: article.id,
-        selectedText: text,
-        targetLanguage: 'Chinese',
-      });
-      setTranslationResult(response.result);
-    } catch {
-      setTranslationResult({
-        originalText: text,
-        translatedText: '当前为离线模式，请配置 API Key 后重试。',
-        targetLanguage: 'Chinese',
-      });
+      const sourceArticle = location.articleId === article.id ? article
+        : continuousArticles?.find(item => item.id === location.articleId) ?? article;
+      const translate = isEnglishArticle(sourceArticle) ? translateSelection : translatePassage;
+      const result = await translate(text, { signal: controller.signal,
+        ...(isEnglishArticle(sourceArticle) ? {} : { sourceLanguage: getArticleLanguage(sourceArticle) }) });
+      if (!controller.signal.aborted && translationAbortRef.current === controller) setTranslationResult(result);
+    } catch (error) {
+      if (!controller.signal.aborted && translationAbortRef.current === controller) {
+        setTranslationError(error instanceof Error ? error.message : '本机翻译失败，请重试。');
+      }
     } finally {
-      setIsTranslating(false);
+      if (translationAbortRef.current === controller) setIsTranslating(false);
     }
   };
 
+  const renderSelectionTranslation = (articleId: string, paragraphIndex: number) => (
+    translationText !== null && translationLocation?.articleId === articleId && translationLocation.paragraphIndex === paragraphIndex
+      ? <SelectionTranslationNote key={`${translationText}:${translationLocation.endOffset}`} loading={isTranslating} result={translationResult} error={translationError}
+        onRetry={() => { void handleTranslate(translationText, translationLocation); }} />
+      : null
+  );
+
   const handleSendQuestion = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (!discussionEnabled) return;
     if (!userInput.trim() || isSending) return;
 
     const query = userInput.trim();
@@ -748,33 +1284,51 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     }
   };
 
-  const handleSpeakText = (text: string) => {
-    if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
-      window.speechSynthesis.speak(utterance);
+  const handleSpeakText = (text: string, target?: SpeechTarget) => {
+    wordCardSpeechOwnedRef.current = false;
+    if (!target && wordCardOpen) {
+      const headwords = languageLookupResult?.sources.flatMap(source => source.matches.map(match => match.entry.headword)) ?? [];
+      const words = [selectedText, grammarResult?.wordOrPhrase,
+        grammarResult ? getCompactWordCard(grammarResult, selectedText).word : undefined, ...headwords];
+      if (words.some(word => word && word.trim() === text.trim())) target = lookupSpeechTargetRef.current;
+      if (!target && text === selectedContext && lookupLocationRef.current) {
+        const location = lookupLocationRef.current;
+        const paragraph = readingSpeechSources.get(location.articleId)?.paragraphs.get(location.paragraphIndex);
+        if (paragraph?.text === text) target = { articleId: location.articleId, startOffset: paragraph.start };
+      }
     }
+    speech.speak(text, target);
   };
 
   const getFontSizeClass = () => {
-    // Mobile-first: slightly larger base for readability; sm+ keeps prior scale.
-    if (fontSize === 'large') return 'text-[1.2rem] leading-[1.75] sm:text-xl sm:leading-relaxed';
-    if (fontSize === 'xlarge') return 'text-[1.35rem] leading-[1.8] sm:text-2xl sm:leading-loose';
-    return 'text-[1.05rem] leading-[1.75] sm:text-lg sm:leading-relaxed';
+    if (fontSize === 'large') return 'text-[1.25rem] leading-[1.8] sm:text-[1.375rem]';
+    if (fontSize === 'xlarge') return 'text-[1.375rem] leading-[1.85] sm:text-2xl';
+    return 'text-lg leading-[1.8] sm:text-xl';
   };
 
   const renderInteractiveParagraph = (
     paragraph: string,
     readingArticle: Article,
-    readingHighlightTerms: string[],
+    paragraphIndex?: number,
+    interactive = true,
   ): React.ReactNode => {
-    const sourceTokens = paragraph.trim().split(/\s+/).filter(Boolean);
-    const highlightMatches = getPhraseHighlightMatches(sourceTokens, readingHighlightTerms);
-    let tokenIndex = 0;
-
-    return getArticleInlineParts(paragraph).map((part, partIndex) => {
+    const base = paragraphIndex === undefined ? undefined : readingSpeechSources.get(readingArticle.id)?.paragraphs.get(paragraphIndex)?.start;
+    let offset = 0;
+    const markedText = (text: string, start: number | undefined) => {
+      if (start === undefined) return text;
+      const words = speechWords(text);
+      if (!words.length) return text;
+      let cursor = 0;
+      return words.map((word, index) => {
+        const prefix = text.slice(cursor, word.start);
+        cursor = word.end;
+        return <React.Fragment key={word.start}>{prefix}<span data-speech-start={start + word.start} data-speech-end={start + word.end}>{word.text}</span>{index === words.length - 1 ? text.slice(cursor) : ''}</React.Fragment>;
+      });
+    };
+    const renderTokens = (tokens: ReadingToken[]) => tokens.map((part, partIndex) => {
+      const start = base === undefined ? undefined : base + offset;
+      offset += part.value.length;
       if (part.type === 'link') {
-        tokenIndex += Math.max(1, part.value.trim().split(/\s+/).filter(Boolean).length);
         return (
           <a
             key={`link-${partIndex}`}
@@ -783,52 +1337,46 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             rel="noopener noreferrer"
             className="text-[#A94E2B] underline decoration-[#D7A28F] underline-offset-4 hover:text-[#7E351C] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C35E37]"
           >
-            {part.value}
+            {markedText(part.value, start)}
           </a>
         );
       }
 
-      return part.value.split(/(\s+)/).map((piece, pieceIndex) => {
-        if (/^\s+$/.test(piece)) return piece;
-
-        const currentTokenIndex = tokenIndex;
-        // Link punctuation is split into its own text part, but shares the URL token index.
-        if (!/^[\p{P}\p{S}]+$/u.test(piece)) tokenIndex += 1;
-        const matchedTerm = highlightMatches[currentTokenIndex];
-        return (
-          <span
-            key={`text-${partIndex}-${pieceIndex}`}
-            onClick={(event) => handleWordClick(
-              matchedTerm || piece,
-              paragraph,
-              currentTokenIndex,
-              event,
-              readingArticle,
-              readingHighlightTerms,
-            )}
-            className={
-              matchedTerm
-                ? 'bg-[#FEF08A] hover:bg-[#FDE047] text-[#1E1B18] px-1 py-0.5 rounded transition-all cursor-pointer inline-block font-medium border-b border-[#EAB308]'
-                : 'hover:bg-[#EFECE3] rounded px-0.5 transition-colors cursor-pointer'
-            }
-            title={matchedTerm ? `Review phrase: ${matchedTerm}` : 'Click to look up'}
-          >
-            {piece}
-          </span>
-        );
-      });
+      if (part.type === 'text') return <React.Fragment key={`text-${partIndex}`}>{markedText(part.value, start)}</React.Fragment>;
+      return (
+        <span
+          key={`word-${partIndex}`}
+          onClick={interactive ? (event) => handleWordClick(
+            part.value,
+            paragraph,
+            part.tokenIndex,
+            event,
+            readingArticle,
+          ) : undefined}
+          data-speech-start={start}
+          data-speech-end={start === undefined ? undefined : start + part.value.length}
+          className={interactive ? 'cursor-pointer' : undefined}
+          title={interactive ? '点击查词' : undefined}
+        >
+          {part.value}
+        </span>
+      );
     });
+    const note = renderSelectionTranslation(readingArticle.id, paragraphIndex ?? -1);
+    const tokens = tokenizeReadingParagraph(paragraph, getArticleLanguage(readingArticle));
+    const [before, after] = note ? splitReadingTokensForAnnotation(tokens, translationLocation!.endOffset) : [tokens, []];
+    return <>{renderTokens(before)}{note}{renderTokens(after)}</>;
   };
 
   const shouldIgnoreSwipeTarget = (target: EventTarget | null): boolean => {
     if (!(target instanceof Element)) return false;
     return Boolean(target.closest(
-      'button, input, textarea, select, a, [role="button"], [contenteditable="true"], [data-reading-interaction="true"]'
+      'button, input, textarea, select, a, [role="button"], [contenteditable="true"], [data-reading-interaction="true"], [data-reading-touch-handle]'
     ));
   };
 
   const canStartSwipe = (target: EventTarget | null): boolean => {
-    if (mode !== 'recommendation-feed' || shouldIgnoreSwipeTarget(target)) return false;
+    if (mode !== 'recommendation-feed' || readingOverlayOpenRef.current || shouldIgnoreSwipeTarget(target)) return false;
     const selection = window.getSelection();
     return !selection || selection.isCollapsed;
   };
@@ -851,25 +1399,28 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   /** Skip to the next recommended article (left-swipe / desktop right-click). */
   const advanceToNextRecommendedArticle = () => {
-    if (mode !== 'recommendation-feed') return;
+    if (mode !== 'recommendation-feed' || readingOverlayOpenRef.current) return;
     const articleId = getCurrentContinuousArticleId();
     if (completedContinuousArticleIdsRef.current.has(articleId)) return;
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
 
     completedContinuousArticleIdsRef.current.add(articleId);
+    const flush = exposureFlushRef.current?.(articleId) ?? Promise.resolve();
     pendingSwipeScrollArticleIdRef.current = articleId;
     suppressNextWordClickRef.current = true;
     window.setTimeout(() => {
       suppressNextWordClickRef.current = false;
     }, 0);
-    onAdvanceRef.current?.(
-      buildReadingAdvancePayload(
-        articleId,
-        'skipped',
-        exposedLemmasByArticleRef.current.get(articleId) ?? new Set<string>(),
-      )
-    );
+    void flush.then(() => {
+      onAdvanceRef.current?.(
+        buildReadingAdvancePayload(
+          articleId,
+          'skipped',
+          exposedLemmasByArticleRef.current.get(articleId) ?? new Set<string>(),
+        )
+      );
+    });
   };
 
   const handleLeftSwipe = (startX: number, startY: number, endX: number, endY: number) => {
@@ -879,6 +1430,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   /** Desktop: right-click advances to the next recommended article. */
   const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDesktopReadingContextMenu(event.nativeEvent as MouseEvent & { pointerType?: string }, lastPointerTypeRef.current)) {
+      swipeStartRef.current = null;
+      touchSwipeStartRef.current = null;
+      return;
+    }
     if (mode !== 'recommendation-feed' || shouldIgnoreSwipeTarget(event.target)) return;
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
@@ -887,6 +1443,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    lastPointerTypeRef.current = event.pointerType;
     if (
       !event.isPrimary
       || !['touch', 'pen'].includes(event.pointerType)
@@ -911,6 +1468,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   };
 
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    lastPointerTypeRef.current = 'touch';
+    suppressTouchWordClickUntilRef.current = 0;
     if (event.touches.length !== 1 || !canStartSwipe(event.target)) return;
     const touch = event.touches[0];
     touchSwipeStartRef.current = { identifier: touch.identifier, x: touch.clientX, y: touch.clientY };
@@ -938,6 +1497,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   return (
     <div
+      lang={language}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerCancel}
@@ -945,8 +1505,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       onTouchEnd={handleTouchEnd}
       onTouchCancel={handleTouchCancel}
       onContextMenu={handleContextMenu}
-      style={{ touchAction: mode === 'recommendation-feed' ? 'pan-y' : undefined }}
-      className={`min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between relative selection:bg-[#FDE68A] transition-all duration-150 ease-out overflow-x-clip ${
+      style={{ touchAction: mode === 'recommendation-feed' ? 'pan-y pinch-zoom' : undefined }}
+      className={`reading-page min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between relative selection:bg-[#FDE68A] transition-all duration-150 ease-out overflow-x-clip ${
         articleVisible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-2'
       }`}
     >
@@ -956,9 +1516,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         </div>
       )}
 
-      <header className="sticky top-0 z-20 bg-[#F8F6F0]/90 px-4 backdrop-blur-md safe-pt sm:px-6">
-        <div className="mx-auto grid h-16 w-full max-w-[1040px] grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-[#E7E2D5] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-          <div className="flex min-w-11 items-center">
+      <header className="app-page-header reading-page-header sticky top-0 z-20 bg-[#F8F6F0]/90 px-4 backdrop-blur-md safe-pt sm:px-6">
+        <div className="app-page-header__inner mx-auto grid h-16 w-full max-w-[1040px] grid-cols-[auto_minmax(0,1fr)_auto] items-center sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <div className="flex min-w-11 items-center gap-3">
           <button
             type="button"
             onClick={onBack}
@@ -972,12 +1532,12 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
           <div className="text-center min-w-0 px-1 sm:px-2 flex justify-center">
             {navigation || (
-            <>
-            <h1 className="font-serif text-base sm:text-2xl font-bold leading-tight text-[#2C2723] truncate max-w-[min(58vw,16rem)] sm:max-w-lg mx-auto">
+            <div className="min-w-0">
+            <h1 className="[font-family:var(--font-display)] text-base sm:text-xl font-semibold leading-tight text-[#2C2723] truncate max-w-[min(58vw,16rem)] sm:max-w-lg mx-auto">
               {article.title}
             </h1>
             {(article.levelRating || article.level || article.source) && (
-              <p className="text-[11px] sm:text-xs text-[#8C8478] mt-0.5 truncate max-w-[min(58vw,16rem)] sm:max-w-lg mx-auto">
+              <p className="text-xs leading-5 text-[#7B7267] mt-0.5 truncate max-w-[min(58vw,16rem)] sm:max-w-lg mx-auto">
               {/* One CEFR badge per article (levelRating is the official grade when present). */}
               {(article.levelRating?.level || article.level) && (
                 <button
@@ -995,10 +1555,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               {(article.levelRating?.level || article.level) && article.source && (
                 <span> · </span>
               )}
-              {article.source && <span>{article.source}</span>}
+              {article.source && <span>{ARTICLE_SOURCE_LABELS[article.source]}</span>}
               </p>
             )}
-            </>
+            </div>
             )}
           </div>
 
@@ -1015,14 +1575,17 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             </button>
 
             {showMenu && (
-              <div className="absolute right-0 mt-2 w-[min(15rem,calc(100vw-1.5rem))] bg-[#FAF8F3] border border-[#E0D9CB] rounded-xl shadow-lg p-2 z-30 text-sm sm:text-xs text-[#3D372E]">
+              <div className="reading-options-menu absolute right-0 mt-2 w-[min(16rem,calc(100vw-1.5rem))] bg-[#FAF8F3] border border-[#E0D9CB] rounded-2xl shadow-xl p-2 z-30 text-sm text-[#3D372E]">
+              <p className="px-3 pb-2 pt-1 text-xs font-medium text-[#7B7267]">阅读字号</p>
               <div className="flex gap-1 p-1 mb-2 bg-[#EFECE3] rounded-lg">
                 {(['normal', 'large', 'xlarge'] as const).map((size) => (
                   <button
                     key={size}
                     type="button"
                     onClick={() => setFontSize(size)}
-                    className={`flex-1 min-h-10 sm:min-h-0 py-2 sm:py-1 rounded text-center font-medium ${
+                    aria-label={size === 'normal' ? '标准字号' : size === 'large' ? '大字号' : '特大字号'}
+                    aria-pressed={fontSize === size}
+                    className={`flex-1 min-h-11 py-2 rounded-md text-center font-medium ${
                       fontSize === size
                         ? 'bg-white shadow-2xs text-[#2B2723]'
                         : 'text-[#6C655C]'
@@ -1033,17 +1596,19 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 ))}
               </div>
 
+              <SpeechControls preferences={speech.preferences} onChange={speech.setPreferences} language={english ? undefined : language} />
               <button
                 type="button"
                 onClick={() => {
                   setShowMenu(false);
-                  handleSpeakText(article.content.join(' '));
+                  handleSpeakText(readingSpeechSources.get(article.id)?.text || '', { articleId: article.id, startOffset: 0 });
                 }}
-                className="w-full min-h-11 sm:min-h-0 px-3 py-2.5 sm:py-2 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center justify-center"
+                className="w-full min-h-11 px-3 py-2.5 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center gap-3 text-left"
                 title="Listen to full article"
                 aria-label="Listen to full article"
               >
                 <Volume2 className="w-4 h-4 text-[#C35E37] shrink-0" />
+                <span>听全文</span>
               </button>
 
               {article.paragraphTranslations && article.paragraphTranslations.length > 0 && (
@@ -1053,26 +1618,27 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     setShowParagraphTranslations((v) => !v);
                     setShowMenu(false);
                   }}
-                  className="w-full min-h-11 sm:min-h-0 px-3 py-2.5 sm:py-2 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center justify-center [&>span]:hidden"
+                  className="w-full min-h-11 px-3 py-2.5 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center gap-3 text-left"
                   title={showParagraphTranslations ? 'Hide paragraph translations' : 'Show paragraph translations'}
                   aria-label={showParagraphTranslations ? 'Hide paragraph translations' : 'Show paragraph translations'}
                 >
                   <Globe className="w-4 h-4 text-[#2563EB] shrink-0" />
+                  <span>{showParagraphTranslations ? '隐藏段落翻译' : '显示段落翻译'}</span>
                 </button>
               )}
 
-              {onRewriteAtLevel && (
+              {english && onRewriteAtLevel && (
                 <div className="mt-1 border-t border-[#E7E2D5] pt-1">
                   <button
                     type="button"
                     disabled={isRewriting}
                     onClick={() => setShowRewriteLevels((v) => !v)}
-                    className="w-full min-h-11 sm:min-h-0 px-3 py-2.5 sm:py-2 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                    className="w-full min-h-11 px-3 py-2.5 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center gap-3 text-left disabled:opacity-50"
                     title={isRewriting ? '正在改写' : '按等级改写'}
                     aria-label={isRewriting ? '正在改写' : '按等级改写'}
                   >
-                    <PenLine className="w-4 h-4 text-[#C35E37]" />
-                    <span className="sm:hidden">按等级改写</span>
+                    <PenLine className="w-4 h-4 text-[#C35E37] shrink-0" />
+                    <span>{isRewriting ? '正在改写…' : '按等级改写'}</span>
                   </button>
                   {showRewriteLevels && !isRewriting && (
                     <div className="px-2 pb-2 grid grid-cols-3 gap-1.5">
@@ -1091,11 +1657,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                               setShowMenu(false);
                               onRewriteAtLevel(lv);
                             }}
-                            className={`min-h-10 sm:min-h-0 py-2 sm:py-1.5 rounded-lg text-center text-xs sm:text-[11px] font-semibold border transition-colors ${
+                            className={`min-h-11 py-2 rounded-lg text-center text-xs font-semibold border transition-colors ${
                               isPreferred
-                                ? 'border-[#C35E37] bg-[#C35E37] text-white'
+                                ? 'border-[#A94E2B] bg-[#A94E2B] text-white'
                                 : isCurrent
-                                  ? 'border-[#C35E37] bg-[#C35E37]/10 text-[#C35E37]'
+                                  ? 'border-[#A94E2B] bg-[#A94E2B]/10 text-[#A94E2B]'
                                   : 'border-[#E0DBCF] bg-white hover:border-[#C35E37] text-[#3D372E]'
                             }`}
                             title={
@@ -1121,13 +1687,22 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         </div>
       </header>
 
-      <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6 sm:px-6 sm:py-12 pb-[max(7rem,calc(5.5rem+env(safe-area-inset-bottom,0px)))]">
-        <header className="mb-6 sm:mb-8">
-          <h2 className="font-serif text-[1.65rem] sm:text-3xl font-bold leading-tight text-[#2A2621] break-words">
-            {article.title}
+      <SpeechFeedback state={speech.state} onStop={speech.stop} floating />
+      <SpeechWordHighlighter scope={speech.scope} />
+
+      <main ref={selectionRef} className="reading-content flex-1 max-w-3xl w-full mx-auto px-5 py-8 sm:px-8 sm:py-12 pb-10 sm:pb-[max(7rem,calc(5.5rem+env(safe-area-inset-bottom,0px)))]">
+        <header className="reading-article-header mb-8 sm:mb-10">
+          {readingPathLabel && <p className="mb-3 font-sans text-xs leading-5 text-[#85786B]">{readingPathLabel}</p>}
+          <h2
+            data-reading-article-title="true"
+            data-reading-context="title"
+            data-reading-article-id={article.id}
+            className="[font-family:var(--font-display)] text-[1.875rem] sm:text-[2.5rem] font-semibold leading-[1.15] tracking-[-0.025em] text-[#2A2621] break-words"
+          >
+            {renderInteractiveParagraph(article.title, article)}
           </h2>
           {(article.levelRating?.level || article.level || article.source) && (
-            <p className="mt-2 text-[10px] text-[#8C8478]">
+            <p className="mt-3 text-xs leading-6 text-[#7B7267]">
               {(article.levelRating?.level || article.level) && (
                 <button
                   type="button"
@@ -1142,12 +1717,13 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 </button>
               )}
               {(article.levelRating?.level || article.level) && article.source && <span> · </span>}
-              {article.source && <span>{article.source}</span>}
+              {article.source && <span>{ARTICLE_SOURCE_LABELS[article.source]}</span>}
             </p>
           )}
         </header>
 
         {/* Legacy rewrite banner is intentionally suppressed: rewrites are ordinary new articles. */}
+        {article.sourceDocument && <PdfPagePreview source={article.sourceDocument} scanned={!article.content.length} autoOpen={!article.content.length && !articleMedia[article.id]?.length} />}
         {false && (
           <div className="mb-4 p-3 bg-[#FDF2F8] border border-[#FBCFE8] rounded-xl text-xs text-[#9D174D] flex items-start justify-between gap-3">
             <div>
@@ -1182,13 +1758,13 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 </span>
                 <div className="min-w-0">
                   <h2 id="review-word-strip-title" className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#6B645B]">
-                    Focus words
+                    本篇出现的关注词
                   </h2>
-                  <p className="text-[11px] text-[#9A9185]">{reviewWords.length} in this article</p>
+                  <p className="text-[11px] text-[#9A9185]">{reviewWords.length} 个词 · 随阅读逐步巩固</p>
                 </div>
               </div>
               <span className="hidden shrink-0 text-[11px] font-medium text-[#A59C90] sm:inline">
-                Vocabulary set
+                本篇词汇
               </span>
             </div>
             <div className="review-word-strip__viewport">
@@ -1216,28 +1792,23 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               <div className="review-word-strip__fade review-word-strip__fade--right" aria-hidden="true" />
             </div>
           </section>
+
         )}
 
-        {(importJob?.status === 'queued'
+        {!ON_DEMAND_TRANSLATION && importJob?.status !== 'completed' && (importJob?.status === 'queued'
           || importJob?.status === 'processing'
           || article.importEnrichmentStatus === 'pending'
           || article.importEnrichmentStatus === 'processing'
           || (needsImportEnrichment(article) && article.importEnrichmentStatus !== 'failed')) && (
           <div className="mb-4 p-3 bg-[#E0F2FE] border border-[#BAE6FD] rounded-xl text-xs text-[#075985] space-y-1">
-            <p className="font-semibold">导入模块处理中 · 可先阅读原文</p>
-            <p>
-              {importJob?.progress?.message
-                || (importJob?.status === 'queued'
-                  ? '已排队，等待后台逐段翻译与评级…'
-                  : '后台逐段翻译与 CEFR 评级稍后完成，译文会自动出现。')}
-            </p>
+            <p>原文已就绪，译文正在准备。可继续阅读。</p>
           </div>
         )}
 
-        {(importJob?.status === 'failed' || article.importEnrichmentStatus === 'failed') && (
+        {!ON_DEMAND_TRANSLATION && (importJob?.status === 'failed' || article.importEnrichmentStatus === 'failed') && (
           <div className="mb-4 p-3 bg-[#FEE2E2] border border-[#FECACA] rounded-xl text-xs text-[#991B1B] flex items-start justify-between gap-3">
             <div>
-              <p className="font-semibold">导入模块失败</p>
+              <p className="font-semibold">译文或难度信息暂未完成，原文仍可阅读</p>
               <p className="mt-0.5">
                 {article.importEnrichmentError || importJob?.error || '翻译或评级未完成'}
               </p>
@@ -1298,92 +1869,96 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         )}
         <div
           ref={contentRef}
-          onMouseUp={handleTextSelection}
-          className={`font-serif text-[#2B2723] space-y-6 sm:space-y-8 select-text break-words [overflow-wrap:anywhere] ${getFontSizeClass()}`}
+          className={`reading-prose [font-family:var(--font-reading)] text-[#2B2723] space-y-8 sm:space-y-10 select-text break-words [overflow-wrap:anywhere] ${getFontSizeClass()}`}
         >
-          <section data-reading-article-section={article.id} data-reading-article-id={article.id}>
+          <section className="space-y-6 sm:space-y-7" data-reading-article-section={article.id} data-reading-article-id={article.id}>
+            <ArticleMediaFigures media={articleMedia[article.id]} paragraphs={article.content} afterParagraphIndex={-1} />
             {article.content.map((paragraph, pIdx) => {
             const paragraphKind = classifyArticleParagraph(paragraph, article.title);
-            if (paragraphKind === 'furniture') return null;
+            if (paragraphKind === 'furniture' || paragraphKind === 'title') {
+              return <ArticleMediaFigures key={pIdx} media={articleMedia[article.id]} paragraphs={article.content} afterParagraphIndex={pIdx} />;
+            }
 
             const zh = article.paragraphTranslations?.[pIdx];
-            const inlineContent = paragraphKind === 'author'
-              ? paragraph
-              : renderInteractiveParagraph(paragraph, article, highlightTerms);
+            const inlineContent = renderInteractiveParagraph(paragraph, article, pIdx, paragraphKind !== 'author');
 
-            const translationClassName =
-              paragraphKind === 'title'
-                ? 'font-sans text-sm sm:text-base leading-relaxed text-[#7B7267] pl-3 border-l border-[#D6CFC1]'
-                : paragraphKind === 'author'
-                  ? 'font-sans text-xs sm:text-sm leading-relaxed text-[#9A9185] pl-3'
-                  : 'font-sans text-[0.85em] leading-relaxed text-[#6B645B] bg-[#F3F0E8] border border-[#E7E2D5] rounded-xl px-3 py-2.5';
+            const translationClassName = paragraphKind === 'author'
+              ? 'font-sans text-xs sm:text-sm leading-relaxed text-[#9A9185] pl-3'
+              : 'font-sans text-[0.85em] leading-relaxed text-[#6B645B] bg-[#F3F0E8] border border-[#E7E2D5] rounded-xl px-3 py-2.5';
 
             return (
               <div
                 key={pIdx}
                 className={
-                  paragraphKind === 'title'
-                    ? 'space-y-3 pt-2 pb-1'
-                    : paragraphKind === 'author'
-                      ? 'space-y-2 pt-1 pb-2'
-                      : 'space-y-2'
+                  paragraphKind === 'author'
+                    ? 'space-y-2 pt-1 pb-2'
+                    : 'space-y-2'
                 }
               >
-                {paragraphKind === 'title' ? (
-                  <h2
+                <p
                     data-reading-paragraph={pIdx}
-                    data-reading-article-id={article.id}
-                    data-reading-last-paragraph={pIdx === currentLastParagraphIndex ? 'true' : undefined}
-                    className="font-serif text-2xl sm:text-3xl font-bold leading-tight tracking-normal text-[#2A2621]"
-                  >
-                    {inlineContent}
-                  </h2>
-                ) : (
-                  <p
-                    data-reading-paragraph={pIdx}
+                    data-speech-paragraph-start={readingSpeechSources.get(article.id)?.paragraphs.get(pIdx)?.start}
                     data-reading-article-id={article.id}
                     data-reading-last-paragraph={pIdx === currentLastParagraphIndex ? 'true' : undefined}
                     className={
                       paragraphKind === 'author'
                         ? 'font-sans text-sm sm:text-base font-bold leading-relaxed tracking-normal text-[#6C655C] pl-3 border-l-2 border-[#C35E37]'
-                        : 'tracking-normal indent-8 sm:indent-10'
+                        : 'tracking-normal'
                     }
                   >
                     {inlineContent}
-                  </p>
-                )}
+                </p>
                 {showParagraphTranslations && zh && (
                   <p className={translationClassName}>
                     {zh}
                   </p>
                 )}
+                <ArticleMediaFigures media={articleMedia[article.id]} paragraphs={article.content} afterParagraphIndex={pIdx} />
               </div>
             );
             })}
+            {english && <ReadingVerificationPause key={article.id} articleId={article.id}
+              excludedContextTexts={article.content}
+              articleTitle={article.title} readingComplete={verificationReadyArticleIds.has(article.id)}
+              level={article.levelRating?.level || article.level || preferredCefrLevel}
+              onActiveChange={handleVerificationActiveChange} />}
           </section>
 
+          {english && onDifficultyFeedback && <ReadingDifficultyControl value={difficultyFeedback} onChange={onDifficultyFeedback} />}
+          {readingContinuation}
+          {onNextArticle && <button data-reading-interaction="true" className="mb-4 min-h-11 rounded-xl border border-stone-300 px-4 font-sans text-sm" onClick={() => {
+            window.getSelection()?.removeAllRanges();
+            if (mode === 'recommendation-feed') advanceToNextRecommendedArticle();
+            else onNextArticle();
+          }}>{nextArticleLabel}</button>}
+          {article.importBatchId && !onNextArticle && <p role="status" className="mb-4 font-sans text-sm text-stone-600">本文件末章，已到最后一篇。</p>}
           {continuationArticleList.map((nextArticle) => {
             const nextLastParagraphIndex = nextArticle.content.reduce(
-              (lastIndex, paragraph, index) =>
-                classifyArticleParagraph(paragraph, nextArticle.title) === 'furniture' ? lastIndex : index,
+              (lastIndex, paragraph, index) => {
+                const kind = classifyArticleParagraph(paragraph, nextArticle.title);
+                return kind === 'furniture' || kind === 'title' ? lastIndex : index;
+              },
               -1,
             );
             return (
               <section
                 key={nextArticle.id}
+                lang={getArticleLanguage(nextArticle)}
                 data-reading-article-section={nextArticle.id}
                 data-reading-article-id={nextArticle.id}
-                className="mt-10 border-t border-[#E7E2D5] pt-8"
+                className="mt-12 border-t border-[#E7E2D5] pt-10"
               >
-                <header className="mb-8">
+                <header className="reading-article-header mb-8 sm:mb-10">
                   <h2
                     data-reading-article-title="true"
-                    className="font-serif text-2xl sm:text-3xl font-bold leading-tight text-[#2A2621]"
+                    data-reading-context="title"
+                    data-reading-article-id={nextArticle.id}
+                    className="[font-family:var(--font-display)] text-[1.875rem] sm:text-[2.5rem] font-semibold leading-[1.15] tracking-[-0.025em] text-[#2A2621]"
                   >
-                    {nextArticle.title}
+                    {renderInteractiveParagraph(nextArticle.title, nextArticle)}
                   </h2>
                   {(nextArticle.levelRating?.level || nextArticle.level || nextArticle.source) && (
-                    <p className="mt-2 text-[10px] text-[#8C8478]">
+                    <p className="mt-3 font-sans text-xs leading-6 text-[#7B7267]">
                       {nextArticle.levelRating?.level || nextArticle.level
                         ? `CEFR ${nextArticle.levelRating?.level || nextArticle.level}`
                         : null}
@@ -1392,47 +1967,44 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     </p>
                   )}
                 </header>
-                <div className="space-y-8">
+                <div className="space-y-6 sm:space-y-7">
+                  {nextArticle.sourceDocument && <PdfPagePreview source={nextArticle.sourceDocument} scanned={!nextArticle.content.length} autoOpen={!nextArticle.content.length && !articleMedia[nextArticle.id]?.length} />}
+                  <ArticleMediaFigures media={articleMedia[nextArticle.id]} paragraphs={nextArticle.content} afterParagraphIndex={-1} />
                   {nextArticle.content.map((paragraph, pIdx) => {
                     const paragraphKind = classifyArticleParagraph(paragraph, nextArticle.title);
-                    if (paragraphKind === 'furniture') return null;
-                    const nextHighlightTerms = getArticleHighlightTerms(nextArticle);
-                    const inlineContent = paragraphKind === 'author'
-                      ? paragraph
-                      : renderInteractiveParagraph(paragraph, nextArticle, nextHighlightTerms);
+                    if (paragraphKind === 'furniture' || paragraphKind === 'title') {
+                      return <ArticleMediaFigures key={pIdx} media={articleMedia[nextArticle.id]} paragraphs={nextArticle.content} afterParagraphIndex={pIdx} />;
+                    }
+                    const inlineContent = renderInteractiveParagraph(paragraph, nextArticle, pIdx, paragraphKind !== 'author');
                     const translation = nextArticle.paragraphTranslations?.[pIdx];
                     return (
                       <div key={pIdx} className="space-y-2">
-                        {paragraphKind === 'title' ? (
-                          <h3
+                        <p
                             data-reading-paragraph={pIdx}
-                            data-reading-article-id={nextArticle.id}
-                            data-reading-last-paragraph={pIdx === nextLastParagraphIndex ? 'true' : undefined}
-                            className="font-serif text-xl sm:text-2xl font-bold leading-tight text-[#2A2621]"
-                          >
-                            {inlineContent}
-                          </h3>
-                        ) : (
-                          <p
-                            data-reading-paragraph={pIdx}
+                            data-speech-paragraph-start={readingSpeechSources.get(nextArticle.id)?.paragraphs.get(pIdx)?.start}
                             data-reading-article-id={nextArticle.id}
                             data-reading-last-paragraph={pIdx === nextLastParagraphIndex ? 'true' : undefined}
                             className={paragraphKind === 'author'
                               ? 'font-sans text-sm sm:text-base font-bold leading-relaxed text-[#6C655C] pl-3 border-l-2 border-[#C35E37]'
-                              : 'tracking-normal indent-8 sm:indent-10'}
+                              : 'tracking-normal'}
                           >
                             {inlineContent}
-                          </p>
-                        )}
+                        </p>
                         {showParagraphTranslations && translation && (
                           <p className="font-sans text-[0.85em] leading-relaxed text-[#6B645B] bg-[#F3F0E8] border border-[#E7E2D5] rounded-xl px-3 py-2.5">
                             {translation}
                           </p>
                         )}
+                        <ArticleMediaFigures media={articleMedia[nextArticle.id]} paragraphs={nextArticle.content} afterParagraphIndex={pIdx} />
                       </div>
                     );
                   })}
                 </div>
+                {isEnglishArticle(nextArticle) && <ReadingVerificationPause key={nextArticle.id} articleId={nextArticle.id}
+                  excludedContextTexts={nextArticle.content}
+                  articleTitle={nextArticle.title} readingComplete={verificationReadyArticleIds.has(nextArticle.id)}
+                  level={nextArticle.levelRating?.level || nextArticle.level || preferredCefrLevel}
+                  onActiveChange={handleVerificationActiveChange} />}
               </section>
             );
           })}
@@ -1446,6 +2018,24 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             </div>
           )}
         </div>
+
+        {discussionEnabled && !isComposerExpanded && (
+          <div className="mt-10 flex justify-center sm:hidden">
+            <button
+              type="button"
+              data-reading-interaction="true"
+              onClick={() => setIsComposerExpanded(true)}
+              className="app-primary-action inline-flex min-h-12 items-center gap-2 rounded-full border border-[#A94E2B] px-5 py-3 shadow-md transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#A94E2B] focus:ring-offset-2 sm:hidden"
+              aria-label="Open article discussion input"
+              aria-expanded={false}
+              aria-controls="reading-composer-input"
+              title="讨论：就文章提问"
+            >
+              <MessageCircle className="h-5 w-5 shrink-0" />
+              <span className="text-sm font-semibold tracking-wide">讨论本文</span>
+            </button>
+          </div>
+        )}
       </main>
 
       {copyHint && (
@@ -1454,13 +2044,36 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         </div>
       )}
 
-      <WordCardPanel
+      <ReadingTouchSelection contentRef={selectionRef} articleId={article.id} disabled={readingOverlayOpen}
+        onSelectionStart={beginTouchSelection} onSelectionChange={handleTextSelection} onGestureEnd={finishTouchSelection} />
+      {selectionAction && <ReadingSelectionToolbar anchor={selectionAction.anchor}
+        touchSelection={selectionAction.touchSelection}
+        allowDiscussion={english}
+        onTranslate={() => actOnTextSelection(current => { void handleTranslate(current.text, current.location); })}
+        onLookup={english ? undefined : () => actOnTextSelection(current => {
+          lookupLocationRef.current = current.location;
+          setLookupAnchor(current.anchor);
+          const sourceArticle = continuousArticles?.find(item => item.id === current.location.articleId) ?? article;
+          void openWordCard(current.text, current.context, sourceArticle, undefined, undefined, current.speechTarget);
+        })}
+        onExplain={() => actOnTextSelection(current => { setLookupAnchor(current.anchor); void openWordCard(current.text, current.context, article, undefined, undefined, current.speechTarget); })}
+        onDiscuss={() => actOnTextSelection(current => quoteSelectedText(current.text))}
+        onCopy={() => actOnTextSelection(current => { void copyTextToClipboard(current.text).then(ok => flashCopyHint(ok ? '已复制' : '复制失败')); })}
+        onSpeak={() => actOnTextSelection(current => handleSpeakText(current.text, current.speechTarget))} />}
+      <ReadingLookupCard
         open={wordCardOpen}
+        anchor={lookupAnchor}
+        error={wordCardError}
+        onRetry={() => retryLookupRef.current()}
+        recordStatus={lookupRecordStatus}
+        onRetryRecord={retryRecordRef.current ?? undefined}
         loading={isExplaining}
         result={grammarResult}
+        neutralResult={languageLookupResult}
         selectedText={selectedText}
         onClose={closeWordCard}
-        onSpeak={handleSpeakText}
+        onSpeak={text => { handleSpeakText(text); wordCardSpeechOwnedRef.current = true; }}
+        onStopSpeech={() => { speech.stop(); wordCardSpeechOwnedRef.current = false; }}
         onLookupRelated={handleExplainWord}
         onTranslate={() => {
           void handleTranslate();
@@ -1474,55 +2087,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         }}
       />
 
-      {(isTranslating || translationResult) && createPortal(
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-[#FAF8F3] border border-[#E2DCD0] w-full max-w-lg rounded-t-2xl sm:rounded-2xl shadow-xl p-5 sm:p-6 relative max-h-[min(90dvh,100%)] overflow-y-auto safe-pb">
-            <button
-              type="button"
-              onClick={() => {
-                setTranslationResult(null);
-                setIsTranslating(false);
-              }}
-              className="absolute top-3 right-3 sm:top-4 sm:right-4 tap-target inline-flex items-center justify-center p-2 text-[#777] hover:bg-[#EFEAE0] rounded-full"
-              aria-label="Close translation"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            {isTranslating ? (
-              <div className="py-12 text-center space-y-4">
-                <Globe className="w-8 h-8 text-[#2563EB] animate-spin mx-auto" />
-                <p className="font-serif text-lg text-[#332E28]">Translating...</p>
-              </div>
-            ) : translationResult ? (
-              <div className="space-y-4 text-left">
-                <h3 className="font-serif text-xl font-semibold text-[#2A2621] border-b border-[#E8E2D5] pb-2">
-                  Translation ({translationResult.targetLanguage})
-                </h3>
-                <div className="p-3 bg-[#EFECE3] rounded-xl text-sm text-[#443E36]">
-                  <span className="block text-xs font-semibold text-[#8C8478] mb-1">Original:</span>
-                  &quot;{translationResult.originalText}&quot;
-                </div>
-                <div className="p-3 bg-[#E6F4EA] border border-[#C6E7CE] rounded-xl text-sm text-[#1B4D24] font-medium">
-                  <span className="block text-xs font-semibold text-[#2D6A3A] mb-1">Translation:</span>
-                  {translationResult.translatedText}
-                </div>
-                {translationResult.culturalNote && (
-                  <div className="p-3 bg-[#FFFBEB] border border-[#FDE68A] rounded-xl text-xs text-[#92400E]">
-                    <span className="font-semibold">Note:</span> {translationResult.culturalNote}
-                  </div>
-                )}
-              </div>
-            ) : null}
-          </div>
-        </div>,
-        document.body,
-      )}
-
       {/* Discussion UI is portaled to document.body so reading-root transform/opacity
           cannot clip or scroll it off-screen (fixed descendants of transformed
           ancestors are positioned against that ancestor, not the viewport). */}
-      {showChatPanel && !isComposerExpanded && createPortal(
+      {discussionEnabled && showChatPanel && !isComposerExpanded && createPortal(
         <div
           data-reading-interaction="true"
           className="fixed inset-x-3 bottom-[max(5.5rem,calc(4.5rem+env(safe-area-inset-bottom,0px)))] z-[70] flex max-h-[min(50dvh,24rem)] flex-col rounded-2xl border border-[#E0DBCF] bg-[#FAF8F3] p-4 shadow-2xl sm:inset-x-auto sm:bottom-24 sm:right-8 sm:left-auto sm:w-96 sm:max-h-96"
@@ -1533,7 +2101,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 <Sparkles className="w-4 h-4 text-[#C35E37] shrink-0" />
                 讨论区 · 就文答疑
               </span>
-              <p className="text-[10px] text-[#9A9286] mt-0.5 pl-5">
+              <p className="text-xs leading-5 text-[#7B7267] mt-0.5 pl-5">
                 苏格拉底式追问 · 解释难点 · 不评分
               </p>
             </div>
@@ -1552,7 +2120,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 key={msg.id ?? idx}
                 className={`p-3 rounded-xl max-w-[85%] break-words ${
                   msg.sender === 'user'
-                    ? 'bg-[#C35E37] text-white ml-auto'
+                    ? 'bg-[#A94E2B] text-white ml-auto'
                     : 'bg-[#EFECE3] text-[#2C2722] mr-auto border border-[#E2DDD0]'
                 }`}
               >
@@ -1569,7 +2137,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         document.body,
       )}
 
-      {isComposerExpanded
+      {discussionEnabled && (isComposerExpanded
         ? createPortal(
           <footer
             data-reading-interaction="true"
@@ -1603,7 +2171,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     key={msg.id ?? idx}
                     className={`max-w-[85%] rounded-xl p-3 break-words ${
                       msg.sender === 'user'
-                        ? 'ml-auto bg-[#C35E37] text-white'
+                        ? 'ml-auto bg-[#A94E2B] text-white'
                         : 'mr-auto border border-[#E2DDD0] bg-[#EFECE3] text-[#2C2722]'
                     }`}
                   >
@@ -1642,7 +2210,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 <button
                   type="submit"
                   disabled={!userInput.trim() || isSending}
-                  className="ml-2 tap-target inline-flex shrink-0 items-center justify-center rounded-full bg-[#C35E37] p-2.5 sm:p-1.5 text-white transition-colors hover:bg-[#A94E2B] disabled:opacity-40"
+                  className="ml-2 tap-target inline-flex shrink-0 items-center justify-center rounded-full bg-[#A94E2B] p-2.5 sm:p-1.5 text-white transition-colors hover:bg-[#8F3F22] disabled:opacity-40"
                   aria-label="Send question"
                 >
                   <Send className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
@@ -1670,7 +2238,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             type="button"
             data-reading-interaction="true"
             onClick={() => setIsComposerExpanded(true)}
-            className="fixed z-[70] inline-flex items-center gap-2 rounded-full border border-[#C35E37] bg-[#C35E37] px-4 py-3.5 sm:px-5 sm:py-3.5 text-white shadow-xl transition-all hover:scale-105 hover:bg-[#A94E2B] hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#C35E37] focus:ring-offset-2 right-[max(1rem,env(safe-area-inset-right,0px))] bottom-[max(1.25rem,calc(1rem+env(safe-area-inset-bottom,0px)))] sm:right-8"
+            className="hidden sm:inline-flex sm:fixed sm:z-[70] items-center gap-2 rounded-full border border-[#A94E2B] bg-[#A94E2B] px-4 py-3.5 sm:px-5 sm:py-3.5 text-white shadow-xl transition-all hover:scale-105 hover:bg-[#8F3F22] hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#A94E2B] focus:ring-offset-2 sm:right-8 sm:bottom-8"
             aria-label="Open article discussion input"
             aria-expanded={false}
             aria-controls="reading-composer-input"
@@ -1680,9 +2248,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             <span className="text-sm font-semibold tracking-wide">讨论</span>
           </button>,
           document.body,
-        )}
+        ))}
     </div>
   );
 };
-
 

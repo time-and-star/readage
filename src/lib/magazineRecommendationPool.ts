@@ -6,6 +6,7 @@
 
 import type { Article } from '../types';
 import { articleContentFingerprint } from './articleContent';
+import { isEnglishArticle } from './articleLanguage';
 import { getRecommendationPoolRotationDate } from './recommendationPoolRotation';
 
 const DEFAULT_POOL_LIMIT = 48;
@@ -201,5 +202,5 @@ export function buildRecommendationArticlePool(
     });
   }
 
-  return Array.from(byId.values());
+  return Array.from(byId.values()).filter(isEnglishArticle);
 }

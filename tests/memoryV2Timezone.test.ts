@@ -77,7 +77,7 @@ describe('Memory V2 timezone handling', () => {
   it('finalizes FSRS at the end of the user natural day', () => {
     const updated = finalizeDailyEvidence(
       null,
-      evidence('2026-07-24', { wordId: 'timezone' }),
+      evidence('2026-07-24', { wordId: 'timezone', pendingGrade: 'Again', clickedOccurrenceCount: 1 }),
       'user-1',
       'Asia/Shanghai'
     );

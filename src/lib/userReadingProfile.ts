@@ -1,7 +1,4 @@
-/**
- * Shared bridge between CEFR reading assessment and the main reading app.
- * One source of truth for "what level should this user read at?"
- */
+/** Shared CEFR reading preferences and recommendation helpers. */
 import { normalizeCefrBand, type CefrBand } from './articleLevel';
 
 export const DEFAULT_USER_CEFR: CefrBand = 'B1';
@@ -15,15 +12,6 @@ export const CEFR_BAND_ORDER: readonly CefrBand[] = [
   'C2',
 ];
 
-/** Persisted assessment payload used across Home / Learning / Recommend. */
-export type UserReadingAssessment = {
-  recommendedBand: CefrBand;
-  inferredBand: CefrBand;
-  totalCorrect: number;
-  adjustment: 'down' | 'same' | 'up';
-  completedAt: string;
-};
-
 export type CefrConfidence = 'high' | 'medium' | 'low';
 
 export type CefrRelation =
@@ -36,7 +24,7 @@ export type CefrRelation =
 
 export type CefrRecommendationProfile = {
   userLevel: CefrBand;
-  hasAssessment: boolean;
+  useLevelFilter: boolean;
   confidence: CefrConfidence;
   idealBands: CefrBand[];
   stretchBand: CefrBand | null;
@@ -54,38 +42,10 @@ const WORD_COUNT_BY_BAND: Record<CefrBand, { min: number; max: number }> = {
 };
 
 export function resolveUserCefrLevel(
-  assessment: { recommendedBand?: string | null } | null | undefined,
+  preferredLevel: string | null | undefined,
   fallback: CefrBand = DEFAULT_USER_CEFR
 ): CefrBand {
-  return normalizeCefrBand(assessment?.recommendedBand ?? '') || fallback;
-}
-
-export function isUserReadingAssessment(value: unknown): value is UserReadingAssessment {
-  if (!value || typeof value !== 'object') return false;
-  const row = value as Partial<UserReadingAssessment>;
-  return Boolean(
-    normalizeCefrBand(row.recommendedBand)
-    && normalizeCefrBand(row.inferredBand)
-    && typeof row.totalCorrect === 'number'
-    && (row.adjustment === 'down' || row.adjustment === 'same' || row.adjustment === 'up')
-    && typeof row.completedAt === 'string'
-  );
-}
-
-export function normalizeUserReadingAssessment(
-  value: unknown,
-  fallback: UserReadingAssessment | null = null
-): UserReadingAssessment | null {
-  if (isUserReadingAssessment(value)) {
-    return {
-      recommendedBand: normalizeCefrBand(value.recommendedBand) || DEFAULT_USER_CEFR,
-      inferredBand: normalizeCefrBand(value.inferredBand) || DEFAULT_USER_CEFR,
-      totalCorrect: Math.max(0, Math.floor(value.totalCorrect)),
-      adjustment: value.adjustment,
-      completedAt: value.completedAt,
-    };
-  }
-  return fallback;
+  return normalizeCefrBand(preferredLevel ?? '') || fallback;
 }
 
 function idealBandsFor(userLevel: CefrBand): CefrBand[] {
@@ -104,36 +64,19 @@ function stretchBandFor(userLevel: CefrBand): CefrBand | null {
 
 /** Build the single CEFR input shared by catalog, local and AI recommendations. */
 export function buildCefrRecommendationProfile(
-  assessment: unknown,
-  fallback: CefrBand = DEFAULT_USER_CEFR
+  preferredLevel: string | null | undefined = DEFAULT_USER_CEFR,
+  options: { confidence?: CefrConfidence; useLevelFilter?: boolean } = {}
 ): CefrRecommendationProfile {
-  const normalized = normalizeUserReadingAssessment(assessment);
-  const userLevel = normalized?.recommendedBand
-    || resolveUserCefrLevel(null, fallback);
-  const hasAssessment = Boolean(normalized);
-  const confidence: CefrConfidence = !normalized
-    ? 'low'
-    : normalized.totalCorrect <= 2
-      ? 'low'
-      : normalized.adjustment === 'same' && normalized.totalCorrect >= 4
-        ? 'high'
-        : 'medium';
-
-  const cefrWeight = !normalized
-    ? 0.4
-    : confidence === 'high'
-      ? 1.3
-      : confidence === 'medium'
-        ? 1
-        : 0.7;
-
+  const userLevel = resolveUserCefrLevel(preferredLevel);
+  const confidence = options.confidence ?? 'low';
+  const useLevelFilter = options.useLevelFilter ?? false;
   return {
     userLevel,
-    hasAssessment,
+    useLevelFilter,
     confidence,
     idealBands: idealBandsFor(userLevel),
     stretchBand: stretchBandFor(userLevel),
-    cefrWeight,
+    cefrWeight: useLevelFilter ? { high: 1.3, medium: 1, low: 0.7 }[confidence] : 0.4,
     preferShorter: CEFR_BAND_ORDER.indexOf(userLevel) <= CEFR_BAND_ORDER.indexOf('B1'),
   };
 }
@@ -215,9 +158,9 @@ export function cefrLevelMatchMultiplier(
   return 1;
 }
 
-/** Prefer rewrite targets near the user's assessed band. */
+/** Prefer rewrite targets near the user's preferred band. */
 export function preferredRewriteLevels(userLevelRaw: string): CefrBand[] {
-  const user = resolveUserCefrLevel({ recommendedBand: userLevelRaw });
+  const user = resolveUserCefrLevel(userLevelRaw);
   const index = CEFR_BAND_ORDER.indexOf(user);
   const nearby = [user];
   if (index > 0) nearby.push(CEFR_BAND_ORDER[index - 1]);

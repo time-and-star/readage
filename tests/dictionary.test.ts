@@ -1,5 +1,8 @@
-import { afterEach, describe, it } from 'node:test';
+import { after, afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   buildDictionaryExplanation,
   getDictionaryHealth,
@@ -10,6 +13,19 @@ import {
 } from '../server/dictionary/service';
 
 const originalExplainFirst = process.env.DICTIONARY_EXPLAIN_FIRST;
+// These compatibility checks exercise the native-first startup defaults,
+// independently of the user's persisted display order and enabled sources.
+const originalSettingsFile = process.env.DICTIONARY_SETTINGS_FILE;
+const originalManifest = process.env.DICTIONARY_REVISION_MANIFEST;
+// Editorial sample assertions use their explicit fixture; production uses the full authored pack.
+process.env.DICTIONARY_REVISION_MANIFEST = path.resolve('data/dictionary/revisions/manifest.json');
+process.env.DICTIONARY_SETTINGS_FILE = path.join(tmpdir(), `readage-dictionary-test-${randomUUID()}.json`);
+after(() => {
+  if (originalManifest === undefined) delete process.env.DICTIONARY_REVISION_MANIFEST;
+  else process.env.DICTIONARY_REVISION_MANIFEST = originalManifest;
+  if (originalSettingsFile === undefined) delete process.env.DICTIONARY_SETTINGS_FILE;
+  else process.env.DICTIONARY_SETTINGS_FILE = originalSettingsFile;
+});
 
 afterEach(() => {
   if (originalExplainFirst === undefined) delete process.env.DICTIONARY_EXPLAIN_FIRST;
@@ -23,6 +39,8 @@ describe('local dictionary health', () => {
     assert.equal(health.ok, true);
     assert.equal(health.missingRequired.length, 0);
     assert.ok(health.indexedEntries > 100_000, `expected a large index, got ${health.indexedEntries}`);
+    assert.equal(health.schemaVersion, 'dictionary.v2');
+    assert.equal(health.revisionCount, 50);
   });
 });
 
@@ -44,6 +62,20 @@ describe('isSingleWordQuery', () => {
 });
 
 describe('dictionary lookups', () => {
+  it('keeps independent headwords instead of guessing unrelated suffix stems', async () => {
+    for (const word of ['speed', 'spring', 'string', 'morning', 'politics', 'economics', 'physics', 'naked', 'wicked', 'sacred']) {
+      const entry = await lookupDictionaryWord(word);
+      assert.equal(entry?.lemma, word, `${word} must keep its own dictionary entry`);
+    }
+  });
+
+  it('validates regular inflections and normalizes typographic compounds/contractions', async () => {
+    for (const [query, lemma] of [['running', 'run'], ['studies', 'study'], ['books', 'book'], ['chasing', 'chase'],
+      ['can’t', "can't"], ['well‑known', 'well-known']] as const) {
+      assert.equal((await lookupDictionaryWord(query))?.lemma, lemma);
+    }
+  });
+
   it('lemmatizes inflected forms and returns core fields', async () => {
     const entry = await lookupDictionaryWord('running');
     assert.ok(entry, 'expected a dictionary hit for "running"');
@@ -78,7 +110,8 @@ describe('buildDictionaryExplanation', () => {
     assert.equal(explanation.phonetic, entry.phonetic);
     assert.ok(explanation.definition.trim().length > 0);
     assert.ok((explanation.chineseTranslation ?? '').trim().length > 0);
-    assert.deepEqual(explanation.exampleSentences, ['She studies law at Oxford.']);
+    assert.deepEqual(explanation.exampleSentences, []);
+    assert.equal(explanation.readingOriginalSentence, 'She studies law at Oxford.');
     assert.ok(Array.isArray(explanation.senses) && explanation.senses.length > 0);
     assert.ok(explanation.senses.every((sense) => sense.definition.trim().length > 0));
   });
@@ -87,7 +120,44 @@ describe('buildDictionaryExplanation', () => {
     const entry = await lookupDictionaryWord('run');
     assert.ok(entry);
     const explanation = buildDictionaryExplanation('run', entry);
-    assert.deepEqual(explanation.exampleSentences, []);
+    assert.ok(explanation.exampleSentences.length > 0, 'curated dictionary examples should remain separate from reading context');
+    assert.equal(explanation.readingOriginalSentence, undefined);
+  });
+
+  it('uses reviewed sample senses for high-value polysemes', async () => {
+    const bank = await lookupDictionaryWord('bank');
+    assert.ok(bank);
+    const bankSenses = bank.partOfSpeechGroups.flatMap((group) => group.senses.map((sense) => sense.definitionZh));
+    assert.ok(bankSenses.some((meaning) => meaning?.includes('银行')));
+    assert.ok(bankSenses.some((meaning) => meaning?.includes('河岸')));
+
+    const run = await lookupDictionaryWord('run');
+    assert.ok(run);
+    assert.ok(run.partOfSpeechGroups.flatMap((group) => group.senses).some((sense) => sense.definitionZh?.includes('经营')));
+
+    const better = await lookupDictionaryWord('better');
+    assert.ok(better);
+    assert.deepEqual(better.partOfSpeechGroups.map((group) => group.partOfSpeech), ['adj.', 'adv.', 'v.']);
+
+    const sanction = await lookupDictionaryWord('sanction');
+    assert.ok(sanction);
+    const sanctionMeanings = sanction.partOfSpeechGroups.flatMap((group) => group.senses.map((sense) => sense.definitionZh));
+    assert.ok(sanctionMeanings.some((meaning) => meaning?.includes('批准')));
+    assert.ok(sanctionMeanings.some((meaning) => meaning?.includes('制裁')));
+  });
+
+  it('keeps irregular forms linked without presenting went as a noun or flattening saw', async () => {
+    const went = await lookupDictionaryWord('went');
+    assert.ok(went);
+    assert.equal(went.partOfSpeechGroups.length, 0);
+    assert.equal(went.partOfSpeech, 'word form');
+    assert.equal(went.wordForms.find((form) => form.value === 'go')?.label, '原形');
+
+    const saw = await lookupDictionaryWord('saw');
+    assert.ok(saw);
+    assert.ok(saw.partOfSpeechGroups.some((group) => group.partOfSpeech === 'n.'));
+    assert.ok(saw.partOfSpeechGroups.some((group) => group.partOfSpeech === 'v.'));
+    assert.equal(saw.wordForms.find((form) => form.value === 'see')?.label, '原形');
   });
 
   it('cleans ECDICT phonetic quirks and exchange noise', async () => {

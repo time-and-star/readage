@@ -12,6 +12,15 @@ import {
 } from './types';
 
 export interface MemoryStorage {
+  /** Optional durable replay support; old injected stores remain compatible. */
+  getMeta?<T>(key: string): Promise<T | null>;
+  setMeta?(key: string, value: unknown): Promise<void>;
+  getWordDailyEvidence?(userId: string, wordId: string): Promise<DailyWordEvidence[]>;
+  /** Includes settled evidence for one-pass repair of historical reading decisions. */
+  getAllDailyEvidence?(userId: string): Promise<DailyWordEvidence[]>;
+  getAllArticleEvidence?(userId: string): Promise<ArticleWordEvidence[]>;
+  /** Warm transaction reads for a learning-event batch when the backend supports it. */
+  prefetchEventBatch?(events: readonly RawWordEvent[]): Promise<void>;
   // ==================== 原始事件 ====================
 
   /**

@@ -1,0 +1,9 @@
+Use case: photorealistic-natural
+Asset type: wide photographic background for an artistic learning app's memory and forgetting-curve panel, landscape 1536 x 1024.
+Primary request: an exquisite fine-art botanical photograph, quiet and tactile, evoking memories held in a twilight garden.
+Scene/backdrop: real delicate fern fronds and translucent dried leaves seen through lightly misted, dark smoked glass; subtle reflected water and one soft warm beam of late afternoon light.
+Style/medium: editorial macro photography, natural film grain, shallow depth of field, convincing organic surfaces and lens bokeh, restrained museum-quality composition.
+Composition/framing: wide landscape; intricate botanical details mostly at the far right and upper-right edge, a little at bottom-right; the left and central two-thirds are calm deep blue-green shadow with generous negative space so live charts can remain readable. No distinct foreground objects in the chart area.
+Lighting/mood: soft side light catching bronze edges and fine dew, dim indigo and moss-green shadows, small honey-gold reflections, contemplative and beautiful.
+Materials/textures: fine leaf veins, soft condensation, faint organic film grain.
+Constraints: a photographic art asset only, no text, no typography, no numbers, no diagram, no graphs, no UI, no logos, no watermark; no people; preserve uncluttered shadow across left and center.

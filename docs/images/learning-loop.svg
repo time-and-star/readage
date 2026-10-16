@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="470" viewBox="0 0 1440 470" role="img" aria-labelledby="title desc">
+  <title id="title">ReadAge 学习循环</title><desc id="desc">收集文章、沉浸阅读、主动回忆、再次遇见。每个阶段连接原文上下文和本地学习记录。</desc>
+  <rect width="1440" height="470" rx="24" fill="#f5f1e7"/>
+  <g font-family="Arial,'Microsoft YaHei',sans-serif" fill="#2b2723">
+    <text x="48" y="62" font-size="29" font-weight="700">从一篇文章开始，把学习连接起来。</text>
+    <text x="48" y="98" font-size="17" fill="#7d7264">材料留在文章库，理解发生在上下文，复习回到真正需要回忆的词。</text>
+    <g transform="translate(48 140)">
+      <rect width="300" height="230" rx="16" fill="#fffdf8"/>
+      <text x="24" y="42" font-size="16" fill="#c45229">01 / COLLECT</text><text x="24" y="92" font-size="29" font-weight="700">收集文章</text>
+      <text x="24" y="138" font-size="19">导入文档、粘贴正文</text><text x="24" y="171" font-size="19">整理外刊与个人文章库</text><text x="24" y="207" font-size="15" fill="#847667">保留章节、插图与阅读位置</text>
+    </g>
+    <g transform="translate(396 140)">
+      <rect width="300" height="230" rx="16" fill="#ff5b22"/>
+      <text x="24" y="42" font-size="16">02 / READ</text><text x="24" y="92" font-size="29" font-weight="700">沉浸阅读</text>
+      <text x="24" y="138" font-size="19">点词查释义、选句翻译</text><text x="24" y="171" font-size="19">跟随朗读理解原文</text><text x="24" y="207" font-size="15" fill="#582c1a">阅读曝光与主动查询分别记录</text>
+    </g>
+    <g transform="translate(744 140)">
+      <rect width="300" height="230" rx="16" fill="#fffdf8"/>
+      <text x="24" y="42" font-size="16" fill="#c45229">03 / RECALL</text><text x="24" y="92" font-size="29" font-weight="700">主动回忆</text>
+      <text x="24" y="138" font-size="19">先回忆，再翻面与自评</text><text x="24" y="171" font-size="19">到期优先，错词再次练习</text><text x="24" y="207" font-size="15" fill="#847667">FSRS 调整下一次复习安排</text>
+    </g>
+    <g transform="translate(1092 140)">
+      <rect width="300" height="230" rx="16" fill="#fffdf8"/>
+      <text x="24" y="42" font-size="16" fill="#c45229">04 / RETURN</text><text x="24" y="92" font-size="29" font-weight="700">再次遇见</text>
+      <text x="24" y="138" font-size="19">查看学习记录与待复习词</text><text x="24" y="171" font-size="19">继续原文或进入推荐阅读</text><text x="24" y="207" font-size="15" fill="#847667">模型预测与真实回忆记录分开展示</text>
+    </g>
+    <text x="720" y="432" text-anchor="middle" font-size="17" fill="#7d7264">查过一个词、读完一篇文章，都不会自动等于“已经掌握”。</text>
+  </g>
+  <g stroke="#a7957d" stroke-width="2.5" fill="none"><path d="M357 253h29m-9-8 9 8-9 8M705 253h29m-9-8 9 8-9 8M1053 253h29m-9-8 9 8-9 8"/></g>
+</svg>

@@ -1,82 +1,138 @@
-import React, { useRef, useState } from 'react';
-import { CheckCircle2, Clock3, Download, HardDrive, Upload } from 'lucide-react';
-import {
-  PolarAngleAxis,
-  PolarGrid,
-  PolarRadiusAxis,
-  Radar,
-  RadarChart,
-  ResponsiveContainer,
-} from 'recharts';
+import React, { useRef, useState, useSyncExternalStore } from 'react';
+import { ArrowUpRight, BookOpen, ChevronDown, ChevronRight, Database, Puzzle } from 'lucide-react';
 import { ArticleProgressRow, WeakPointMetric } from '../types';
+import type { WordProficiencyView } from '../lib/memoryV2';
 import { AppPageHeader } from './AppPageHeader';
 import { ReadingDataNotice } from './ReadingDataNotice';
+import { lookupDictionaryWords } from '../lib/dictionaryClient';
+import { useMemoryStore } from '../lib/memoryV2';
+import {
+  buildVocabularyCsv,
+  buildVocabularyExportRows,
+  downloadVocabularyCsv,
+} from '../lib/vocabularyExport';
 import {
   downloadLocalDataBackup,
   exportLocalDataBackup,
   importLocalDataBackup,
   readBackupFile,
+  validateLocalDataBackup,
+  getLocalDataBackupWarning,
+  downloadFullLocalBackup,
+  importFullLocalBackup,
+  importNativeFullLocalBackup,
+  importNativeRecordBackup,
 } from '../lib/localDataBackup';
+import { getLocalDatabaseSnapshot, subscribeLocalDatabase, selectLocalProfile, localDatabaseRequest } from '../lib/localDatabase';
+import type { LocalDataBackup } from '../lib/localDataBackup';
+import { flushPendingPersistentWrites } from '../lib/storage';
+import { IS_ANDROID } from '../lib/platform/runtime';
+import { nativeFiles, pickNativeFile } from '../lib/platform/nativeFiles';
 
 interface MyLearningScreenProps {
   onBack: () => void;
   navigation?: React.ReactNode;
-  onStartTargetedReview: () => void;
+  onOpenRecommendedReading: () => void;
+  onOpenFlashcards: () => void;
+  onOpenReadingRecords: () => void;
+  onOpenDictionarySettings?: () => void;
   onOpenArticle: (articleId: string) => void;
-  onStartEnglishTest?: () => void;
-  onStartRecommendedReading?: () => void;
-  assessedBand?: string | null;
-  assessmentCompletedAt?: string | null;
   articlesReadCount: number;
+  introducedWordsCount: number;
+  learnedWordsCount: number;
   masteredWordsCount: number;
   learningWordsCount: number;
   streakDaysCount: number;
   recentEventCount: number;
   dueWordCount: number;
+  proficiencies: WordProficiencyView[];
+  proficienciesLoading: boolean;
+  proficienciesError?: string | null;
+  onRetryProficiencies?: () => void;
   weakPointMetrics: WeakPointMetric[];
-  isTargetedReviewLoading: boolean;
   articleProgress: ArticleProgressRow[];
 }
 
 export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   onBack,
   navigation,
-  onStartTargetedReview,
-  onOpenArticle,
-  onStartEnglishTest,
-  onStartRecommendedReading,
-  assessedBand,
-  assessmentCompletedAt,
+  onOpenRecommendedReading,
+  onOpenFlashcards,
+  onOpenReadingRecords,
+  onOpenDictionarySettings,
   articlesReadCount,
+  introducedWordsCount,
+  learnedWordsCount,
   masteredWordsCount,
   learningWordsCount,
   streakDaysCount,
   recentEventCount,
   dueWordCount,
-  weakPointMetrics,
-  isTargetedReviewLoading,
-  articleProgress,
+  proficiencies,
+  proficienciesLoading,
+  proficienciesError,
+  onRetryProficiencies,
 }) => {
-  const radarData = weakPointMetrics.slice(0, 6).map((metric) => ({
-    skill: metric.skill.slice(0, 16),
-    severity: metric.severity,
-    issueCount: metric.issueCount,
-  }));
+  const memoryStore = useMemoryStore();
+  const localDatabase = useSyncExternalStore(subscribeLocalDatabase, getLocalDatabaseSnapshot, () => null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [backupBusy, setBackupBusy] = useState<'export' | 'import' | null>(null);
+  const [backupBusy, setBackupBusy] = useState<'export' | 'full-export' | 'recovery' | 'import' | 'profile' | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
+  const [vocabularyExportBusy, setVocabularyExportBusy] = useState(false);
+  const [vocabularyExportMessage, setVocabularyExportMessage] = useState<string | null>(null);
+  const [vocabularyExportError, setVocabularyExportError] = useState<string | null>(null);
+
+  const handleExportVocabulary = async () => {
+    setVocabularyExportBusy(true);
+    setVocabularyExportMessage(null);
+    setVocabularyExportError(null);
+    try {
+      const exportProficiencies = proficiencies.filter((item) => item.wordId.trim());
+      if (exportProficiencies.length === 0) {
+        setVocabularyExportMessage('暂无可导出的词汇。');
+        return;
+      }
+
+      let dictionaryEntries: Awaited<ReturnType<typeof lookupDictionaryWords>> = [];
+      let dictionaryUnavailable = false;
+      try {
+        dictionaryEntries = await lookupDictionaryWords(
+          exportProficiencies.map((item) => item.wordId),
+        );
+      } catch {
+        dictionaryUnavailable = true;
+      }
+
+      const rows = buildVocabularyExportRows(exportProficiencies, dictionaryEntries);
+      const saved = await downloadVocabularyCsv(buildVocabularyCsv(rows));
+      if (!saved) { setVocabularyExportMessage('已取消保存词汇表。'); return; }
+      setVocabularyExportMessage(
+        dictionaryUnavailable
+          ? `已导出 ${rows.length} 个词汇；词典暂不可用，部分音标和翻译为空。`
+          : `已导出 ${rows.length} 个词汇。`
+      );
+    } catch (error) {
+      setVocabularyExportError(error instanceof Error ? error.message : '词汇表导出失败');
+    } finally {
+      setVocabularyExportBusy(false);
+    }
+  };
 
   const handleExportBackup = async () => {
     setBackupBusy('export');
     setBackupError(null);
     setBackupMessage(null);
     try {
-      const backup = await exportLocalDataBackup();
-      downloadLocalDataBackup(backup);
+      await memoryStore.ensureReady();
+      const backup = await exportLocalDataBackup({ memoryStorage: memoryStore.system.getMemoryStorageKind() });
+      if (IS_ANDROID && localDatabase) {
+        const result = await nativeFiles.exportSnapshot({ profileId: localDatabase.profile.id });
+        if (!result.saved) { setBackupMessage('已取消保存备份。'); return; }
+      } else downloadLocalDataBackup(backup);
       const keyCount = Object.keys(backup.localStorage).length;
       setBackupMessage(
-        `已导出 ${keyCount} 项本地数据${backup.indexedDb ? '（含词汇记忆库）' : ''}。文件仅保存在你的设备上。`
+        `已导出 ${keyCount} 项本地数据（含词汇记忆库）。文件仅保存在你的设备上。`
       );
     } catch (error) {
       setBackupError(error instanceof Error ? error.message : '导出失败');
@@ -85,21 +141,77 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
     }
   };
 
+  const handleExportFullBackup = async () => {
+    setBackupBusy('full-export'); setBackupError(null); setBackupMessage(null);
+    try {
+      await memoryStore.ensureReady();
+      if (!await downloadFullLocalBackup()) { setBackupMessage('已取消保存完整备份。'); return; }
+      setBackupMessage('已导出完整备份，包含学习记录、文章正文及引用的本地 PDF 和插图。');
+    } catch (error) {
+      setBackupError(error instanceof Error ? error.message : '完整备份导出失败');
+    } finally { setBackupBusy(null); }
+  };
+
+  const handleSelectProfile = async (id: string) => {
+    setBackupBusy('profile'); setBackupError(null);
+    try { await flushPendingPersistentWrites(); await selectLocalProfile(id); }
+    catch (error) { setBackupError(error instanceof Error ? error.message : '档案切换失败'); setBackupBusy(null); }
+  };
+  const handleExportRecovery = async () => {
+    setBackupBusy('recovery'); setBackupError(null); setBackupMessage(null);
+    try {
+      const backup = await localDatabaseRequest<LocalDataBackup>('previous-snapshot');
+      if (IS_ANDROID && localDatabase) {
+        const result = await nativeFiles.exportSnapshot({ profileId: localDatabase.profile.id, previous: true,
+          filename: `ReadAge-before-restore-${backup.exportedAt.slice(0, 10)}.json` });
+        if (!result.saved) { setBackupMessage('已取消保存副本。'); return; }
+      } else downloadLocalDataBackup(backup, `ReadAge-before-restore-${backup.exportedAt.slice(0, 10)}.json`);
+      setBackupMessage('已导出上次恢复前的学习档案。导入该文件可还原原来的记录。');
+    } catch (error) { setBackupError(error instanceof Error ? error.message : '副本导出失败'); }
+    finally { setBackupBusy(null); }
+  };
+
+  const handleNativeImport = async () => {
+    setBackupBusy('import'); setBackupError(null); setBackupMessage(null);
+    let pickedHandle: string | undefined;
+    try {
+      const file = await pickNativeFile('backup');
+      if (!file) { setBackupBusy(null); return; }
+      pickedHandle = file.handle;
+      if (!localDatabase) throw new Error('手机学习档案尚未就绪。');
+      const full = /\.zip$/i.test(file.name);
+      if (!window.confirm(`导入将替换“${localDatabase.profile.name}”的学习进度、文章和记忆记录，不会合并两台设备的进度。恢复前的档案会保留在手机上。是否继续？`)) {
+        setBackupBusy(null); return;
+      }
+      if (full) await importNativeFullLocalBackup(file.handle);
+      else await importNativeRecordBackup(file.handle);
+      setBackupMessage('导入成功，正在刷新页面…');
+      window.setTimeout(() => window.location.reload(), 400);
+    } catch (error) { setBackupError(error instanceof Error ? error.message : '手机备份导入失败。'); setBackupBusy(null); }
+    finally { if (pickedHandle) await nativeFiles.releaseFile({ handle: pickedHandle }).catch(() => {}); }
+  };
+
   const handleImportFile = async (file: File | null) => {
     if (!file) return;
     setBackupBusy('import');
     setBackupError(null);
     setBackupMessage(null);
     try {
-      const raw = await readBackupFile(file);
+      const fullBackup = /\.zip$/i.test(file.name);
+      if (fullBackup && !localDatabase) throw new Error('请在电脑本地版恢复 ZIP 完整备份。');
+      const raw = fullBackup ? null : await readBackupFile(file);
+      const warning = fullBackup ? null : getLocalDataBackupWarning(validateLocalDataBackup(raw));
       const confirmed = window.confirm(
-        '导入将覆盖本浏览器中当前的学习进度、文章历史与词汇记忆，且不可撤销。是否继续？'
+        `${warning ? `${warning}\n\n` : ''}${localDatabase
+          ? `导入将替换“${localDatabase.profile.name}”的学习进度、文章历史与词汇记忆。原档案会在本机保留恢复副本。是否继续？`
+          : '导入将覆盖本浏览器中当前的学习进度、文章历史与词汇记忆，且不可撤销。是否继续？'}`
       );
       if (!confirmed) {
         setBackupBusy(null);
         return;
       }
-      await importLocalDataBackup(raw);
+      if (fullBackup) await importFullLocalBackup(file);
+      else await importLocalDataBackup(raw);
       setBackupMessage('导入成功，正在刷新页面…');
       window.setTimeout(() => {
         window.location.reload();
@@ -111,267 +223,176 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between selection:bg-[#FDE68A]">
+    <div className="learning-screen min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col selection:bg-[#F3D7C7]">
       <AppPageHeader onBack={onBack} navigation={navigation} />
 
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-5 sm:py-6 space-y-5 sm:space-y-6 safe-pb">
-        <section
-          className="rounded-2xl border border-[#D6E4F0] bg-[#F3F7FB] px-4 py-3 flex gap-3"
-          aria-labelledby="local-data-notice-heading"
-        >
-          <HardDrive className="w-5 h-5 shrink-0 text-[#1E3A8A] mt-0.5" aria-hidden />
-          <div className="min-w-0">
-            <h2 id="local-data-notice-heading" className="text-sm font-semibold text-[#1E3A8A]">
-              学习数据保存在本机浏览器
-            </h2>
-            <p className="mt-1 text-xs leading-relaxed text-[#4A5568]">
-              常规学习档案默认只写在当前设备，不会自动上传为云端档案。AI 请求和推荐诊断有单独的数据去向，请查看下方说明。
-              换设备或清除站点数据会丢失进度；可用下方「导出备份」保存到文件。
-            </p>
+      <main className="learning-overview flex flex-1 flex-col safe-pb">
+        <h1>学习概览</h1>
+        {proficienciesError && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"><p>{proficienciesError}</p>{onRetryProficiencies && <button type="button" className="mt-2 underline" disabled={proficienciesLoading} onClick={onRetryProficiencies}>{proficienciesLoading ? '正在重试…' : '重新读取学习记录'}</button>}</div>}
+
+        <dl className="learning-metrics grid grid-cols-3" aria-label="核心学习统计">
+          <MetricCard value={articlesReadCount} label="已完成文章" onClick={onOpenReadingRecords} />
+          <MetricCard value={proficienciesLoading || proficienciesError ? '—' : introducedWordsCount} label="待学新词" />
+          <MetricCard value={streakDaysCount} label="连续天数" />
+        </dl>
+
+        <section aria-label="词汇学习记录">
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-4">
+            <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-[#655B50]">
+              <div className="flex items-baseline gap-1.5"><dt>已学习</dt><dd><strong className="font-semibold tabular-nums text-[#2A2621]">{proficienciesLoading || proficienciesError ? '—' : learnedWordsCount}</strong> 词</dd></div>
+              <div className="flex items-baseline gap-1.5"><dt>待复习</dt><dd><strong className="font-semibold tabular-nums text-[#2A2621]">{proficienciesLoading || proficienciesError ? '—' : dueWordCount}</strong> 词</dd></div>
+            </dl>
+            <div className="learning-actions" role="group" aria-label="学习入口">
+              <button
+                type="button"
+                onClick={onOpenRecommendedReading}
+                className="study-read-action"
+              >
+                推荐阅读
+              </button>
+              <button
+                type="button"
+                onClick={onOpenFlashcards}
+                className="study-read-action"
+              >
+                词卡学习
+              </button>
+            </div>
           </div>
         </section>
 
-        <ReadingDataNotice />
-
-        <div className="grid grid-cols-2 gap-3 sm:gap-4">
-          <MetricCard value={articlesReadCount} label="已完成文章" />
-          <MetricCard value={masteredWordsCount} label="掌握词 (L4)" />
-          <MetricCard value={learningWordsCount} label="学习中 (L1–L3)" />
-          <MetricCard value={streakDaysCount} label="连续学习天数" />
-        </div>
-
-        <section
-          className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
-          aria-labelledby="cefr-profile-heading"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 id="cefr-profile-heading" className="font-serif text-lg font-medium text-[#2A2621]">
-                阅读等级
-              </h2>
-              <p className="mt-1 text-sm text-[#8C8478]">
-                {assessedBand
-                  ? '来自英语测试，已同步到推荐与文库筛选。'
-                  : '尚未定级：完成英语测试后，推荐会按你的 CEFR 档位匹配。'}
-              </p>
-            </div>
-            <div className="shrink-0 rounded-xl bg-[#C35E37]/10 px-3 py-2 text-center">
-              <div className="text-xs text-[#8C8478]">CEFR</div>
-              <div className="font-serif text-xl font-semibold text-[#C35E37]">
-                {assessedBand || '—'}
-              </div>
-            </div>
+        <details className="learning-detail text-sm text-[#6B6156]">
+          <summary className="learning-detail-toggle">
+            <span>学习详情</span>
+            <ChevronDown size={16} className="learning-disclosure-arrow" aria-hidden="true" />
+          </summary>
+          <div className="pb-2 space-y-3 text-xs leading-6">
+            <dl className="flex flex-wrap gap-x-6 gap-y-1">
+              <div className="flex gap-2"><dt>较熟悉</dt><dd className="font-semibold tabular-nums text-[#443A30]">{proficienciesLoading || proficienciesError ? '—' : masteredWordsCount}</dd></div>
+              <div className="flex gap-2"><dt>学习中</dt><dd className="font-semibold tabular-nums text-[#443A30]">{proficienciesLoading || proficienciesError ? '—' : learningWordsCount}</dd></div>
+              <div className="flex gap-2"><dt>近 7 天记录</dt><dd className="font-semibold tabular-nums text-[#443A30]">{recentEventCount}</dd></div>
+            </dl>
+            <p>已学习指已有正式回忆记录的词，包含暂停或移出后保留的历史；待学新词显示查词或导入后的完整待学词库，不随每日数量设置变化。待复习仅计正式回忆后已到期且未暂停或移出的词；单纯阅读或查词不会算作正式回忆。熟悉度是估计，不代表全部掌握。</p>
+            <p>每篇推荐文章只覆盖部分待复习词，读完后仅更新实际学习的词。</p>
           </div>
-          {assessmentCompletedAt && (
-            <p className="text-xs text-[#8C8478]">
-              最近测试：{new Date(assessmentCompletedAt).toLocaleString()}
-            </p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            {onStartEnglishTest && (
-              <button
-                type="button"
-                onClick={onStartEnglishTest}
-                className="rounded-xl border border-[#DCD5C7] bg-white px-3 py-2 text-sm font-medium text-[#332E28] hover:bg-[#F2ECE0]"
-              >
-                {assessedBand ? '重新测试' : '开始英语测试'}
+        </details>
+
+        <section className="learning-settings" aria-labelledby="learning-tools-heading">
+          <h2 id="learning-tools-heading">设置与工具</h2>
+          <div className="learning-settings-list">
+            {onOpenDictionarySettings && (
+              <button type="button" onClick={onOpenDictionarySettings} className="learning-setting-row">
+                <BookOpen size={20} className="learning-setting-icon" aria-hidden="true" />
+                <span className="learning-setting-copy">
+                  <span className="learning-setting-title">词典设置</span>
+                  <span className="learning-setting-description">管理词典与查词顺序</span>
+                </span>
+                <ChevronRight size={16} className="learning-setting-arrow" aria-hidden="true" />
               </button>
             )}
-            {assessedBand && onStartRecommendedReading && (
-              <button
-                type="button"
-                onClick={onStartRecommendedReading}
-                className="rounded-xl bg-[#C35E37] px-3 py-2 text-sm font-medium text-white hover:bg-[#A94E2B]"
-              >
-                按 {assessedBand} 推荐阅读
-              </button>
-            )}
-          </div>
-        </section>
+            <a href="/extension-setup.html" className="learning-setting-row">
+              <Puzzle size={20} className="learning-setting-icon" aria-hidden="true" />
+              <span className="learning-setting-copy">
+                <span className="learning-setting-title">安装查词插件</span>
+                <span className="learning-setting-description">在其他网页中选词查词</span>
+              </span>
+              <ArrowUpRight size={16} className="learning-setting-arrow" aria-hidden="true" />
+            </a>
 
-        <div className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 text-sm text-[#524B43] flex flex-wrap gap-x-5 gap-y-2">
-          <span>
-            到期复习：<strong className="text-[#C35E37]">{dueWordCount}</strong> 词
-          </span>
-          <span>
-            近 7 天学习事件：<strong>{recentEventCount}</strong>
-          </span>
-        </div>
-
-        {false && <section className="space-y-2" aria-labelledby="article-progress-heading">
-          <h2 id="article-progress-heading" className="font-serif text-lg font-medium text-[#2A2621]">
-            按文章的进度
-          </h2>
-          {articleProgress.length === 0 ? (
-            <p className="text-sm text-[#8C8478] bg-[#FAF8F3] border border-[#E3DDD1] rounded-xl p-4">
-              打开文章学习后，这里会记录阅读状态、查词与讨论次数。
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {articleProgress.map(({ article, discussionCount }) => {
-                const completed = article.status === 'Completed';
-                return (
-                  <li key={article.id}>
+            <details className="learning-backup text-sm text-[#6B6156]">
+              <summary className="learning-setting-row">
+                <Database size={20} className="learning-setting-icon" aria-hidden="true" />
+                <span className="learning-setting-copy">
+                  <span className="learning-setting-title">数据与备份</span>
+                  <span className="learning-setting-description">导出词汇、备份或恢复学习记录</span>
+                </span>
+                <ChevronDown size={16} className="learning-disclosure-arrow" aria-hidden="true" />
+              </summary>
+              <div className="learning-backup-content space-y-4">
+                <div className="space-y-3 text-xs leading-6 text-[#85786B]">
+                  <p>{localDatabase ? '学习数据保存在当前设备的本机学习档案中，清除浏览器缓存不会删除学习档案。' : '学习数据保存在本机浏览器。'}</p>
+                  {localDatabase && <label className="flex flex-wrap items-center gap-2">
+                    当前学习档案
+                    <select aria-label="当前学习档案" value={localDatabase.profile.id} disabled={backupBusy !== null}
+                      className="rounded border border-[#DED6C9] bg-white px-2 py-1 text-[#44382D]"
+                      onChange={event => void handleSelectProfile(event.target.value)}>
+                      {localDatabase.profiles.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    </select>
+                  </label>}
+                  {localDatabase && localDatabase.profiles.length > 1 && <p>不同浏览器的旧记录各自保留为独立档案。选择同一档案后，学习进度共用。</p>}
+                  {localDatabase?.error && <p role="alert" className="text-[#A94E2B]">保存暂未完成：{localDatabase.error}。请保持页面打开，应用会继续重试。</p>}
+                  <div className="learning-backup-actions">
+                    {localDatabase && <button type="button" onClick={() => void handleExportFullBackup()}
+                      disabled={backupBusy !== null} aria-busy={backupBusy === 'full-export'} className={toolButtonClassName}>
+                      {backupBusy === 'full-export' ? '导出中…' : '导出完整备份'}
+                    </button>}
                     <button
                       type="button"
-                      onClick={() => onOpenArticle(article.id)}
-                      className="w-full text-left bg-[#FAF8F3] hover:bg-[#F3EFE4] border border-[#E3DDD1] rounded-xl p-4 transition-colors"
+                      onClick={() => void handleExportVocabulary()}
+                      disabled={vocabularyExportBusy || proficienciesLoading || !!proficienciesError || proficiencies.length === 0}
+                      aria-busy={vocabularyExportBusy || proficienciesLoading}
+                      className={toolButtonClassName}
                     >
-                      <div className="flex items-start justify-between gap-3 mb-1.5">
-                        <span className="font-medium text-sm text-[#2A2621]">{article.title}</span>
-                        <span className={`inline-flex items-center gap-1 shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                          completed
-                            ? 'bg-[#E6F2E8] text-[#2F6B3A]'
-                            : 'bg-[#EFEAE0] text-[#6B645B]'
-                        }`}>
-                          {completed ? <CheckCircle2 className="w-3 h-3" /> : <Clock3 className="w-3 h-3" />}
-                          {completed ? '已完成' : '学习中'}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-3 text-[11px] text-[#6B645B]">
-                        <span>讨论 {discussionCount}</span>
-                        <span className="text-[#C35E37]">继续 →</span>
-                      </div>
+                      {proficienciesLoading ? '加载中…' : vocabularyExportBusy ? '导出中…' : '导出词汇表'}
                     </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>}
-
-        {false && <section
-          className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-6 shadow-2xs"
-          aria-labelledby="weak-points-heading"
-        >
-          <h2 id="weak-points-heading" className="text-xs font-semibold text-[#8C8478] uppercase tracking-wider">
-            需要加强的知识点
-          </h2>
-          <p className="text-[11px] text-[#8C8478] mt-1 mb-3">
-            根据近期结构化批改记录中知识点出现的次数计算，图形越靠外表示越需要复习。
-          </p>
-
-          {radarData.length === 0 ? (
-            <div className="min-h-40 rounded-xl border border-dashed border-[#DCD5C8] bg-[#F7F4ED] px-5 py-8 flex flex-col items-center justify-center text-center">
-              <CheckCircle2 className="w-8 h-8 text-[#6F9B73] mb-2" />
-              <p className="text-sm font-medium text-[#4A443C]">尚未发现明确薄弱点</p>
-              <p className="text-xs text-[#8C8478] mt-1">完成口语批改后，这里会显示真实反馈频次。</p>
-            </div>
-          ) : (
-            <>
-              <div className="h-56 w-full" aria-label="薄弱点频次雷达图">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
-                    <PolarGrid stroke="#E2DDD0" />
-                    <PolarAngleAxis
-                      dataKey="skill"
-                      tick={{ fill: '#4A443C', fontSize: 12, fontWeight: 500 }}
+                    <button
+                      type="button"
+                      onClick={() => void handleExportBackup()}
+                      disabled={backupBusy !== null}
+                      aria-busy={backupBusy === 'export'}
+                      className={toolButtonClassName}
+                    >
+                      {backupBusy === 'export' ? '导出中…' : '导出备份'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => IS_ANDROID ? void handleNativeImport() : fileInputRef.current?.click()}
+                      disabled={backupBusy !== null}
+                      aria-busy={backupBusy === 'import'}
+                      className={toolButtonClassName}
+                    >
+                      {backupBusy === 'import' ? '导入中…' : '导入备份'}
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept={localDatabase ? 'application/json,application/zip,.json,.zip' : 'application/json,.json'}
+                      aria-label="选择学习备份文件"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] ?? null;
+                        event.target.value = '';
+                        void handleImportFile(file);
+                      }}
                     />
-                    <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-                    <Radar
-                      name="需加强程度"
-                      dataKey="severity"
-                      stroke="#C35E37"
-                      fill="#E8A387"
-                      fillOpacity={0.42}
-                      strokeWidth={2}
-                    />
-                  </RadarChart>
-                </ResponsiveContainer>
+                  </div>
+                  <p>词汇表包含词汇、音标、翻译和熟练度，CSV 文件可用 Excel 打开。</p>
+                  {!proficienciesLoading && !proficienciesError && proficiencies.length === 0 && <p>阅读并产生词汇学习记录后，这里会出现可导出的词汇。</p>}
+                  <p>{localDatabase ? '完整备份为 ZIP，包含学习记录、文章正文及引用的本地 PDF 和插图。更换设备时安装对应应用，再导入恢复。词典和语音模型独立管理。' : '备份为 JSON 文件，可在本机或另一台设备导入恢复。导入前会确认覆盖当前记录。'}</p>
+                  <p>{localDatabase ? '“导出备份”保留原来的 JSON 格式，仅包含记录，不包含 PDF 和插图。导入兼容这两种格式，并在替换前保留原档案副本。' : '备份包含浏览器内的学习记录；导入文章的 PDF 原文件和插图保存在本地服务中，迁移设备时需单独迁移这些文件或重新导入文章。'}</p>
+                  {localDatabase && <button type="button" className="underline" disabled={backupBusy !== null} onClick={() => void handleExportRecovery()}>
+                    {backupBusy === 'recovery' ? '导出中…' : '导出上次恢复前的档案'}
+                  </button>}
+                </div>
+                {vocabularyExportMessage && <p className="text-xs leading-5 text-[#2F6B3A]" role="status">{vocabularyExportMessage}</p>}
+                {vocabularyExportError && <p className="text-xs leading-5 text-[#A94E2B]" role="alert">{vocabularyExportError}</p>}
+                {backupMessage && <p className="text-xs leading-5 text-[#2F6B3A]" role="status">{backupMessage}</p>}
+                {backupError && <p className="text-xs leading-5 text-[#A94E2B]" role="alert">{backupError}</p>}
+                <ReadingDataNotice compact />
               </div>
-              <div className="flex flex-wrap gap-1.5 mt-2">
-                {weakPointMetrics.map((metric) => (
-                  <span
-                    key={metric.skill}
-                    className="px-2 py-1 bg-[#FDF2EE] text-[#A94E2B] border border-[#FADCD1] rounded-md text-[11px]"
-                  >
-                    {metric.skill} · {metric.issueCount} 次记录
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
-        </section>}
-
-        <section
-          className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
-          aria-labelledby="local-backup-heading"
-        >
-          <div>
-            <h2 id="local-backup-heading" className="font-serif text-lg font-medium text-[#2A2621]">
-              本地数据备份
-            </h2>
-            <p className="mt-1 text-sm text-[#8C8478]">
-              导出为 JSON 文件，可在本机或另一台设备导入恢复。服务器不保存你的学习档案。
-            </p>
+            </details>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => void handleExportBackup()}
-              disabled={backupBusy !== null}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-[#DCD5C7] bg-white px-3 py-2 text-sm font-medium text-[#332E28] hover:bg-[#F2ECE0] disabled:opacity-60"
-            >
-              <Download className="w-4 h-4" aria-hidden />
-              {backupBusy === 'export' ? '导出中…' : '导出备份'}
-            </button>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={backupBusy !== null}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-[#DCD5C7] bg-white px-3 py-2 text-sm font-medium text-[#332E28] hover:bg-[#F2ECE0] disabled:opacity-60"
-            >
-              <Upload className="w-4 h-4" aria-hidden />
-              {backupBusy === 'import' ? '导入中…' : '导入备份'}
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0] ?? null;
-                event.target.value = '';
-                void handleImportFile(file);
-              }}
-            />
-          </div>
-          {backupMessage && (
-            <p className="text-xs text-[#2F6B3A]" role="status">
-              {backupMessage}
-            </p>
-          )}
-          {backupError && (
-            <p className="text-xs text-[#A94E2B]" role="alert">
-              {backupError}
-            </p>
-          )}
         </section>
-
-        <div className="space-y-2">
-          <button
-            type="button"
-            onClick={onStartTargetedReview}
-            disabled={isTargetedReviewLoading}
-            aria-busy={isTargetedReviewLoading}
-            className="w-full py-4 bg-[#C35E37] enabled:hover:bg-[#A94E2B] disabled:bg-[#CFA08E] disabled:cursor-wait text-white rounded-xl font-medium text-lg transition-all shadow-md text-center block"
-          >
-            {isTargetedReviewLoading ? '正在生成复习文章…' : '针对性复习（语境文章 → P2）'}
-          </button>
-          <p className="text-[11px] text-center text-[#8C8478]">
-            到期词会被织入新文章，不提供孤立词卡。
-          </p>
-        </div>
       </main>
     </div>
   );
 };
 
-const MetricCard: React.FC<{ value: number; label: string }> = ({ value, label }) => (
-  <div className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-6 text-center shadow-2xs">
-    <div className="text-4xl sm:text-5xl font-bold text-[#1E3A8A] tracking-tight mb-2">
-      {value}
-    </div>
-    <div className="text-sm font-medium text-[#6B645B]">{label}</div>
+const toolButtonClassName = 'learning-backup-action';
+
+const MetricCard: React.FC<{ value: number | string; label: string; onClick?: () => void }> = ({ value, label, onClick }) => (
+  <div className={`learning-metric-card relative flex min-w-0 flex-col items-center gap-2 px-1 text-center [&:not(:first-child)]:border-l [&:not(:first-child)]:border-[#E7E0D5] ${onClick ? 'rounded-lg transition-colors hover:bg-[#F3EBDF]' : ''}`}>
+    <dt className="order-2 text-[11px] font-medium leading-5 text-[#82766A] sm:text-xs">{onClick ? <button type="button" onClick={onClick} aria-label={`已完成 ${value} 篇文章，查看文章与生词`} className="inline-flex items-center gap-1 after:absolute after:inset-0 after:rounded-lg focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-[#A94E2B]">{label}<ArrowUpRight size={12} aria-hidden="true" /></button> : label}</dt>
+    <dd className={`text-3xl font-semibold tabular-nums tracking-tight sm:text-4xl ${onClick ? 'text-[#A94E2B]' : 'text-[#44382D]'}`}>{value}</dd>
   </div>
 );

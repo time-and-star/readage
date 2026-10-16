@@ -65,6 +65,30 @@ test('lists article-level CEFR matches using the official rating before the lega
 
   const b1 = await loadCatalogArticlePage({ level: 'B1', limit: 10 }, root);
   assert.deepEqual(b1.articles.map((article) => article.id), ['legacy']);
+
+  await writeArticle(root, 'official', {
+    id: 'official', title: 'Updated science policy', description: 'A revised article', date: '2026.07.25',
+    level: 'B2', levelRating: { level: 'B2', difficultyScore: 55, summary: 'Revised' },
+    magazineSourceId: 'atlantic', magazineIssueId: 'atlantic:2026.07.25', content: ['Revised body has five words'],
+  });
+  const updated = await loadCatalogArticlePage({ level: 'B2', query: 'updated', limit: 10 }, root);
+  assert.deepEqual(updated.articles.map(article => [article.id, article.wordCount]), [['official', 5]],
+    'an enriched or overwritten article invalidates its cached catalog row');
+  assert.equal((await loadCatalogArticlePage({ level: 'C1', query: 'climate', limit: 10 }, root)).total, 1);
+
+  await fs.unlink(path.join(root, 'articles_by_id', 'older.json'));
+  await writeArticle(root, 'new', { id: 'new', title: 'New climate report', description: 'Fresh import',
+    date: '2026.07.26', level: 'C1', magazineSourceId: 'atlantic',
+    magazineIssueId: 'atlantic:2026.07.25', content: ['New body text'],
+  });
+  assert.deepEqual((await loadCatalogArticlePage({ level: 'C1', limit: 10 }, root)).articles.map(article => article.id), ['new'],
+    'new and removed files are reflected without restarting the server');
+
+  const index = JSON.parse(await fs.readFile(path.join(root, 'index.json'), 'utf8'));
+  index.sources[0].displayName = 'Updated publication';
+  await fs.writeFile(path.join(root, 'index.json'), JSON.stringify(index), 'utf8');
+  assert.equal((await loadCatalogArticlePage({ level: 'C1', limit: 10 }, root)).articles[0].sourceName, 'Updated publication',
+    'source labels are always resolved against the current catalog');
 });
 
 test('validates article catalog query parameters at the API boundary', () => {
@@ -77,16 +101,24 @@ test('validates article catalog query parameters at the API boundary', () => {
   assert.throws(() => parseCatalogArticleQuery({ level: 'B1', cursor: '-1' }), /cursor must be a non-negative integer/);
 });
 
-test('renders an article result view when the external-magazine CEFR filter is active', () => {
+test('opens the magazine library with all levels and keeps manual CEFR filters', () => {
   const html = renderToStaticMarkup(React.createElement(LibraryScreen, {
     userArticles: [],
-    userCefrLevel: 'B1',
-    hasAssessment: true,
     onSelectArticle: () => undefined,
     onInsertArticle: () => undefined,
     onBack: () => undefined,
   }));
 
-  assert.match(html, /B1 文章/);
+  const difficultyControl = html.match(/<label class="library-level">([\s\S]*?)<\/label>/)?.[1];
+  assert.ok(difficultyControl, 'manual difficulty choices have an accessible label');
+  assert.match(difficultyControl, /<span class="sr-only">阅读难度<\/span>/);
+  const select = difficultyControl.match(/<select\b[^>]*>([\s\S]*?)<\/select>/)?.[1];
+  assert.ok(select, 'difficulty choices remain a native select');
+  const options = [...select.matchAll(/<option value="([^"]+)"([^>]*)>([^<]*)<\/option>/g)];
+  assert.deepEqual(options.map(option => option[1]), ['All', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2']);
+  assert.deepEqual(options.filter(option => /\bselected=""/.test(option[2])).map(option => option[1]), ['All']);
+  assert.equal(options[0][3], '全部难度');
+  assert.deepEqual(options.slice(1).map(option => option[3]), ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']);
+  assert.doesNotMatch(html, /英语测试|默认按英语测试结果| · 你的/);
   assert.doesNotMatch(html, /News in Levels - Level 2/);
 });

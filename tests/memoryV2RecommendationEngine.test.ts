@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import type { WordProficiencyView } from '../src/lib/memoryV2/memorySystem';
 import {
   RecommendationEngine,
+  articleProficiencyCoverage,
   countUniqueReviewHits,
   rankCandidatesByReviewHits,
   scheduleReviewArticles,
+  scoreArticlesForReview,
   type ArticleCandidate,
 } from '../src/lib/memoryV2/recommendation';
 import { buildCefrRecommendationProfile } from '../src/lib/userReadingProfile';
@@ -40,6 +42,47 @@ function proficiency(
 }
 
 describe('RecommendationEngine cold-start filtering', () => {
+  it('counts distinct normalized words for memory scores and unknown-word totals', () => {
+    const engine = new RecommendationEngine();
+    const proficiencyMap = new Map<string, WordProficiencyView>([
+      ['target', proficiency('target', 1, '2020-01-01T00:00:00.000Z')],
+      ['steady', proficiency('steady', 4)],
+      ['other-one', proficiency('other-one', 4)],
+      ['other-two', proficiency('other-two', 4)],
+      ['other-three', proficiency('other-three', 4)],
+    ]);
+    const repeated = candidate('article', [
+      'Target', 'target', ' target ', 'STEADY', 'steady', 'fresh', 'FRESH', '',
+    ]);
+    const distinct = candidate('article', ['target', 'steady', 'fresh']);
+    const now = new Date('2026-01-01T00:00:00.000Z');
+    const score = engine.scoreArticle(repeated, proficiencyMap, now);
+
+    assert.equal(score.dueWordsCount, 1);
+    assert.equal(score.learningZoneCount, 1);
+    assert.equal(score.consolidationZoneCount, 1);
+    assert.equal(score.unknownWordsCount, 1);
+    assert.equal(score.score, engine.scoreArticle(distinct, proficiencyMap, now).score);
+    assert.equal(articleProficiencyCoverage(repeated.lemmas, proficiencyMap), 2 / 3);
+  });
+
+  it('cannot meet the minimum learning-word count by repeating one word', () => {
+    const engine = new RecommendationEngine();
+    const proficiencyMap = new Map<string, WordProficiencyView>([
+      ['target', proficiency('target')],
+      ...Array.from({ length: 4 }, (_, index) => {
+        const wordId = `other-${index}`;
+        return [wordId, proficiency(wordId, 4)] as const;
+      }),
+    ]);
+    const repeated = candidate('one-learning-word', [
+      'target', 'target', 'target', 'target', 'target',
+    ]);
+
+    assert.equal(engine.scoreArticle(repeated, proficiencyMap).learningZoneCount, 1);
+    assert.deepEqual(engine.filterCandidates([repeated], proficiencyMap), []);
+  });
+
   it('keeps local candidates when the proficiency map is empty', () => {
     const engine = new RecommendationEngine();
     const candidates = [
@@ -205,6 +248,41 @@ describe('RecommendationEngine cold-start filtering', () => {
 });
 
 describe('review hit-rate ranking', () => {
+  it('keeps exact review coverage ahead of a large unrelated due-word score before truncation', () => {
+    const filler = Array.from({ length: 300 }, (_, index) => `filler${index}`);
+    const targets = ['alpha', 'beta', 'gamma'];
+    const proficiencyMap = new Map([...targets, ...filler].map((word) =>
+      [word, proficiency(word, 1, '2020-01-01T00:00:00.000Z')] as const
+    ));
+    const ranked = scoreArticlesForReview([
+      candidate('one-requested-many-due', ['alpha', ...filler]),
+      candidate('three-requested', targets),
+    ], targets, proficiencyMap, new RecommendationEngine(), 1);
+    assert.equal(ranked[0]?.articleId, 'three-requested');
+    assert.equal(ranked[0]?.reviewWordsCount, 3);
+  });
+  it('reports requested unique review hits separately from all due words', () => {
+    const dueAt = '2020-01-01T00:00:00.000Z';
+    const proficiencyMap = new Map<string, WordProficiencyView>([
+      ['alpha', proficiency('alpha', 1, dueAt)],
+      ['beta', proficiency('beta')],
+      ['overdue', proficiency('overdue', 1, dueAt)],
+      ['legacy', proficiency('legacy', 1, dueAt)],
+    ]);
+    const scores = scoreArticlesForReview(
+      [candidate('review', ['alpha', 'ALPHA', 'beta', 'overdue', 'legacy'])],
+      ['Alpha', ' alpha ', 'BETA', 'missing', ''],
+      proficiencyMap,
+      new RecommendationEngine(),
+      1,
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+
+    assert.equal(scores[0]?.reviewWordsCount, 2);
+    assert.equal(scores[0]?.dueWordsCount, 3);
+    assert.match(scores[0]?.reason ?? '', /^命中 2\/3 个复习词，/);
+  });
+
   it('counts unique target hits, not repeated lemma occurrences', () => {
     const lemmas = ['target', 'target', 'target', 'other'];
     assert.equal(countUniqueReviewHits(lemmas, new Set(['target', 'miss'])), 1);
@@ -265,13 +343,7 @@ describe('review hit-rate ranking', () => {
   });
 
   it('uses CEFR as the tie-breaker when review hit counts are equal', () => {
-    const profile = buildCefrRecommendationProfile({
-      recommendedBand: 'B2',
-      inferredBand: 'B2',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+    const profile = buildCefrRecommendationProfile('B2', { confidence: 'high', useLevelFilter: true });
     const engine = new RecommendationEngine({
       userLevel: 'B2',
       cefrProfile: profile,
@@ -291,13 +363,7 @@ describe('review hit-rate ranking', () => {
   });
 
   it('gives a measurable CEFR signal at cold start and penalizes far-higher text', () => {
-    const profile = buildCefrRecommendationProfile({
-      recommendedBand: 'B1',
-      inferredBand: 'B1',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+    const profile = buildCefrRecommendationProfile('B1', { confidence: 'high', useLevelFilter: true });
     const engine = new RecommendationEngine({
       userLevel: 'B1',
       cefrProfile: profile,
@@ -316,13 +382,7 @@ describe('review hit-rate ranking', () => {
   });
 
   it('prefers a manageable article length during assessed cold start', () => {
-    const profile = buildCefrRecommendationProfile({
-      recommendedBand: 'B1',
-      inferredBand: 'B1',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+    const profile = buildCefrRecommendationProfile('B1', { confidence: 'high', useLevelFilter: true });
     const engine = new RecommendationEngine({
       cefrProfile: profile,
       allowedBands: ['B2'],
@@ -337,13 +397,7 @@ describe('review hit-rate ranking', () => {
   });
 
   it('applies a CEFR hard window only when enough eligible candidates remain', () => {
-    const profile = buildCefrRecommendationProfile({
-      recommendedBand: 'B1',
-      inferredBand: 'B1',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+    const profile = buildCefrRecommendationProfile('B1', { confidence: 'high', useLevelFilter: true });
     const engine = new RecommendationEngine({
       cefrProfile: profile,
       allowedBands: ['B2'],
@@ -368,13 +422,7 @@ describe('review hit-rate ranking', () => {
   });
 
   it('keeps protected review-hit candidates outside the CEFR window', () => {
-    const profile = buildCefrRecommendationProfile({
-      recommendedBand: 'B1',
-      inferredBand: 'B1',
-      totalCorrect: 5,
-      adjustment: 'same',
-      completedAt: '2026-07-25T00:00:00.000Z',
-    });
+    const profile = buildCefrRecommendationProfile('B1', { confidence: 'high', useLevelFilter: true });
     const engine = new RecommendationEngine({
       cefrProfile: profile,
       allowedBands: ['B2'],

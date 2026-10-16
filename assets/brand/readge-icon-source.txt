@@ -1,0 +1,35 @@
+Official icon: user-supplied readge.png (2026-10-09)
+Original file: C:/Users/19891/Desktop/readge.png
+Original project copy: assets/brand/readge-icon-original.png
+Shared transparent source: assets/brand/readge-icon.png
+
+The original project copy preserves the supplied original image byte for byte.
+The shared source removes only the exterior white background and exterior shadow
+with the built-in imagegen background-extraction tool (2026-10-11).
+Desktop, Android, browser and extension icons are uniformly resized from this
+same transparent artwork. Android launcher entries select the density-specific
+readge_launcher/readge_launcher_round PNGs directly, preserving their alpha.
+Do not restore an adaptive-icon wrapper: Android fills its drawing surface
+before rendering transparent layers. OEM launcher decoration still requires
+actual phone verification.
+
+2026-10-15 requirement: the exterior background MUST remain transparent.
+Do not replace a black launcher backdrop with an orange, white, or other solid
+background. The reported regression is a NEW transparent icon immediately after
+installation, followed later by the OLD black-bordered icon without a settings
+change. Android deliveries with changed source must advance versionCode; the
+vivo launcher has a background path that accepts persisted icon bytes when its
+stored appversion equals the current versionCode. Verify after waiting and
+returning to the launcher, not only immediately after installation.
+
+Regenerate sizes: powershell -File scripts/build-brand-assets.ps1
+Regenerate desktop ICO: node scripts/desktop-icons.mjs
+Regenerate Android icons: powershell -File scripts/build-android-icons.ps1
+Rebuild extension packages: npm run build:extension
+
+Image edit mode: built-in imagegen; transparent_background=true.
+Final image prompt:
+Use case: background-extraction.
+Asset type: existing readge Windows desktop application icon, transparent PNG.
+Input image: the single referenced image is the exact edit target and official existing logo.
+Primary request: remove ONLY the white exterior background surrounding the centered orange rounded-square logo. Keep the complete orange rounded-square body and its existing pale peach lines, cream rectangle, cream circular dots, orange gradient, texture, highlights and internal shadows unchanged. Preserve the logo's original silhouette, proportions, alignment, layout and colors exactly; do not redraw, redesign or restyle any of the foreground. Remove the pale exterior shadow on the white background too, so ONLY the middle orange logo remains. Outside the rounded-square body and in its outer rounded corners must be actual alpha transparency, not white and not a checkerboard painted into the image. Keep the same square canvas and approximately the same original foreground scale and centered placement. Clean antialiased silhouette edges with no white fringe. Interior cream/white shapes stay fully opaque. No text, no extra elements.

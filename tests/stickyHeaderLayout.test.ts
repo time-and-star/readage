@@ -19,17 +19,22 @@ test('page shells preserve sticky headers by avoiding hidden overflow scroll con
   assert.match(readingSource, /ease-out overflow-x-clip/);
 });
 
-test('the collapsed discussion button stays in the viewport bottom-right at every breakpoint', () => {
+test('the collapsed discussion entry stays in reading flow on mobile and is fixed on desktop', () => {
   const readingSource = readFileSync(
     resolve(repoRoot, 'src/components/ReadingScreen.tsx'),
     'utf8',
   );
-  const buttonMatch = readingSource.match(
-    /className="([^"]+)"\s+aria-label="Open article discussion input"/,
+  const desktopButtonMatch = readingSource.match(
+    /className="([^"]*sm:fixed[^"]*)"\s+aria-label="Open article discussion input"/,
+  );
+  const mobileButtonMatch = readingSource.match(
+    /className="([^"]*sm:hidden[^"]*)"\s+aria-label="Open article discussion input"/,
   );
 
-  assert.ok(buttonMatch, 'collapsed discussion button should be present');
-  assert.match(buttonMatch[1], /right-\[max\(1rem,env\(safe-area-inset-right,0px\)\)\]/);
-  assert.match(buttonMatch[1], /bottom-\[max\(1\.25rem,calc\(1rem\+env\(safe-area-inset-bottom,0px\)\)\)\]/);
-  assert.doesNotMatch(buttonMatch[1], /sm:bottom-auto|sm:top-1\/2|sm:-translate-y-1\/2/);
+  assert.ok(desktopButtonMatch, 'desktop discussion button should be present');
+  assert.ok(mobileButtonMatch, 'mobile discussion button should be present');
+  assert.match(desktopButtonMatch[1], /hidden\s+sm:inline-flex/);
+  assert.match(desktopButtonMatch[1], /sm:right-8/);
+  assert.match(desktopButtonMatch[1], /sm:bottom-8/);
+  assert.match(mobileButtonMatch[1], /app-primary-action/);
 });

@@ -1,0 +1,11 @@
+{
+  "format": "dictionary-change-report.v1",
+  "batchId": "batch-001",
+  "schemaVersion": "dictionary.v2",
+  "kind": "batch-drafted",
+  "authoringMethod": "model-manual",
+  "revisionCount": 0,
+  "addedWords": 2000,
+  "removedWords": 0,
+  "notes": "Word list frozen and empty review frame created. No dictionary content was authored in this step."
+}

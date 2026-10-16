@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { X, Volume2, CheckCircle2, RotateCcw, Award } from 'lucide-react';
 import { ReviewWord } from '../types';
+import { useSpeech } from '../lib/speech/useSpeech';
+import { SpeechFeedback } from './SpeechControls';
 
 interface TargetedReviewModalProps {
   reviewWords: ReviewWord[];
@@ -16,6 +18,7 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
   onMasterWord,
   onStartContextualReview,
 }) => {
+  const speech = useSpeech();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [completed, setCompleted] = useState(false);
@@ -23,6 +26,7 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
   const currentWord = reviewWords[currentIndex];
 
   const handleNext = (mastered: boolean) => {
+    speech.stop();
     if (currentWord && mastered) {
       onMasterWord(currentWord.id);
     }
@@ -36,15 +40,12 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
   };
 
   const handleSpeak = (text: string) => {
-    if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
-      window.speechSynthesis.speak(utterance);
-    }
+    speech.speak(text);
   };
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+      <SpeechFeedback state={speech.state} onStop={speech.stop} floating />
       <div className="bg-[#FAF8F3] border border-[#E0DBCF] w-full max-w-md rounded-2xl shadow-2xl p-6 relative">
         <button
           onClick={onClose}
@@ -67,7 +68,7 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
             {onStartContextualReview && (
               <button
                 onClick={onStartContextualReview}
-                className="w-full mb-4 py-2.5 bg-[#C35E37] hover:bg-[#A94E2B] text-white rounded-xl text-sm font-medium transition-colors"
+                className="app-primary-action w-full mb-4 py-2.5 rounded-xl text-sm font-medium transition-colors"
               >
                 推荐：进入语境复习文章（P2）
               </button>
@@ -185,7 +186,7 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
               </button>
               <button
                 onClick={() => handleNext(true)}
-                className="py-3 bg-[#C35E37] hover:bg-[#A94E2B] text-white font-medium rounded-xl text-sm transition-colors flex items-center justify-center gap-1.5 shadow-2xs"
+              className="app-primary-action py-3 font-medium rounded-xl text-sm transition-colors flex items-center justify-center gap-1.5 shadow-2xs"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>Mastered!</span>
@@ -205,7 +206,7 @@ export const TargetedReviewModal: React.FC<TargetedReviewModalProps> = ({
             </p>
             <button
               onClick={onClose}
-              className="mt-4 px-6 py-3 bg-[#C35E37] hover:bg-[#A94E2B] text-white rounded-xl font-medium text-sm transition-colors shadow-xs"
+              className="app-primary-action mt-4 px-6 py-3 rounded-xl font-medium text-sm transition-colors shadow-xs"
             >
               Done
             </button>

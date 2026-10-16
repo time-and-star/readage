@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ReadAge 网页词典</title><link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<main>
+  <header class="app-header">
+    <span class="brand"><img class="brand-icon" src="icons/icon-48.png" width="32" height="32" alt=""><span class="brand-name">ReadAge</span></span>
+    <label class="switch-control" title="启用或暂停网页查词">
+      <span id="enabled-label" class="sr-only">开启</span><input type="checkbox" id="enabled" role="switch" aria-label="启用网页查词" disabled><span class="switch-track" aria-hidden="true"></span>
+    </label>
+  </header>
+  <section class="site-card" aria-label="当前网站" aria-busy="true" id="site-card">
+    <div class="site-line"><h1 id="site-name" class="site-name">正在读取…</h1><button id="site" class="button quiet" disabled hidden>启用</button></div>
+    <span id="site-badge" class="sr-only">读取中</span>
+    <p id="setup" class="support-copy" role="status" hidden></p>
+    <button id="connect" class="button primary" disabled>连接 ReadAge <span aria-hidden="true">↗</span></button>
+  </section>
+  <section class="learning-card" id="learning-card" aria-label="学习记录">
+    <div class="sync-row" id="sync-row">
+      <p class="queue-number" id="queue-number"><strong id="pending">—</strong><span>条待同步</span></p>
+      <span class="sync-indicator" id="sync-badge">读取中</span>
+      <button id="sync" class="button quiet" disabled>同步</button>
+    </div>
+    <p id="last" class="support-copy" role="status" hidden></p>
+    <p id="other" class="support-copy other-pending" hidden></p>
+    <button id="open" class="button primary" disabled>打开 ReadAge <span aria-hidden="true">↗</span></button>
+  </section>
+  <details id="connection-settings" class="connection-settings">
+    <summary><span>设置</span><span id="connection-badge" class="connection-badge">检查中</span><svg class="chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 6 3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+    <div class="settings-content">
+      <label for="origin">学习应用地址</label><input id="origin" type="url" placeholder="http://localhost:3000" spellcheck="false" autocomplete="off" aria-describedby="origin-help" disabled>
+      <p id="origin-help" class="support-copy">localhost:3000 或 HTTPS 根地址。</p>
+      <div class="action-row"><button id="save" class="button secondary" disabled>保存并授权</button><button id="check" class="button quiet" disabled>检查连接</button></div>
+      <p class="data-note">只记录主动查词；数据保存在当前浏览器。</p>
+    </div>
+  </details>
+  <p id="message" class="feedback" role="status" aria-live="polite" aria-atomic="true" hidden></p>
+</main>
+<script src="popup.js"></script>
+</body>
+</html>

@@ -1,5 +1,12 @@
 import type { GrammarExplanation } from '../types';
-import { postTutor } from './tutorClient';
+import { postTutor, TutorApiError } from './tutorClient';
+import { lookupDictionaryWord, toDictionaryWordCard } from './dictionaryClient';
+import { withCurrentDictionaryNames } from './dictionaryDisplay';
+import { isEnglishWord, normalizeEnglishLookupText } from '../../packages/dictionary/languages/englishSurface';
+import { dictionaryCatalogCache } from './dictionaryCatalog';
+import { DICTIONARY_CACHE_VERSION, dictionaryCacheKey } from '../../packages/dictionary/cache';
+import { AI_EXPLANATIONS_ENABLED } from './readingFeatures';
+import { IS_ANDROID } from './platform/runtime';
 
 export interface WordCardRequest {
   selectedText: string;
@@ -18,10 +25,7 @@ export function createWordCardRequest(
   wordOrPhrase: string,
   contextSentence = '',
 ): WordCardRequest | null {
-  const selectedText = wordOrPhrase
-    .replace(/[^a-zA-Z\s']/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
+  const selectedText = normalizeEnglishLookupText(wordOrPhrase)
     .slice(0, WORD_CARD_MAX_SELECTED_TEXT);
   if (!selectedText) return null;
   return {
@@ -30,40 +34,73 @@ export function createWordCardRequest(
   };
 }
 
-/** Offline / error fallback so the panel always has something to show. */
-export function createOfflineWordCard(request: WordCardRequest): GrammarExplanation {
-  return {
-    wordOrPhrase: request.selectedText,
-    type: 'Vocabulary',
-    phonetic: '',
-    definition: `Context meaning of "${request.selectedText}" in the current article (offline fallback).`,
-    definitionChinese: '词卡暂时不可用，请结合上下文理解。',
-    chineseTranslation: request.selectedText,
-    grammarRules: [
-      'Look at the surrounding words to infer part of speech.',
-      'Try reusing this word in the discussion box below.',
-    ],
-    exampleSentences: [
-      request.contextSentence || `I learned the word "${request.selectedText}" today.`,
-    ],
-    source: 'ai',
-  };
-}
-
 export interface FetchWordCardOptions {
   articleId?: string;
   signal?: AbortSignal;
+  forceRefresh?: boolean;
 }
 
 /**
- * Fetch a word card via `/api/tutor` explain.
- * Server path is dictionary-first for single English words; phrases/misses use AI.
- * Network failures return an offline fallback (unless the request was aborted).
+ * Words and phrases use the enabled dictionaries and bounded local cache.
+ * AI explanations are temporarily disabled; dictionary misses remain explicit.
  */
 export async function fetchWordCard(
   request: WordCardRequest,
   options: FetchWordCardOptions = {},
 ): Promise<GrammarExplanation> {
+  // Context belongs to this reading occurrence, never to the cached dictionary entry.
+  const withReadingContext = (card: GrammarExplanation): GrammarExplanation => ({ ...card,
+    readingOriginalSentence: request.contextSentence?.trim() || undefined,
+    readingOriginalWord: request.selectedText,
+  });
+  const singleWord = isEnglishWord(request.selectedText);
+  if (options.signal?.aborted) throw new Error('Lookup cancelled');
+  if (request.selectedText.trim()) {
+    const catalog = await dictionaryCatalogCache.get(options.signal);
+    const cacheKeyFor = (version: string) => `english-ai:v7:word-card:${dictionaryCacheKey('en', version, request.selectedText.toLowerCase())}`;
+    const cacheKey = catalog ? cacheKeyFor(catalog.catalogVersion) : undefined;
+    try {
+      const cached = typeof localStorage === 'undefined' || !cacheKey || options.forceRefresh ? null : localStorage.getItem(cacheKey);
+      if (cached) {
+        const card = JSON.parse(cached) as GrammarExplanation;
+        if (card.source === 'dictionary' && card.definition && card.wordOrPhrase && !card.dictionarySourceIssues?.length) return withReadingContext(withCurrentDictionaryNames(card));
+      }
+    } catch { /* A cache failure must not prevent a dictionary request. */ }
+    // Native index preparation and queued on-device reads can exceed the HTTP deadline.
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(IS_ANDROID ? 45_000 : 8_000)])
+      : AbortSignal.timeout(IS_ANDROID ? 45_000 : 8_000);
+    try {
+      const entry = await lookupDictionaryWord(request.selectedText, { signal });
+      if (entry) {
+        const card = toDictionaryWordCard(entry);
+        if (entry.dictionaryRef?.catalogVersion) await dictionaryCatalogCache.observeVersion(entry.dictionaryRef.catalogVersion, catalog?.catalogVersion);
+        const actualKey = entry.dictionaryRef?.catalogVersion ? cacheKeyFor(entry.dictionaryRef.catalogVersion) : cacheKey;
+        try {
+          if (typeof localStorage !== 'undefined' && actualKey && !entry.dictionarySourceIssues?.length) {
+            const keys = Object.keys(localStorage).filter(key => key.startsWith('english-ai:v7:word-card:') && key.includes(DICTIONARY_CACHE_VERSION));
+            if (!keys.includes(actualKey) && keys.length >= 500) {
+              for (const key of keys.slice(0, keys.length - 499)) localStorage.removeItem(key);
+            }
+            localStorage.setItem(actualKey, JSON.stringify(card));
+          }
+        }
+        catch { /* Optional cache; learning persistence is handled separately. */ }
+        return withReadingContext(card);
+      }
+    } catch (error) {
+      if (options.signal?.aborted) throw new Error('Lookup cancelled');
+      if (IS_ANDROID) throw new Error(error instanceof Error && error.name === 'TimeoutError'
+        ? '手机本机词典查询超时，请重试。已缓存的单词仍可查询。'
+        : '手机本机词典暂时无法读取，请重试或检查词典设置。已缓存的单词仍可查询。');
+      throw new Error('词典暂时无法连接，请启动本地服务后重试。已缓存的单词仍可查询。');
+    }
+  }
+  if (!AI_EXPLANATIONS_ENABLED) {
+    throw new Error(singleWord
+      ? '词典未收录此词，请检查拼写，或选中后点击“翻译”。'
+      : '请选中这段文字，点击“翻译”查看中文译文。');
+  }
   try {
     const response = await postTutor<GrammarExplanation>(
       {
@@ -73,13 +110,16 @@ export async function fetchWordCard(
         contextSentence: request.contextSentence,
       },
       fetch,
-      { signal: options.signal },
+      { signal: options.signal, maxRetries: 0, timeoutMs: 20_000 },
     );
     return response.result;
   } catch (error) {
     if (error instanceof Error && /cancelled|abort/i.test(error.message)) {
       throw error;
     }
-    return createOfflineWordCard(request);
+    if (error instanceof TutorApiError) throw error;
+    throw new Error(singleWord
+      ? '词典未收录此词，AI 解释暂不可用。请检查拼写或稍后重试。'
+      : '句子解释暂不可用，请检查服务连接后重试。');
   }
 }

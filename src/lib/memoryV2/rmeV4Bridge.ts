@@ -3,6 +3,7 @@ import {
   applyReviewOutcome,
   calculateConfidence,
   calculateExposureQuality,
+  calculateRecentExposureFrequency,
   calculateOpportunityScore,
   classifyExposure,
   createEmptyRmeProfile,
@@ -11,6 +12,7 @@ import {
   updateExposureQuality,
 } from '../memoryV4';
 import type { RmeMemoryProfile } from '../memoryV4/types';
+import { getLocalDateInTimeZone, getSystemTimeZone, getUtcInstantForLocalDayEnd } from './dateUtils';
 
 function finiteCount(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
@@ -30,6 +32,7 @@ export function normalizeRmeProfile(value: unknown): RmeMemoryProfile {
           articleId: typeof candidate.articleId === 'string' ? candidate.articleId : '',
           occurrenceId: typeof candidate.occurrenceId === 'string' ? candidate.occurrenceId : '',
           kind: candidate.kind === 'new'
+            || candidate.kind === 'confirmation'
             || candidate.kind === 'natural'
             || candidate.kind === 'scheduled'
             || candidate.kind === 'forced'
@@ -39,6 +42,10 @@ export function normalizeRmeProfile(value: unknown): RmeMemoryProfile {
           localDate: typeof candidate.localDate === 'string' ? candidate.localDate : '',
           quality: clampNumber(candidate.quality),
           isValid: candidate.isValid !== false,
+          ...(Number.isFinite(candidate.dwellTimeMs) && Number(candidate.dwellTimeMs) >= 0
+            ? { dwellTimeMs: candidate.dwellTimeMs } : {}),
+          ...(Number.isFinite(candidate.expectedDwellTimeMs) && Number(candidate.expectedDwellTimeMs) > 0
+            ? { expectedDwellTimeMs: candidate.expectedDwellTimeMs } : {}),
         };
       }).filter((item) => item.articleId && item.occurrenceId && item.occurredAt)
     : [];
@@ -49,6 +56,7 @@ export function normalizeRmeProfile(value: unknown): RmeMemoryProfile {
           articleId: typeof candidate.articleId === 'string' ? candidate.articleId : '',
           occurrenceId: typeof candidate.occurrenceId === 'string' ? candidate.occurrenceId : '',
           kind: candidate.kind === 'new'
+            || candidate.kind === 'confirmation'
             || candidate.kind === 'natural'
             || candidate.kind === 'scheduled'
             || candidate.kind === 'forced'
@@ -74,7 +82,18 @@ export function normalizeRmeProfile(value: unknown): RmeMemoryProfile {
     lastEffectiveExposureAt: typeof row.lastEffectiveExposureAt === 'string'
       ? row.lastEffectiveExposureAt
       : null,
+    lastEffectiveLocalDate: typeof row.lastEffectiveLocalDate === 'string'
+      ? row.lastEffectiveLocalDate
+      : exposureHistory.find((item) => item.occurredAt === row.lastEffectiveExposureAt)?.localDate ?? null,
+    firstUnconfirmedExposureAt: typeof row.firstUnconfirmedExposureAt === 'string'
+      ? row.firstUnconfirmedExposureAt
+      : exposureHistory.find((item) => !item.isValid)?.occurredAt ?? null,
+    firstUnconfirmedLocalDate: typeof row.firstUnconfirmedLocalDate === 'string'
+      ? row.firstUnconfirmedLocalDate
+      : exposureHistory.find((item) => item.occurredAt === row.firstUnconfirmedExposureAt)?.localDate
+        ?? exposureHistory.find((item) => !item.isValid)?.localDate ?? null,
     confidence: clampPercent(row.confidence),
+    recentExposureFrequency: clampNumber(row.recentExposureFrequency),
     opportunityScore: clampPercent(row.opportunityScore),
     consecutiveAgain: finiteCount(row.consecutiveAgain),
     recoveryStreak: finiteCount(row.recoveryStreak),
@@ -97,6 +116,14 @@ function clampPercent(value: unknown): number {
     : 0;
 }
 
+/** A lookup records assistance; only recall sources establish recall evidence. */
+export function hasFormalRecallEvidence(state: WordMemoryState | null): boolean {
+  if (!state) return false;
+  return state.fsrsReviews.some((review) => review.source !== 'reading_lookup')
+    // Older migrations can retain a reviewed card without reconstructable logs.
+    || state.fsrsCard.reps > state.fsrsReviews.length;
+}
+
 export function projectRmeProfile(
   profile: RmeMemoryProfile,
   state: WordMemoryState,
@@ -105,6 +132,7 @@ export function projectRmeProfile(
   const confidence = calculateConfidence(profile, {
     stabilityDays: state.stability,
     lastReview: state.lastReview,
+    hasRecallEvidence: hasFormalRecallEvidence(state),
   }, now);
   const lastEffective = profile.lastEffectiveExposureAt
     ? new Date(profile.lastEffectiveExposureAt).getTime()
@@ -115,6 +143,7 @@ export function projectRmeProfile(
   return {
     ...profile,
     confidence,
+    recentExposureFrequency: calculateRecentExposureFrequency(profile, now),
     opportunityScore: calculateOpportunityScore(profile, {
       now,
       forgettingRisk: 1 - confidence / 100,
@@ -138,6 +167,7 @@ export function rmeProfileForState(state: WordMemoryState | null): RmeMemoryProf
   }
   profile.lastExposureAt = state.lastReview;
   profile.lastEffectiveExposureAt = state.lastReview;
+  profile.firstUnconfirmedExposureAt = null;
   const recentReviews = state.fsrsReviews.slice(-3);
   profile.consecutiveAgain = 0;
   for (let index = recentReviews.length - 1; index >= 0; index -= 1) {
@@ -154,6 +184,7 @@ export function rmeProfileForState(state: WordMemoryState | null): RmeMemoryProf
 export function prepareRmeEvent(
   state: WordMemoryState | null,
   event: RawWordEvent,
+  userTimezone: string = getSystemTimeZone(),
 ): { event: RawWordEvent; state: WordMemoryState | null } {
   const profile = rmeProfileForState(state);
   const occurredAt = new Date(event.occurredAt);
@@ -161,27 +192,70 @@ export function prepareRmeEvent(
 
   if (event.eventType === 'click') {
     if (!state?.rme && profile.exposureHistory.length === 0) return { event, state };
+    // A still-open encounter can span midnight. Keep the lookup's real time,
+    // but downgrade the latest matching encounter that preceded the lookup.
+    const targetExposure = profile.exposureHistory.filter((item) =>
+      item.occurrenceId === event.occurrenceId
+        && Date.parse(item.occurredAt) <= occurredAt.getTime())
+      .sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt))[0];
+    const failedProfile = targetExposure
+      ? updateExposureQuality(profile, event.occurrenceId, 0, targetExposure.localDate)
+      : profile;
     const updatedProfile = state
-      ? projectRmeProfile(updateExposureQuality(profile, event.occurrenceId, 0), state, occurredAt)
-      : updateExposureQuality(profile, event.occurrenceId, 0);
+      ? projectRmeProfile(failedProfile, state, occurredAt)
+      : failedProfile;
     return {
       event: { ...event, rmeQuality: 0 },
-      state: state ? { ...state, rme: updatedProfile } : null,
+      state: state ? { ...state, rme: updatedProfile,
+        lastAssistedAt: Date.parse(state.lastAssistedAt ?? '') > occurredAt.getTime()
+          ? state.lastAssistedAt : occurredAt.toISOString() } : null,
     };
   }
 
-  const classification = classifyExposure({
+  const previousLocalDate = profile.lastEffectiveLocalDate || profile.firstUnconfirmedLocalDate;
+  const lastReviewAt = state?.lastReview ? Date.parse(state.lastReview) : NaN;
+  const lastReviewLocalDate = Number.isFinite(lastReviewAt)
+    ? getLocalDateInTimeZone(new Date(lastReviewAt), userTimezone) : null;
+  const actualReviewAt = lastReviewLocalDate
+    && lastReviewAt !== getUtcInstantForLocalDayEnd(lastReviewLocalDate, userTimezone).getTime()
+    ? state?.lastReview : null;
+  const creditedLocalDate = [previousLocalDate, lastReviewLocalDate]
+    .filter((date): date is string => Boolean(date)).sort().pop();
+  const existingExposure = profile.exposureHistory.find((item) =>
+    item.occurrenceId === event.occurrenceId && item.localDate === event.localDate
+      && item.occurredAt === occurredAt.toISOString()
+  );
+  const classification = existingExposure ? {
+    kind: existingExposure.kind, isValid: existingExposure.isValid,
+  } : classifyExposure({
     now: occurredAt,
     isRecommendation: event.isRecommendation === true,
+    localDate: event.localDate,
+    previousLocalDate: creditedLocalDate,
+    userTimezone,
     forcedExposure: profile.forcedExposure,
     nextReview: state?.nextReview,
+    hasFsrsReview: Boolean(state?.fsrsReviews.length),
+    firstUnconfirmedExposureAt: profile.firstUnconfirmedExposureAt,
     lastExposureAt: profile.lastExposureAt,
     lastEffectiveExposureAt: profile.lastEffectiveExposureAt,
+    lastReviewAt: actualReviewAt,
   });
-  const quality = calculateExposureQuality({
-    dwellTimeMs: event.dwellTimeMs,
-    expectedDwellTimeMs: event.expectedDwellTimeMs,
-    modelQuality: event.rmeQuality,
+  const previousDwell = existingExposure?.dwellTimeMs;
+  const incomingDwell = event.dwellTimeMs;
+  const hasPreviousDwell = Number.isFinite(previousDwell) && Number(previousDwell) >= 0;
+  const hasIncomingDwell = Number.isFinite(incomingDwell) && Number(incomingDwell) >= 0;
+  const dwellTimeMs = hasPreviousDwell && hasIncomingDwell
+    ? Math.max(Number(previousDwell), Number(incomingDwell))
+    : hasPreviousDwell ? previousDwell : hasIncomingDwell ? incomingDwell : undefined;
+  const expectedDwellTimeMs = existingExposure?.expectedDwellTimeMs ?? event.expectedDwellTimeMs;
+  const quality = existingExposure?.quality === 0 || event.rmeQuality === 0 ? 0 : calculateExposureQuality({
+    dwellTimeMs,
+    expectedDwellTimeMs,
+    // Recalculate measured updates from the retained maximum, even when a
+    // pruned raw record no longer supplies the previous snapshot metadata.
+    modelQuality: existingExposure && dwellTimeMs !== undefined && expectedDwellTimeMs !== undefined
+      ? undefined : event.rmeQuality,
   });
   const updatedProfile = recordExposure(profile, {
     articleId: event.articleId,
@@ -192,6 +266,8 @@ export function prepareRmeEvent(
     quality,
     isValid: classification.isValid,
     contextText: event.contextText,
+    dwellTimeMs,
+    expectedDwellTimeMs,
   });
   const nextState = state || {
     userId: event.userId,
@@ -220,6 +296,8 @@ export function prepareRmeEvent(
       rmeExposureKind: classification.kind,
       rmeQuality: quality,
       rmeIsValid: classification.isValid,
+      ...(dwellTimeMs === undefined ? {} : { dwellTimeMs }),
+      ...(expectedDwellTimeMs === undefined ? {} : { expectedDwellTimeMs }),
     },
     state: { ...nextState, rme: projectRmeProfile(updatedProfile, nextState, occurredAt) },
   };

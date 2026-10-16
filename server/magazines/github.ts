@@ -9,6 +9,8 @@ import {
   getMagazineDownloadTimeoutMs,
   parseIssueLabel,
 } from './config';
+import { magazineFetch } from './network';
+import type { FullTextFeedEntry } from './fullTextFeeds';
 
 export interface GitHubContentItem {
   name: string;
@@ -27,6 +29,7 @@ export interface RemoteIssueCandidate {
   format: 'epub' | 'pdf' | 'html';
   /** In-memory body for web sources that do not have a downloadable archive. */
   content?: string;
+  feedEntry?: FullTextFeedEntry;
 }
 
 const MAX_REDIRECTS = 5;
@@ -85,7 +88,7 @@ async function fetchGitHub(
   const signal = AbortSignal.timeout(timeoutMs);
 
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-    const response = await fetch(currentUrl, {
+    const response = await magazineFetch(currentUrl, {
       headers: headersForUrl(currentUrl),
       redirect: 'manual',
       signal,

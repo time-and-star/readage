@@ -6,12 +6,17 @@
 
 import { useCallback, useRef } from 'react';
 import { useMemorySystem } from './memoryV2/hooks';
-import { toLemma } from './proficiency';
+import { getReadingTermMatches } from './textHighlight';
+import { tokenizeReadingParagraph } from './readingTokens';
 import type { ReadingLearningUnit } from './readingExposure';
 import type { MemoryExposureSignals } from './memoryV2/types';
+import { resolveLearningWordIds } from './dictionaryClient';
+import { getCanonicalWordProficiencyMap } from './learningWordProficiency';
+import { canonicalLearningWordId } from './learningWordIds';
 import {
   emitVocabClick,
   emitVocabExposure,
+  isVocabTelemetryEnabled,
   toVocabSnapshot,
 } from './vocabTelemetry';
 
@@ -52,6 +57,8 @@ export async function recordMemoryClickWithExposure({
   recordExposure,
   recordClick,
   signals,
+  canonicalWordId,
+  occurrenceStartedAts,
 }: {
   articleId: string;
   paragraphIndex: number;
@@ -60,20 +67,28 @@ export async function recordMemoryClickWithExposure({
   recordExposure: MemoryEventRecorder;
   recordClick: MemoryEventRecorder;
   signals?: MemoryExposureSignals;
+  canonicalWordId?: string;
+  occurrenceStartedAts?: Map<string, string>;
 }): Promise<void> {
   const occurrenceId = createMemoryOccurrenceId(articleId, paragraphIndex, unit);
+  const wordId = canonicalWordId || unit.wordId;
 
   if (!exposedOccurrenceIds.has(occurrenceId)) {
+    const priorStartedAt = occurrenceStartedAts?.get(occurrenceId);
+    const startedAt = priorStartedAt ?? signals?.exposureOccurredAt ?? new Date().toISOString();
+    const exposureSignals = occurrenceStartedAts ? { ...signals, exposureOccurredAt: startedAt } : signals;
+    occurrenceStartedAts?.set(occurrenceId, startedAt);
     exposedOccurrenceIds.add(occurrenceId);
     try {
-      await recordExposure(unit.wordId, articleId, occurrenceId, signals);
+      await recordExposure(wordId, articleId, occurrenceId, exposureSignals);
     } catch (error) {
       exposedOccurrenceIds.delete(occurrenceId);
+      if (priorStartedAt === undefined) occurrenceStartedAts?.delete(occurrenceId);
       throw error;
     }
   }
 
-  await recordClick(unit.wordId, articleId, occurrenceId);
+  await recordClick(wordId, articleId, occurrenceId);
 }
 
 /**
@@ -87,6 +102,9 @@ export async function recordParagraphExposureWithRollback({
   exposedOccurrenceIds,
   recordExposures,
   signals,
+  canonicalWordIds,
+  exposureSnapshots,
+  occurrenceStartedAts,
 }: {
   articleId: string;
   paragraphIndex: number;
@@ -94,6 +112,9 @@ export async function recordParagraphExposureWithRollback({
   exposedOccurrenceIds: Set<string>;
   recordExposures: MemoryBatchRecorder;
   signals?: MemoryExposureSignals;
+  canonicalWordIds?: readonly string[];
+  exposureSnapshots?: Map<string, string>;
+  occurrenceStartedAts?: Map<string, string>;
 }): Promise<void> {
   const pending: Array<{
     wordId: string;
@@ -101,11 +122,21 @@ export async function recordParagraphExposureWithRollback({
     occurrenceId: string;
   } & MemoryExposureSignals> = [];
 
-  for (const unit of units) {
+  const priorReservations = new Map<string, { exposed: boolean; snapshot?: string; startedAt?: string }>();
+  for (const [index, unit] of units.entries()) {
     const occurrenceId = createMemoryOccurrenceId(articleId, paragraphIndex, unit);
-    if (exposedOccurrenceIds.has(occurrenceId)) continue;
+    const exposed = exposedOccurrenceIds.has(occurrenceId);
+    const priorSnapshot = exposureSnapshots?.get(occurrenceId);
+    const priorStartedAt = occurrenceStartedAts?.get(occurrenceId);
+    const startedAt = priorStartedAt ?? signals?.exposureOccurredAt ?? new Date().toISOString();
+    const exposureSignals = occurrenceStartedAts ? { ...signals, exposureOccurredAt: startedAt } : signals;
+    const snapshot = JSON.stringify(exposureSignals ?? {});
+    if (exposed && (!exposureSnapshots || priorSnapshot === snapshot)) continue;
+    priorReservations.set(occurrenceId, { exposed, snapshot: priorSnapshot, startedAt: priorStartedAt });
     exposedOccurrenceIds.add(occurrenceId);
-    pending.push({ wordId: unit.wordId, articleId, occurrenceId, ...signals });
+    exposureSnapshots?.set(occurrenceId, snapshot);
+    occurrenceStartedAts?.set(occurrenceId, startedAt);
+    pending.push({ wordId: canonicalWordIds?.[index] || unit.wordId, articleId, occurrenceId, ...exposureSignals });
   }
 
   if (pending.length === 0) return;
@@ -114,7 +145,12 @@ export async function recordParagraphExposureWithRollback({
     await recordExposures(pending);
   } catch (error) {
     for (const item of pending) {
-      exposedOccurrenceIds.delete(item.occurrenceId);
+      const prior = priorReservations.get(item.occurrenceId)!;
+      if (!prior.exposed) exposedOccurrenceIds.delete(item.occurrenceId);
+      if (prior.snapshot === undefined) exposureSnapshots?.delete(item.occurrenceId);
+      else exposureSnapshots?.set(item.occurrenceId, prior.snapshot);
+      if (prior.startedAt === undefined) occurrenceStartedAts?.delete(item.occurrenceId);
+      else occurrenceStartedAts?.set(item.occurrenceId, prior.startedAt);
     }
     throw error;
   }
@@ -143,22 +179,32 @@ export function useMemoryV2Integration(
   const exposureStateRef = useRef({
     streamKey,
     occurrenceIds: new Set<string>(),
+    exposureSnapshots: new Map<string, string>(),
+    occurrenceStartedAts: new Map<string, string>(),
   });
 
   if (exposureStateRef.current.streamKey !== streamKey) {
     exposureStateRef.current = {
       streamKey,
       occurrenceIds: new Set<string>(),
+      exposureSnapshots: new Map<string, string>(),
+      occurrenceStartedAts: new Map<string, string>(),
     };
   }
+  // Cleanup from the previous reading stream must retain its own reservations.
+  const exposureState = exposureStateRef.current;
 
   const snapshotWords = useCallback(
     async (wordIds: readonly string[]) => {
-      const unique = [...new Set(wordIds.filter(Boolean))];
+      if (!isVocabTelemetryEnabled()) return [];
+      const unique = [...new Set((await resolveLearningWordIds(wordIds)).filter(Boolean))];
       if (unique.length === 0) return [];
       try {
         const map = await memorySystem.getBatchWordProficiency(userId, unique);
-        return unique.map((wordId) => toVocabSnapshot(wordId, map.get(wordId) ?? null));
+        const legacy = unique.some((wordId) => !map.has(wordId))
+          ? await getCanonicalWordProficiencyMap(await memorySystem.getAllWordProficiency(userId))
+          : new Map();
+        return unique.map((wordId) => toVocabSnapshot(wordId, map.get(wordId) ?? legacy.get(wordId) ?? null));
       } catch {
         return unique.map((wordId) => toVocabSnapshot(wordId, null));
       }
@@ -173,23 +219,29 @@ export function useMemoryV2Integration(
       articleId: string = streamKey,
       signals: MemoryExposureSignals = {},
     ) => {
+      const canonicalWordIds = await resolveLearningWordIds(units.map((unit) => unit.wordId));
       try {
         await recordParagraphExposureWithRollback({
           articleId,
           paragraphIndex,
           units,
-          exposedOccurrenceIds: exposureStateRef.current.occurrenceIds,
+          exposedOccurrenceIds: exposureState.occurrenceIds,
+          exposureSnapshots: exposureState.exposureSnapshots,
+          occurrenceStartedAts: exposureState.occurrenceStartedAts,
+          canonicalWordIds,
           recordExposures,
           signals: { ...defaults, ...signals },
         });
-        // Real Memory V2 write succeeded → notify vocab particle view
-        const words = await snapshotWords(units.map((unit) => unit.wordId));
-        emitVocabExposure({ articleId, paragraphIndex, words });
       } catch (error) {
         console.error('Failed to record paragraph exposures:', error);
+        throw error;
       }
+      try {
+        const words = await snapshotWords(canonicalWordIds);
+        emitVocabExposure({ articleId, paragraphIndex, words });
+      } catch { /* Telemetry must not turn a persisted exposure into a retry. */ }
     },
-    [streamKey, defaults, recordExposures, snapshotWords],
+    [streamKey, defaults, exposureState, recordExposures, snapshotWords],
   );
 
   const recordWordClick = useCallback(
@@ -198,26 +250,34 @@ export function useMemoryV2Integration(
       paragraphIndex: number,
       articleId: string = streamKey,
       signals: MemoryExposureSignals = {},
+      canonicalWordId?: string,
     ) => {
+      const [wordId] = canonicalWordId
+        ? [canonicalLearningWordId(unit.wordId, canonicalWordId)]
+        : await resolveLearningWordIds([unit.wordId]);
       try {
         await recordMemoryClickWithExposure({
           articleId,
           paragraphIndex,
           unit,
-          exposedOccurrenceIds: exposureStateRef.current.occurrenceIds,
+          exposedOccurrenceIds: exposureState.occurrenceIds,
+          canonicalWordId: wordId,
+          occurrenceStartedAts: exposureState.occurrenceStartedAts,
           recordExposure,
           recordClick,
           signals: { ...defaults, ...signals },
         });
-        const [word] = await snapshotWords([unit.wordId]);
-        if (word) {
-          emitVocabClick({ articleId, paragraphIndex, word });
-        }
       } catch (error) {
         console.error('Failed to record click for', unit.wordId, error);
+        throw error;
       }
+      // Telemetry is best effort and must not turn a committed lookup into a retry.
+      try {
+        const [word] = await snapshotWords([wordId]);
+        if (word) emitVocabClick({ articleId, paragraphIndex, word });
+      } catch { /* Learning data is already committed. */ }
     },
-    [streamKey, defaults, recordClick, recordExposure, snapshotWords],
+    [streamKey, defaults, exposureState, recordClick, recordExposure, snapshotWords],
   );
 
   return {
@@ -235,16 +295,5 @@ export function findWordIndexInParagraph(
   paragraphText: string,
   targetWord: string
 ): number {
-  const tokens = paragraphText.trim().split(/\s+/).map(toLemma);
-  const targetTokens = toLemma(targetWord).split(' ').filter(Boolean);
-  if (targetTokens.length === 0) return -1;
-
-  for (let index = 0; index <= tokens.length - targetTokens.length; index += 1) {
-    const matches = targetTokens.every(
-      (targetToken, offset) => tokens[index + offset] === targetToken,
-    );
-    if (matches) return index;
-  }
-
-  return -1;
+  return getReadingTermMatches(tokenizeReadingParagraph(paragraphText), [targetWord])[0]?.tokenIndex ?? -1;
 }

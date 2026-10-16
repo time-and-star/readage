@@ -4,34 +4,56 @@
  */
 
 import {
-  fsrs,
   createEmptyCard,
-  generatorParameters,
   Rating,
   type Card,
   type RecordLog,
   type Grade,
 } from 'ts-fsrs';
+import { scheduleFsrsReview } from '../fsrs';
+import { applyReviewOutcome } from '../memoryV4';
+import type { RmeMemoryProfile } from '../memoryV4/types';
 import { WordMemoryState, DailyWordEvidence, FsrsGrade } from './types';
 import {
   getLocalDateInTimeZone,
   getSystemTimeZone,
   getUtcInstantForLocalDayEnd,
 } from './dateUtils';
-import { applyRmeReview, rmeProfileForState } from './rmeV4Bridge';
+import { applyRmeReview, projectRmeProfile, rmeProfileForState } from './rmeV4Bridge';
 
-// FSRS 参数配置（与主系统保持一致）
-const FSRS_PARAMETERS = generatorParameters({
-  request_retention: 0.9,
-  maximum_interval: 36500,
-  enable_fuzz: false,
-  enable_short_term: false,
-  learning_steps: [],
-  relearning_steps: [],
-});
+const MIN_PASSIVE_RECALL_DAYS = 2;
 
-// FSRS 调度器实例
-const scheduler = fsrs(FSRS_PARAMETERS);
+/** Compatibility helper for repeated reading evidence, not a verified recall grade. */
+export function hasSufficientPassiveRecallEvidence(
+  memoryState: WordMemoryState | null,
+  asOf?: Date,
+): boolean {
+  const lastReviewAt = memoryState?.lastReview
+    ? Date.parse(memoryState.lastReview)
+    : Number.NEGATIVE_INFINITY;
+  const eligible = (memoryState?.rme?.exposureHistory ?? []).filter((exposure) => {
+    const occurredAt = Date.parse(exposure.occurredAt);
+    return exposure.isValid
+      && exposure.quality >= 0.8
+      && Number.isFinite(occurredAt)
+      && occurredAt > lastReviewAt
+      && (!asOf || occurredAt <= asOf.getTime());
+  });
+  const localDates = new Set(eligible.map((exposure) => exposure.localDate));
+
+  return localDates.size >= MIN_PASSIVE_RECALL_DAYS;
+}
+
+function actualDailyReviewTime(evidence: DailyWordEvidence, userTimezone: string): Date | null {
+  if (evidence.articleEvidence.length > 0) {
+    const timestamps = evidence.articleEvidence.map((article) => Date.parse(article.lastSeenAt));
+    const complete = timestamps.every((timestamp, index) => Number.isFinite(timestamp)
+      && evidence.articleEvidence[index].localDate === evidence.localDate
+      && getLocalDateInTimeZone(new Date(timestamp), userTimezone) === evidence.localDate);
+    if (complete) return new Date(Math.max(...timestamps));
+  }
+  return null;
+}
 
 /**
  * 将我们的评级映射到 FSRS Rating
@@ -85,10 +107,10 @@ export function initializeWordMemory(userId: string, wordId: string): WordMemory
  */
 export function submitFsrsReview(
   memoryState: WordMemoryState,
-  grade: FsrsGrade,
+  grade: FsrsGrade | Grade,
   reviewTime: Date = new Date()
 ): WordMemoryState {
-  const rating = gradeToRating(grade);
+  const rating = typeof grade === 'number' ? grade : gradeToRating(grade);
 
   // 重建 FSRS Card
   const card = createEmptyCard();
@@ -108,7 +130,7 @@ export function submitFsrsReview(
   });
 
   // 执行 FSRS 复习
-  const result = scheduler.next(card, reviewTime, rating);
+  const result = scheduleFsrsReview(card, reviewTime, rating);
   const newCard = result.card;
   const log = result.log;
 
@@ -151,6 +173,72 @@ export function submitFsrsReview(
   return newState;
 }
 
+/** Revise a saved success and replay its tail without granting duplicate recall credit. */
+function reviseHistoricalSuccess(
+  state: WordMemoryState,
+  index: number,
+  evidence: DailyWordEvidence,
+  reviewTime: Date,
+  userTimezone: string,
+  replacement: 'Again' | null,
+): WordMemoryState {
+  const target = state.fsrsReviews[index];
+  const tail = state.fsrsReviews.slice(index);
+  const prefix = state.fsrsReviews.slice(0, index);
+  const isNew = target.state === 0;
+  const previousReview = isNew ? null : target.due;
+  const previousDue = isNew ? target.due
+    : new Date(Date.parse(target.due) + target.scheduledDays * 24 * 60 * 60 * 1000).toISOString();
+  let current: WordMemoryState = { ...state,
+    stability: target.stability,
+    difficulty: target.difficulty,
+    lastReview: previousReview,
+    nextReview: previousDue,
+    fsrsReviews: prefix,
+    fsrsCard: { due: previousDue, stability: target.stability, difficulty: target.difficulty,
+      elapsedDays: target.lastElapsedDays, scheduledDays: target.scheduledDays, learningSteps: target.learningSteps,
+      reps: Math.max(0, state.fsrsCard.reps - tail.length),
+      lapses: Math.max(0, state.fsrsCard.lapses - tail.filter(review => review.rating === 1 && review.state !== 0).length),
+      state: target.state, ...(previousReview ? { lastReview: previousReview } : {}) },
+  };
+  if (replacement) {
+    current = submitFsrsReview(current, replacement, reviewTime);
+    current.fsrsReviews[current.fsrsReviews.length - 1] = { ...current.fsrsReviews.at(-1)!,
+      ...(target.source ? { source: 'reading_lookup' as const, localDate: evidence.localDate } : {}) };
+  }
+  for (const review of tail.slice(1)) {
+    current = submitFsrsReview(current, review.rating as Grade, new Date(review.review));
+    current.fsrsReviews[current.fsrsReviews.length - 1] = { ...current.fsrsReviews.at(-1)!,
+      ...(review.source ? { source: review.source } : {}),
+      ...(review.localDate ? { localDate: review.localDate } : {}),
+      ...(review.verificationAttemptIds ? { verificationAttemptIds: review.verificationAttemptIds } : {}),
+      ...(review.originalFlashcardRating !== undefined ? { originalFlashcardRating: review.originalFlashcardRating } : {}),
+      ...(review.flashcardRevisions ? { flashcardRevisions: review.flashcardRevisions.map(revision => ({ ...revision })) } : {}) };
+  }
+
+  // Exposure counters/context remain intact. Recompute only the review-outcome
+  // recovery state so the replaced Good cannot keep an earned recovery streak.
+  let profile: RmeMemoryProfile = { ...rmeProfileForState(state), consecutiveAgain: 0, recoveryStreak: 0,
+    forcedExposure: false, lastReviewGrade: null };
+  let previousReviewedAt: number | null = null;
+  for (const review of current.fsrsReviews) {
+    const grade = review.rating <= 1 ? 'Again' : 'Good';
+    const reviewedAt = new Date(review.review);
+    const date = getLocalDateInTimeZone(reviewedAt, userTimezone);
+    const exposures = profile.exposureHistory.filter(item => item.isValid && item.localDate === date);
+    const recentFlashcard = review.source === 'flashcard'
+      && (previousReviewedAt === null || reviewedAt.getTime() - previousReviewedAt < 86_400_000);
+    const quality = ((review.source === 'verification' || review.source === 'flashcard') && review.rating === 2)
+      || recentFlashcard ? 0.6
+      : date === evidence.localDate ? evidence.averageRmeQuality ?? 1
+      : exposures.length > 0 ? exposures.reduce((sum, item) => sum + item.quality, 0) / exposures.length : 1;
+    profile = applyReviewOutcome(profile, grade, reviewedAt, quality);
+    previousReviewedAt = reviewedAt.getTime();
+  }
+  return { ...current, rme: projectRmeProfile(profile, current,
+    current.lastReview ? new Date(current.lastReview) : reviewTime) };
+}
+
 /**
  * 结算每日词据，提交到 FSRS
  *
@@ -165,20 +253,48 @@ export function finalizeDailyEvidence(
   userId: string,
   userTimezone: string = getSystemTimeZone()
 ): WordMemoryState | null {
-  const { wordId, pendingGrade, localDate } = dailyEvidence;
+  const { wordId, pendingGrade } = dailyEvidence;
+  const actualTime = actualDailyReviewTime(dailyEvidence, userTimezone);
+  const reviewTime = actualTime ?? getUtcInstantForLocalDayEnd(dailyEvidence.localDate, userTimezone);
 
-  // 如果没有评级，不提交
+  const previousIndex = memoryState?.fsrsReviews.findIndex(review =>
+    review.source !== 'flashcard'
+    && getLocalDateInTimeZone(new Date(review.review), userTimezone) === dailyEvidence.localDate) ?? -1;
+  if (memoryState && previousIndex >= 0) {
+    const priorReview = memoryState.fsrsReviews[previousIndex];
+    const quality = dailyEvidence.averageRmeQuality;
+    const measuredOriginal = memoryState.rme?.exposureHistory.some(exposure =>
+      exposure.localDate === dailyEvidence.localDate
+      && exposure.isValid
+      && Date.parse(exposure.occurredAt) === Date.parse(priorReview.review)
+      && exposure.quality < 0.8
+      && Number.isFinite(exposure.dwellTimeMs) && Number(exposure.dwellTimeMs) >= 0
+      && Number.isFinite(exposure.expectedDwellTimeMs) && Number(exposure.expectedDwellTimeMs) > 0);
+    // A still-open encounter may reveal its real dwell only after midnight.
+    // Only that same timestamp can retract its prematurely credited Good.
+    if (pendingGrade !== 'Again' && dailyEvidence.clickedOccurrenceCount === 0
+      && priorReview.rating === 3 && actualTime && measuredOriginal
+      && actualTime.getTime() === Date.parse(priorReview.review)
+      && typeof quality === 'number' && Number.isFinite(quality) && quality >= 0 && quality < 0.8) {
+      return reviseHistoricalSuccess(memoryState, previousIndex, dailyEvidence, reviewTime, userTimezone, null);
+    }
+    if (pendingGrade !== 'Again' || memoryState.fsrsReviews[previousIndex].rating <= 1) return memoryState;
+    return reviseHistoricalSuccess(memoryState, previousIndex, dailyEvidence, reviewTime, userTimezone, 'Again');
+  }
+
+  // 没有评级时仍允许上面的原始测量修正，但不创建复习。
   if (!pendingGrade) {
     return memoryState;
   }
+
+  // Ordinary reading provides encounter evidence, not a verified successful
+  // retrieval. Existing saved reviews above remain authoritative history.
+  if (pendingGrade === 'Good') return memoryState;
 
   // 如果是新单词，初始化记忆状态
   if (!memoryState) {
     memoryState = initializeWordMemory(userId, wordId);
   }
-
-  // 计算复习时间（使用当天结束时刻）
-  const reviewTime = getUtcInstantForLocalDayEnd(localDate, userTimezone);
 
   // 提交 FSRS 复习
   const stateWithRme = memoryState.rme
@@ -190,7 +306,9 @@ export function finalizeDailyEvidence(
     reviewTime,
     dailyEvidence.averageRmeQuality ?? 1,
   );
-
+  const last = updatedState.fsrsReviews.length - 1;
+  updatedState.fsrsReviews[last] = { ...updatedState.fsrsReviews[last],
+    source: 'reading_lookup', localDate: dailyEvidence.localDate };
   return updatedState;
 }
 

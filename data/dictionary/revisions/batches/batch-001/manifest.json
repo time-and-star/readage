@@ -1,0 +1,268 @@
+{
+  "format": "dictionary-batch.v1",
+  "batchId": "batch-001",
+  "batchSize": 2000,
+  "schemaVersion": "dictionary.v2",
+  "contentVersion": "dictionary-content.v2",
+  "status": "reviewing",
+  "authoringMethod": "model-manual",
+  "sourceHistory": "existing-pack; editorial-history-unknown",
+  "selectionRule": "one canonical source row per eligible lemma; exclude sample words and published revisions; exclude pure word-form rows; ascending numeric frq then alphabetical; freeze the first N",
+  "sourceHash": "eeb7ef4ac67d30f781eb78a4da2278dcb1f925e4d04db9aaffe8d62db0772db1",
+  "sourcePackHash": "85b7bc6fe7084f23d78487ae8e2b0bcd587b2e55e6943be3fc7e0704dd3dab60",
+  "wordListHash": "22001f9092bb08da33bd9e228ce15f8971982e2b3ab552af441bb3ebda24e986",
+  "revisionHash": null,
+  "revisionCount": 2000,
+  "workPackages": [
+    {
+      "id": "work-001",
+      "from": 1,
+      "to": 50,
+      "size": 50
+    },
+    {
+      "id": "work-002",
+      "from": 51,
+      "to": 100,
+      "size": 50
+    },
+    {
+      "id": "work-003",
+      "from": 101,
+      "to": 150,
+      "size": 50
+    },
+    {
+      "id": "work-004",
+      "from": 151,
+      "to": 200,
+      "size": 50
+    },
+    {
+      "id": "work-005",
+      "from": 201,
+      "to": 250,
+      "size": 50
+    },
+    {
+      "id": "work-006",
+      "from": 251,
+      "to": 300,
+      "size": 50
+    },
+    {
+      "id": "work-007",
+      "from": 301,
+      "to": 350,
+      "size": 50
+    },
+    {
+      "id": "work-008",
+      "from": 351,
+      "to": 400,
+      "size": 50
+    },
+    {
+      "id": "work-009",
+      "from": 401,
+      "to": 450,
+      "size": 50
+    },
+    {
+      "id": "work-010",
+      "from": 451,
+      "to": 500,
+      "size": 50
+    },
+    {
+      "id": "work-011",
+      "from": 501,
+      "to": 550,
+      "size": 50
+    },
+    {
+      "id": "work-012",
+      "from": 551,
+      "to": 600,
+      "size": 50
+    },
+    {
+      "id": "work-013",
+      "from": 601,
+      "to": 650,
+      "size": 50
+    },
+    {
+      "id": "work-014",
+      "from": 651,
+      "to": 700,
+      "size": 50
+    },
+    {
+      "id": "work-015",
+      "from": 701,
+      "to": 750,
+      "size": 50
+    },
+    {
+      "id": "work-016",
+      "from": 751,
+      "to": 800,
+      "size": 50
+    },
+    {
+      "id": "work-017",
+      "from": 801,
+      "to": 850,
+      "size": 50
+    },
+    {
+      "id": "work-018",
+      "from": 851,
+      "to": 900,
+      "size": 50
+    },
+    {
+      "id": "work-019",
+      "from": 901,
+      "to": 950,
+      "size": 50
+    },
+    {
+      "id": "work-020",
+      "from": 951,
+      "to": 1000,
+      "size": 50
+    },
+    {
+      "id": "work-021",
+      "from": 1001,
+      "to": 1050,
+      "size": 50
+    },
+    {
+      "id": "work-022",
+      "from": 1051,
+      "to": 1100,
+      "size": 50
+    },
+    {
+      "id": "work-023",
+      "from": 1101,
+      "to": 1150,
+      "size": 50
+    },
+    {
+      "id": "work-024",
+      "from": 1151,
+      "to": 1200,
+      "size": 50
+    },
+    {
+      "id": "work-025",
+      "from": 1201,
+      "to": 1250,
+      "size": 50
+    },
+    {
+      "id": "work-026",
+      "from": 1251,
+      "to": 1300,
+      "size": 50
+    },
+    {
+      "id": "work-027",
+      "from": 1301,
+      "to": 1350,
+      "size": 50
+    },
+    {
+      "id": "work-028",
+      "from": 1351,
+      "to": 1400,
+      "size": 50
+    },
+    {
+      "id": "work-029",
+      "from": 1401,
+      "to": 1450,
+      "size": 50
+    },
+    {
+      "id": "work-030",
+      "from": 1451,
+      "to": 1500,
+      "size": 50
+    },
+    {
+      "id": "work-031",
+      "from": 1501,
+      "to": 1550,
+      "size": 50
+    },
+    {
+      "id": "work-032",
+      "from": 1551,
+      "to": 1600,
+      "size": 50
+    },
+    {
+      "id": "work-033",
+      "from": 1601,
+      "to": 1650,
+      "size": 50
+    },
+    {
+      "id": "work-034",
+      "from": 1651,
+      "to": 1700,
+      "size": 50
+    },
+    {
+      "id": "work-035",
+      "from": 1701,
+      "to": 1750,
+      "size": 50
+    },
+    {
+      "id": "work-036",
+      "from": 1751,
+      "to": 1800,
+      "size": 50
+    },
+    {
+      "id": "work-037",
+      "from": 1801,
+      "to": 1850,
+      "size": 50
+    },
+    {
+      "id": "work-038",
+      "from": 1851,
+      "to": 1900,
+      "size": 50
+    },
+    {
+      "id": "work-039",
+      "from": 1901,
+      "to": 1950,
+      "size": 50
+    },
+    {
+      "id": "work-040",
+      "from": 1951,
+      "to": 2000,
+      "size": 50
+    }
+  ],
+  "files": {
+    "words": "batch-001/words.json",
+    "revisions": "batch-001/revisions.jsonl",
+    "reviewLog": "batch-001/review-log.jsonl",
+    "qualityReport": "batch-001/quality-report.json",
+    "changeReport": "batch-001/change-report.json",
+    "sourceManifest": "batch-001/source-manifest.json"
+  },
+  "createdAt": "2026-09-10T09:24:28.544Z",
+  "publishedAt": null
+}

@@ -1,0 +1,4426 @@
+{
+  "format": "dictionary-batch-validation.v1",
+  "batchId": "batch-001",
+  "schemaVersion": "dictionary.v2",
+  "contentVersion": "dictionary-content.v2",
+  "batchStatus": "reviewing",
+  "totals": {
+    "words": 2000,
+    "revisions": 2000,
+    "missing": 0,
+    "draft": 568,
+    "unreviewed": 0,
+    "needs-review": 13,
+    "reviewed": 1419
+  },
+  "checks": {
+    "wordListFrozen": true,
+    "wordListHashMatches": true,
+    "indexedInRevisionManifest": true,
+    "noDuplicateLemmas": true,
+    "allRevisionsInBatch": true,
+    "noDraftWhenPublished": true,
+    "contentComplete": false
+  },
+  "missingRevisions": [],
+  "missingRevisionCount": 0,
+  "extraRevisions": [],
+  "duplicateRevisions": [],
+  "invalidRecords": [
+    {
+      "lemma": "also",
+      "issues": [
+        "also-adv-1: example is needs-review",
+        "also-adv-2: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "call",
+      "issues": [
+        "call-v-1: example is draft",
+        "call-v-2: example is draft",
+        "call-v-3: example is draft",
+        "call-v-4: example is draft",
+        "call-v-5: example is draft",
+        "call-n-1: example is draft",
+        "call-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "something",
+      "issues": [
+        "something-pron-1: example is needs-review",
+        "something-pron-2: example is needs-review",
+        "something-adv-1: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "such",
+      "issues": [
+        "such-adj-1: example is draft",
+        "such-adj-2: example is draft",
+        "such-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "head",
+      "issues": [
+        "head-n-1: example is draft",
+        "head-n-2: example is draft",
+        "head-v-1: example is draft",
+        "head-v-2: example is draft",
+        "head-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "black",
+      "issues": [
+        "black-adj-1: example is needs-review",
+        "black-adj-2: example is needs-review",
+        "black-n-1: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "together",
+      "issues": [
+        "together-adv-1: example is draft",
+        "together-adv-2: example is draft",
+        "together-adv-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "raise",
+      "issues": [
+        "raise-v-1: example is draft",
+        "raise-v-2: example is draft",
+        "raise-v-3: example is draft",
+        "raise-v-4: example is draft",
+        "raise-v-5: example is draft",
+        "raise-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "pass",
+      "issues": [
+        "pass-n-1: example is draft",
+        "pass-n-2: example is draft",
+        "pass-n-3: example is draft",
+        "pass-v-1: example is draft",
+        "pass-v-2: example is draft",
+        "pass-v-3: example is draft",
+        "pass-v-4: example is draft",
+        "pass-v-5: example is draft"
+      ]
+    },
+    {
+      "lemma": "break",
+      "issues": [
+        "break-n-1: example is draft",
+        "break-n-2: example is draft",
+        "break-n-3: example is draft",
+        "break-v-1: example is draft",
+        "break-v-2: example is draft",
+        "break-v-3: example is draft",
+        "break-v-4: example is draft",
+        "break-v-5: example is draft"
+      ]
+    },
+    {
+      "lemma": "catch",
+      "issues": [
+        "catch-n-1: example is needs-review",
+        "catch-n-2: example is needs-review",
+        "catch-v-1: example is needs-review",
+        "catch-v-2: example is needs-review",
+        "catch-v-3: example is needs-review",
+        "catch-v-4: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "hair",
+      "issues": [
+        "hair-n-1: example is draft",
+        "hair-n-2: example is draft",
+        "hair-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "condition",
+      "issues": [
+        "condition-n-1: example is draft",
+        "condition-n-2: example is draft",
+        "condition-n-3: example is draft",
+        "condition-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "husband",
+      "issues": [
+        "husband-n-1: example is draft",
+        "husband-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "congress",
+      "issues": [
+        "congress-n-1: example is draft",
+        "congress-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "medical",
+      "issues": [
+        "medical-adj-1: example is draft",
+        "medical-adj-2: example is draft",
+        "medical-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "involve",
+      "issues": [
+        "involve-v-1: example is draft",
+        "involve-v-2: example is draft",
+        "involve-v-3: example is draft",
+        "involve-v-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "media",
+      "issues": [
+        "media-n-1: example is draft",
+        "media-n-2: example is draft",
+        "media-n-3: example is draft",
+        "media-n-4: example is draft",
+        "media-n-5: example is draft"
+      ]
+    },
+    {
+      "lemma": "cup",
+      "issues": [
+        "cup-n-1: example is draft",
+        "cup-n-2: example is draft",
+        "cup-n-3: example is draft",
+        "cup-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "character",
+      "issues": [
+        "character-n-1: example is draft",
+        "character-n-2: example is draft",
+        "character-n-3: example is draft",
+        "character-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "peace",
+      "issues": [
+        "peace-n-1: example is draft",
+        "peace-n-2: example is draft",
+        "peace-n-3: example is draft",
+        "peace-n-4: example is draft",
+        "peace-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "bag",
+      "issues": [
+        "bag-n-1: example is draft",
+        "bag-n-2: example is draft",
+        "bag-n-3: example is draft",
+        "bag-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "conflict",
+      "issues": [
+        "conflict-n-1: example is draft",
+        "conflict-n-2: example is draft",
+        "conflict-n-3: example is draft",
+        "conflict-n-4: example is draft",
+        "conflict-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "stick",
+      "issues": [
+        "stick-n-1: example is needs-review",
+        "stick-n-2: example is needs-review",
+        "stick-v-1: example is needs-review",
+        "stick-v-2: example is needs-review",
+        "stick-v-3: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "scale",
+      "issues": [
+        "scale-n-1: example is needs-review",
+        "scale-n-2: example is needs-review",
+        "scale-n-3: example is needs-review",
+        "scale-n-4: example is needs-review",
+        "scale-v-1: example is needs-review",
+        "scale-v-2: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "settle",
+      "issues": [
+        "settle-n-1: example is needs-review",
+        "settle-v-1: example is needs-review",
+        "settle-v-2: example is needs-review",
+        "settle-v-3: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "ear",
+      "issues": [
+        "ear-n-1: example is needs-review",
+        "ear-n-2: example is needs-review",
+        "ear-n-3: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "grade",
+      "issues": [
+        "grade-n-1: example is needs-review",
+        "grade-v-1: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "fair",
+      "issues": [
+        "fair-adj-1: example is needs-review",
+        "fair-n-1: example is needs-review",
+        "fair-v-1: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "theater",
+      "issues": [
+        "theater-n-1: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "reading",
+      "issues": [
+        "reading-n-1: example is needs-review",
+        "reading-n-2: example is needs-review",
+        "reading-n-3: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "prime",
+      "issues": [
+        "prime-n-1: example is draft",
+        "prime-n-2: example is draft",
+        "prime-n-3: example is draft",
+        "prime-v-1: example is draft",
+        "prime-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "shadow",
+      "issues": [
+        "shadow-n-1: example is draft",
+        "shadow-n-2: example is draft",
+        "shadow-n-3: example is draft",
+        "shadow-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "struggle",
+      "issues": [
+        "struggle-n-1: example is draft",
+        "struggle-n-2: example is draft",
+        "struggle-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "conclude",
+      "issues": [
+        "conclude-v-1: example is draft",
+        "conclude-v-2: example is draft",
+        "conclude-v-3: example is draft",
+        "conclude-v-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "dance",
+      "issues": [
+        "dance-n-1: example is draft",
+        "dance-n-2: example is draft",
+        "dance-n-3: example is draft",
+        "dance-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "analyst",
+      "issues": [
+        "analyst-n-1: example is draft",
+        "analyst-n-2: example is draft",
+        "analyst-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "regulation",
+      "issues": [
+        "regulation-n-1: example is draft",
+        "regulation-n-2: example is draft",
+        "regulation-n-3: example is draft",
+        "regulation-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "being",
+      "issues": [
+        "being-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "ring",
+      "issues": [
+        "ring-n-1: example is draft",
+        "ring-n-2: example is draft",
+        "ring-n-3: example is draft",
+        "ring-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "largely",
+      "issues": [
+        "largely-adv-1: example is draft",
+        "largely-adv-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "shift",
+      "issues": [
+        "shift-n-1: example is draft",
+        "shift-n-2: example is draft",
+        "shift-n-3: example is draft",
+        "shift-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "revenue",
+      "issues": [
+        "revenue-n-1: example is draft",
+        "revenue-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "locate",
+      "issues": [
+        "locate-v-1: example is draft",
+        "locate-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "mark",
+      "issues": [
+        "mark-n-1: example is draft",
+        "mark-n-2: example is draft",
+        "mark-n-3: example is draft",
+        "mark-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "appearance",
+      "issues": [
+        "appearance-n-1: example is draft",
+        "appearance-n-2: example is draft",
+        "appearance-n-3: example is draft",
+        "appearance-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "package",
+      "issues": [
+        "package-n-1: example is draft",
+        "package-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "difficulty",
+      "issues": [
+        "difficulty-n-1: example is draft",
+        "difficulty-n-2: example is draft",
+        "difficulty-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "bridge",
+      "issues": [
+        "bridge-n-1: example is draft",
+        "bridge-n-2: example is draft",
+        "bridge-n-3: example is draft",
+        "bridge-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "recommend",
+      "issues": [
+        "recommend-v-1: example is draft",
+        "recommend-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "obvious",
+      "issues": [
+        "obvious-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "basically",
+      "issues": [
+        "basically-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "generate",
+      "issues": [
+        "generate-v-1: example is draft",
+        "generate-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "anymore",
+      "issues": [
+        "anymore-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "propose",
+      "issues": [
+        "propose-v-1: example is draft",
+        "propose-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "thinking",
+      "issues": [
+        "thinking-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "possibly",
+      "issues": [
+        "possibly-adv-1: example is draft",
+        "possibly-adv-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "trend",
+      "issues": [
+        "trend-n-1: example is draft",
+        "trend-n-2: example is draft",
+        "trend-n-3: example is draft",
+        "trend-n-4: example is draft",
+        "trend-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "visitor",
+      "issues": [
+        "visitor-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "loan",
+      "issues": [
+        "loan-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "currently",
+      "issues": [
+        "currently-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "comfortable",
+      "issues": [
+        "comfortable-adj-1: example is draft",
+        "comfortable-adj-2: example is draft",
+        "comfortable-adj-3: example is draft",
+        "comfortable-adj-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "investor",
+      "issues": [
+        "investor-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "profit",
+      "issues": [
+        "profit-n-1: example is draft",
+        "profit-v-1: example is draft",
+        "profit-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "angry",
+      "issues": [
+        "angry-adj-1: example is draft",
+        "angry-adj-2: example is draft",
+        "angry-adj-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "crew",
+      "issues": [
+        "crew-n-1: example is draft",
+        "crew-n-2: example is draft",
+        "crew-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "accident",
+      "issues": [
+        "accident-n-1: example is draft",
+        "accident-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "meal",
+      "issues": [
+        "meal-n-1: example is draft",
+        "meal-n-2: example is draft",
+        "meal-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "hearing",
+      "issues": [
+        "hearing-n-1: example is draft",
+        "hearing-n-2: example is draft",
+        "hearing-n-3: example is draft",
+        "hearing-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "traffic",
+      "issues": [
+        "traffic-n-1: example is draft",
+        "traffic-n-2: example is draft",
+        "traffic-n-3: example is draft",
+        "traffic-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "muscle",
+      "issues": [
+        "muscle-n-1: example is draft",
+        "muscle-n-2: example is draft",
+        "muscle-n-3: example is draft",
+        "muscle-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "notion",
+      "issues": [
+        "notion-n-1: example is draft",
+        "notion-n-2: example is draft",
+        "notion-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "capture",
+      "issues": [
+        "capture-n-1: example is draft",
+        "capture-n-2: example is draft",
+        "capture-n-3: example is draft",
+        "capture-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "prefer",
+      "issues": [
+        "prefer-v-1: example is draft",
+        "prefer-v-2: example is draft",
+        "prefer-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "chest",
+      "issues": [
+        "chest-n-1: example is draft",
+        "chest-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "japanese",
+      "issues": [
+        "japanese-n-1: example is draft",
+        "japanese-n-2: example is draft",
+        "japanese-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "truly",
+      "issues": [
+        "truly-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "thick",
+      "issues": [
+        "thick-adj-1: example is draft",
+        "thick-adj-2: example is draft",
+        "thick-adj-3: example is draft",
+        "thick-adj-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "cash",
+      "issues": [
+        "cash-n-1: example is draft",
+        "cash-n-2: example is draft",
+        "cash-n-3: example is draft",
+        "cash-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "museum",
+      "issues": [
+        "museum-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "beauty",
+      "issues": [
+        "beauty-n-1: example is draft",
+        "beauty-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "emergency",
+      "issues": [
+        "emergency-n-1: example is draft",
+        "emergency-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "unique",
+      "issues": [
+        "unique-adj-1: example is draft",
+        "unique-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "internal",
+      "issues": [
+        "internal-adj-1: example is draft",
+        "internal-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "ethnic",
+      "issues": [
+        "ethnic-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "link",
+      "issues": [
+        "link-n-1: example is draft",
+        "link-n-2: example is draft",
+        "link-n-3: example is draft",
+        "link-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "stress",
+      "issues": [
+        "stress-n-1: example is draft",
+        "stress-n-2: example is draft",
+        "stress-n-3: example is draft",
+        "stress-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "content",
+      "issues": [
+        "content-n-1: example is draft",
+        "content-n-2: example is draft",
+        "content-n-3: example is draft",
+        "content-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "select",
+      "issues": [
+        "select-v-1: example is draft",
+        "select-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "root",
+      "issues": [
+        "root-n-1: example is draft",
+        "root-n-2: example is draft",
+        "root-n-3: example is draft",
+        "root-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "nose",
+      "issues": [
+        "nose-n-1: example is draft",
+        "nose-n-2: example is draft",
+        "nose-n-3: example is draft",
+        "nose-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "declare",
+      "issues": [
+        "declare-v-1: example is draft",
+        "declare-v-2: example is draft",
+        "declare-v-3: example is draft",
+        "declare-v-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "appreciate",
+      "issues": [
+        "appreciate-v-1: example is draft",
+        "appreciate-v-2: example is draft",
+        "appreciate-v-3: example is draft",
+        "appreciate-v-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "actual",
+      "issues": [
+        "actual-adj-1: example is draft",
+        "actual-adj-2: example is draft",
+        "actual-adj-3: example is draft",
+        "actual-adj-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "bottle",
+      "issues": [
+        "bottle-n-1: example is draft",
+        "bottle-n-2: example is draft",
+        "bottle-n-3: example is draft",
+        "bottle-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "hardly",
+      "issues": [
+        "hardly-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "setting",
+      "issues": [
+        "setting-n-1: example is draft",
+        "setting-n-2: example is draft",
+        "setting-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "launch",
+      "issues": [
+        "launch-n-1: example is draft",
+        "launch-v-1: example is draft",
+        "launch-v-2: example is draft",
+        "launch-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "file",
+      "issues": [
+        "file-n-1: example is draft",
+        "file-n-2: example is draft",
+        "file-n-3: example is draft",
+        "file-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "sick",
+      "issues": [
+        "sick-adj-1: example is draft",
+        "sick-adj-2: example is draft",
+        "sick-adj-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "outcome",
+      "issues": [
+        "outcome-n-1: example is draft",
+        "outcome-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "ad",
+      "issues": [
+        "ad-n-1: example is draft",
+        "ad-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "defend",
+      "issues": [
+        "defend-v-1: example is draft",
+        "defend-v-2: example is draft",
+        "defend-v-3: example is draft",
+        "defend-v-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "duty",
+      "issues": [
+        "duty-n-1: example is draft",
+        "duty-n-2: example is draft",
+        "duty-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "sheet",
+      "issues": [
+        "sheet-n-1: example is draft",
+        "sheet-n-2: example is draft",
+        "sheet-n-3: example is draft",
+        "sheet-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "ensure",
+      "issues": [
+        "ensure-v-1: example is draft",
+        "ensure-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "ought",
+      "issues": [
+        "ought-modal-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "extremely",
+      "issues": [
+        "extremely-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "catholic",
+      "issues": [
+        "catholic-n-1: example is draft",
+        "catholic-adj-1: example is draft",
+        "catholic-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "extent",
+      "issues": [
+        "extent-n-1: example is draft",
+        "extent-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "mix",
+      "issues": [
+        "mix-n-1: example is draft",
+        "mix-n-2: example is draft",
+        "mix-n-3: example is draft",
+        "mix-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "component",
+      "issues": [
+        "component-n-1: example is draft",
+        "component-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "slow",
+      "issues": [
+        "slow-adj-1: example is draft",
+        "slow-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "contrast",
+      "issues": [
+        "contrast-n-1: example is draft",
+        "contrast-n-2: example is draft",
+        "contrast-n-3: example is draft",
+        "contrast-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "zone",
+      "issues": [
+        "zone-n-1: example is draft",
+        "zone-n-2: example is draft",
+        "zone-n-3: example is draft",
+        "zone-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "wake",
+      "issues": [
+        "wake-v-1: example is draft",
+        "wake-v-2: example is draft",
+        "wake-n-1: example is draft",
+        "wake-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "airport",
+      "issues": [
+        "airport-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "ourselves",
+      "issues": [
+        "ourselves-pron-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "brown",
+      "issues": [
+        "brown-n-1: example is draft",
+        "brown-n-2: example is draft",
+        "brown-n-3: example is draft",
+        "brown-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "shirt",
+      "issues": [
+        "shirt-n-1: example is draft",
+        "shirt-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "pilot",
+      "issues": [
+        "pilot-n-1: example is draft",
+        "pilot-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "warn",
+      "issues": [
+        "warn-v-1: example is draft",
+        "warn-v-2: example is draft",
+        "warn-v-3: example is draft",
+        "warn-v-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "ultimately",
+      "issues": [
+        "ultimately-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "cat",
+      "issues": [
+        "cat-n-1: example is draft",
+        "cat-n-2: example is draft",
+        "cat-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "contribution",
+      "issues": [
+        "contribution-n-1: example is draft",
+        "contribution-n-2: example is draft",
+        "contribution-n-3: example is draft",
+        "contribution-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "capacity",
+      "issues": [
+        "capacity-n-1: example is draft",
+        "capacity-n-2: example is draft",
+        "capacity-n-3: example is draft",
+        "capacity-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "estate",
+      "issues": [
+        "estate-n-1: example is draft",
+        "estate-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "guide",
+      "issues": [
+        "guide-n-1: example is draft",
+        "guide-n-2: example is draft",
+        "guide-v-1: example is draft",
+        "guide-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "circumstance",
+      "issues": [
+        "circumstance-n-1: example is draft",
+        "circumstance-n-2: example is draft",
+        "circumstance-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "snow",
+      "issues": [
+        "snow-n-1: example is draft",
+        "snow-n-2: example is draft",
+        "snow-n-3: example is draft",
+        "snow-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "english",
+      "issues": [
+        "english-n-1: example is draft",
+        "english-n-2: example is draft",
+        "english-n-3: example is draft",
+        "english-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "politician",
+      "issues": [
+        "politician-n-1: example is draft",
+        "politician-n-2: example is draft",
+        "politician-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "steal",
+      "issues": [
+        "steal-v-1: example is draft",
+        "steal-v-2: example is draft",
+        "steal-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "pursue",
+      "issues": [
+        "pursue-v-1: example is draft",
+        "pursue-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "slip",
+      "issues": [
+        "slip-n-1: example is draft",
+        "slip-n-2: example is draft",
+        "slip-n-3: example is draft",
+        "slip-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "percentage",
+      "issues": [
+        "percentage-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "meat",
+      "issues": [
+        "meat-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "funny",
+      "issues": [
+        "funny-adj-1: example is draft",
+        "funny-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "neither",
+      "issues": [
+        "neither-adj-1: example is draft",
+        "neither-pron-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "soil",
+      "issues": [
+        "soil-n-1: example is draft",
+        "soil-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "aids",
+      "issues": [
+        "aids-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "surgery",
+      "issues": [
+        "surgery-n-1: example is draft",
+        "surgery-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "correct",
+      "issues": [
+        "correct-adj-1: example is draft",
+        "correct-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "jew",
+      "issues": [
+        "jew-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "jewish",
+      "issues": [
+        "jewish-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "due",
+      "issues": [
+        "due-n-1: example is draft",
+        "due-n-2: example is draft",
+        "due-adj-1: example is draft",
+        "due-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "blame",
+      "issues": [
+        "blame-n-1: example is draft",
+        "blame-v-1: example is draft",
+        "blame-v-2: example is draft",
+        "blame-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "estimate",
+      "issues": [
+        "estimate-n-1: example is draft",
+        "estimate-n-2: example is draft",
+        "estimate-n-3: example is draft",
+        "estimate-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "basketball",
+      "issues": [
+        "basketball-n-1: example is draft",
+        "basketball-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "hill",
+      "issues": [
+        "hill-n-1: example is draft",
+        "hill-n-2: example is draft",
+        "hill-n-3: example is draft",
+        "hill-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "golf",
+      "issues": [
+        "golf-n-1: example is draft",
+        "golf-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "investigate",
+      "issues": [
+        "investigate-v-1: example is draft",
+        "investigate-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "crazy",
+      "issues": [
+        "crazy-adj-1: example is draft",
+        "crazy-adj-2: example is draft",
+        "crazy-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "significantly",
+      "issues": [
+        "significantly-adv-1: example is draft",
+        "significantly-adv-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "chain",
+      "issues": [
+        "chain-n-1: example is draft",
+        "chain-n-2: example is draft",
+        "chain-n-3: example is draft",
+        "chain-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "branch",
+      "issues": [
+        "branch-n-1: example is draft",
+        "branch-n-2: example is draft",
+        "branch-n-3: example is draft",
+        "branch-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "combination",
+      "issues": [
+        "combination-n-1: example is draft",
+        "combination-n-2: example is draft",
+        "combination-n-3: example is draft",
+        "combination-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "frequently",
+      "issues": [
+        "frequently-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "governor",
+      "issues": [
+        "governor-n-1: example is draft",
+        "governor-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "relief",
+      "issues": [
+        "relief-n-1: example is draft",
+        "relief-n-2: example is draft",
+        "relief-n-3: example is draft",
+        "relief-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "user",
+      "issues": [
+        "user-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "dad",
+      "issues": [
+        "dad-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "kick",
+      "issues": [
+        "kick-n-1: example is draft",
+        "kick-n-2: example is draft",
+        "kick-n-3: example is draft",
+        "kick-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "ancient",
+      "issues": [
+        "ancient-n-1: example is draft",
+        "ancient-n-2: example is draft",
+        "ancient-adj-1: example is draft",
+        "ancient-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "manner",
+      "issues": [
+        "manner-n-1: example is draft",
+        "manner-n-2: example is draft",
+        "manner-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "rating",
+      "issues": [
+        "rating-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "silence",
+      "issues": [
+        "silence-n-1: example is draft",
+        "silence-n-2: example is draft",
+        "silence-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "golden",
+      "issues": [
+        "golden-adj-1: example is draft",
+        "golden-adj-2: example is draft",
+        "golden-adj-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "motion",
+      "issues": [
+        "motion-n-1: example is draft",
+        "motion-n-2: example is draft",
+        "motion-n-3: example is draft",
+        "motion-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "german",
+      "issues": [
+        "german-n-1: example is draft",
+        "german-n-2: example is draft",
+        "german-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "gender",
+      "issues": [
+        "gender-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "solve",
+      "issues": [
+        "solve-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "fee",
+      "issues": [
+        "fee-n-1: example is draft",
+        "fee-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "landscape",
+      "issues": [
+        "landscape-n-1: example is draft",
+        "landscape-n-2: example is draft",
+        "landscape-n-3: example is draft",
+        "landscape-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "used",
+      "issues": [
+        "used-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "bowl",
+      "issues": [
+        "bowl-n-1: example is draft",
+        "bowl-n-2: example is draft",
+        "bowl-n-3: example is draft",
+        "bowl-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "equal",
+      "issues": [
+        "equal-adj-1: example is draft",
+        "equal-v-1: example is draft",
+        "equal-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "frame",
+      "issues": [
+        "frame-n-1: example is draft",
+        "frame-n-2: example is draft",
+        "frame-n-3: example is draft",
+        "frame-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "forth",
+      "issues": [
+        "forth-adv-1: example is draft",
+        "forth-adv-2: example is draft",
+        "forth-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "typical",
+      "issues": [
+        "typical-adj-1: example is draft",
+        "typical-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "except",
+      "issues": [
+        "except-prep-1: example is draft",
+        "except-v-1: example is draft",
+        "except-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "conservative",
+      "issues": [
+        "conservative-n-1: example is draft",
+        "conservative-n-2: example is draft",
+        "conservative-adj-1: example is draft",
+        "conservative-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "eliminate",
+      "issues": [
+        "eliminate-v-1: example is draft",
+        "eliminate-v-2: example is draft",
+        "eliminate-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "hall",
+      "issues": [
+        "hall-n-1: example is draft",
+        "hall-n-2: example is draft",
+        "hall-n-3: example is draft",
+        "hall-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "host",
+      "issues": [
+        "host-n-1: example is draft",
+        "host-n-2: example is draft",
+        "host-n-3: example is draft",
+        "host-n-4: example is draft",
+        "host-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "trust",
+      "issues": [
+        "trust-n-1: example is draft",
+        "trust-n-2: example is draft",
+        "trust-n-3: example is draft",
+        "trust-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "ocean",
+      "issues": [
+        "ocean-n-1: example is draft",
+        "ocean-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "row",
+      "issues": [
+        "row-n-1: example is draft",
+        "row-n-2: example is draft",
+        "row-n-3: example is draft",
+        "row-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "producer",
+      "issues": [
+        "producer-n-1: example is draft",
+        "producer-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "afford",
+      "issues": [
+        "afford-v-1: example is draft",
+        "afford-v-2: example is draft",
+        "afford-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "meanwhile",
+      "issues": [
+        "meanwhile-adv-1: example is draft",
+        "meanwhile-adv-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "regime",
+      "issues": [
+        "regime-n-1: example is draft",
+        "regime-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "division",
+      "issues": [
+        "division-n-1: example is draft",
+        "division-n-2: example is draft",
+        "division-n-3: example is draft",
+        "division-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "fix",
+      "issues": [
+        "fix-v-1: example is draft",
+        "fix-v-2: example is draft",
+        "fix-v-3: example is draft",
+        "fix-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "confirm",
+      "issues": [
+        "confirm-v-1: example is draft",
+        "confirm-v-2: example is draft",
+        "confirm-v-3: example is draft",
+        "confirm-v-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "appeal",
+      "issues": [
+        "appeal-n-1: example is draft",
+        "appeal-n-2: example is draft",
+        "appeal-v-1: example is draft",
+        "appeal-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "mirror",
+      "issues": [
+        "mirror-n-1: example is draft",
+        "mirror-n-2: example is draft",
+        "mirror-v-1: example is draft",
+        "mirror-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "tooth",
+      "issues": [
+        "tooth-n-1: example is draft",
+        "tooth-n-2: example is draft",
+        "tooth-n-3: example is draft",
+        "tooth-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "length",
+      "issues": [
+        "length-n-1: example is draft",
+        "length-n-2: example is draft",
+        "length-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "smart",
+      "issues": [
+        "smart-n-1: example is draft",
+        "smart-adj-1: example is draft",
+        "smart-adj-2: example is draft",
+        "smart-adj-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "rely",
+      "issues": [
+        "rely-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "entirely",
+      "issues": [
+        "entirely-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "association",
+      "issues": [
+        "association-n-1: example is draft",
+        "association-n-2: example is draft",
+        "association-n-3: example is draft",
+        "association-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "complain",
+      "issues": [
+        "complain-v-1: example is draft",
+        "complain-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "topic",
+      "issues": [
+        "topic-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "variable",
+      "issues": [
+        "variable-n-1: example is draft",
+        "variable-n-2: example is draft",
+        "variable-n-3: example is draft",
+        "variable-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "telephone",
+      "issues": [
+        "telephone-n-1: example is draft",
+        "telephone-n-2: example is draft",
+        "telephone-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "perception",
+      "issues": [
+        "perception-n-1: example is draft",
+        "perception-n-2: example is draft",
+        "perception-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "attract",
+      "issues": [
+        "attract-v-1: example is draft",
+        "attract-v-2: example is draft",
+        "attract-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "secret",
+      "issues": [
+        "secret-n-1: example is draft",
+        "secret-n-2: example is draft",
+        "secret-adj-1: example is draft",
+        "secret-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "bedroom",
+      "issues": [
+        "bedroom-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "confidence",
+      "issues": [
+        "confidence-n-1: example is draft",
+        "confidence-n-2: example is draft",
+        "confidence-n-3: example is draft",
+        "confidence-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "debt",
+      "issues": [
+        "debt-n-1: example is draft",
+        "debt-n-2: example is draft",
+        "debt-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "rare",
+      "issues": [
+        "rare-adj-1: example is draft",
+        "rare-adj-2: example is draft",
+        "rare-adj-3: example is draft",
+        "rare-adj-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "tank",
+      "issues": [
+        "tank-n-1: example is draft",
+        "tank-n-2: example is draft",
+        "tank-n-3: example is draft",
+        "tank-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "nurse",
+      "issues": [
+        "nurse-n-1: example is draft",
+        "nurse-v-1: example is draft",
+        "nurse-v-2: example is draft",
+        "nurse-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "opposition",
+      "issues": [
+        "opposition-n-1: example is draft",
+        "opposition-n-2: example is draft",
+        "opposition-n-3: example is draft",
+        "opposition-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "coverage",
+      "issues": [
+        "coverage-n-1: example is draft",
+        "coverage-n-2: example is draft",
+        "coverage-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "aside",
+      "issues": [
+        "aside-n-1: example is draft",
+        "aside-adv-1: example is draft",
+        "aside-adv-2: example is draft",
+        "aside-adv-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "anywhere",
+      "issues": [
+        "anywhere-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "bond",
+      "issues": [
+        "bond-n-1: example is draft",
+        "bond-n-2: example is draft",
+        "bond-n-3: example is draft",
+        "bond-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "pleasure",
+      "issues": [
+        "pleasure-n-1: example is draft",
+        "pleasure-n-2: example is draft",
+        "pleasure-n-3: example is draft",
+        "pleasure-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "master",
+      "issues": [
+        "master-n-1: example is draft",
+        "master-n-2: example is draft",
+        "master-n-3: example is draft",
+        "master-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "era",
+      "issues": [
+        "era-n-1: example is draft",
+        "era-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "requirement",
+      "issues": [
+        "requirement-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "fun",
+      "issues": [
+        "fun-n-1: example is draft",
+        "fun-n-2: example is draft",
+        "fun-n-3: example is draft",
+        "fun-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "wing",
+      "issues": [
+        "wing-n-1: example is draft",
+        "wing-n-2: example is draft",
+        "wing-n-3: example is draft",
+        "wing-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "expectation",
+      "issues": [
+        "expectation-n-1: example is draft",
+        "expectation-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "separate",
+      "issues": [
+        "separate-n-1: example is draft",
+        "separate-v-1: example is draft",
+        "separate-v-2: example is draft",
+        "separate-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "somewhat",
+      "issues": [
+        "somewhat-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "pour",
+      "issues": [
+        "pour-v-1: example is draft",
+        "pour-v-2: example is draft",
+        "pour-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "stir",
+      "issues": [
+        "stir-n-1: example is draft",
+        "stir-n-2: example is draft",
+        "stir-v-1: example is draft",
+        "stir-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "judgment",
+      "issues": [
+        "judgment-n-1: example is draft",
+        "judgment-n-2: example is draft",
+        "judgment-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "beer",
+      "issues": [
+        "beer-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "reference",
+      "issues": [
+        "reference-n-1: example is draft",
+        "reference-n-2: example is draft",
+        "reference-n-3: example is draft",
+        "reference-n-4: example is draft",
+        "reference-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "tear",
+      "issues": [
+        "tear-n-1: example is draft",
+        "tear-v-1: example is draft",
+        "tear-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "doubt",
+      "issues": [
+        "doubt-n-1: example is draft",
+        "doubt-v-1: example is draft",
+        "doubt-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "grant",
+      "issues": [
+        "grant-n-1: example is draft",
+        "grant-v-1: example is draft",
+        "grant-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "seriously",
+      "issues": [
+        "seriously-adv-1: example is draft",
+        "seriously-adv-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "minister",
+      "issues": [
+        "minister-n-1: example is draft",
+        "minister-n-2: example is draft",
+        "minister-n-3: example is draft",
+        "minister-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "totally",
+      "issues": [
+        "totally-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "hero",
+      "issues": [
+        "hero-n-1: example is draft",
+        "hero-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "industrial",
+      "issues": [
+        "industrial-adj-1: example is draft",
+        "industrial-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "cloud",
+      "issues": [
+        "cloud-n-1: example is draft",
+        "cloud-n-2: example is draft",
+        "cloud-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "stretch",
+      "issues": [
+        "stretch-v-1: example is draft",
+        "stretch-v-2: example is draft",
+        "stretch-n-1: example is draft",
+        "stretch-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "winner",
+      "issues": [
+        "winner-n-1: example is draft",
+        "winner-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "volume",
+      "issues": [
+        "volume-n-1: example is draft",
+        "volume-n-2: example is draft",
+        "volume-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "seed",
+      "issues": [
+        "seed-n-1: example is draft",
+        "seed-v-1: example is draft",
+        "seed-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "surprised",
+      "issues": [
+        "surprised-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "fashion",
+      "issues": [
+        "fashion-n-1: example is draft",
+        "fashion-n-2: example is draft",
+        "fashion-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "pepper",
+      "issues": [
+        "pepper-n-1: example is draft",
+        "pepper-n-2: example is draft",
+        "pepper-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "busy",
+      "issues": [
+        "busy-adj-1: example is draft",
+        "busy-adj-2: example is draft",
+        "busy-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "intervention",
+      "issues": [
+        "intervention-n-1: example is draft",
+        "intervention-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "copy",
+      "issues": [
+        "copy-n-1: example is draft",
+        "copy-n-2: example is draft",
+        "copy-v-1: example is draft",
+        "copy-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "tip",
+      "issues": [
+        "tip-n-1: example is draft",
+        "tip-n-2: example is draft",
+        "tip-n-3: example is draft",
+        "tip-v-1: example is draft",
+        "tip-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "cheap",
+      "issues": [
+        "cheap-adj-1: example is draft",
+        "cheap-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "aim",
+      "issues": [
+        "aim-n-1: example is draft",
+        "aim-n-2: example is draft",
+        "aim-v-1: example is draft",
+        "aim-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "cite",
+      "issues": [
+        "cite-v-1: example is draft",
+        "cite-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "welfare",
+      "issues": [
+        "welfare-n-1: example is draft",
+        "welfare-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "vegetable",
+      "issues": [
+        "vegetable-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "dish",
+      "issues": [
+        "dish-n-1: example is draft",
+        "dish-n-2: example is draft",
+        "dish-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "improvement",
+      "issues": [
+        "improvement-n-1: example is draft",
+        "improvement-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "beach",
+      "issues": [
+        "beach-n-1: example is draft",
+        "beach-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "everywhere",
+      "issues": [
+        "everywhere-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "gray",
+      "issues": [
+        "gray-adj-1: example is draft",
+        "gray-n-1: example is draft",
+        "gray-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "opening",
+      "issues": [
+        "opening-n-1: example is draft",
+        "opening-n-2: example is draft",
+        "opening-n-3: example is draft",
+        "opening-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "overall",
+      "issues": [
+        "overall-adj-1: example is draft",
+        "overall-adv-1: example is draft",
+        "overall-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "divide",
+      "issues": [
+        "divide-v-1: example is draft",
+        "divide-v-2: example is draft",
+        "divide-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "initial",
+      "issues": [
+        "initial-adj-1: example is draft",
+        "initial-n-1: example is draft",
+        "initial-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "terrible",
+      "issues": [
+        "terrible-adj-1: example is draft",
+        "terrible-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "oppose",
+      "issues": [
+        "oppose-v-1: example is draft",
+        "oppose-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "route",
+      "issues": [
+        "route-n-1: example is draft",
+        "route-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "contemporary",
+      "issues": [
+        "contemporary-adj-1: example is draft",
+        "contemporary-adj-2: example is draft",
+        "contemporary-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "multiple",
+      "issues": [
+        "multiple-adj-1: example is draft",
+        "multiple-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "essential",
+      "issues": [
+        "essential-adj-1: example is draft",
+        "essential-adj-2: example is draft",
+        "essential-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "lake",
+      "issues": [
+        "lake-n-1: example is draft",
+        "lake-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "league",
+      "issues": [
+        "league-n-1: example is draft",
+        "league-n-2: example is draft",
+        "league-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "careful",
+      "issues": [
+        "careful-adj-1: example is draft",
+        "careful-adj-2: example is draft",
+        "careful-adj-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "criminal",
+      "issues": [
+        "criminal-n-1: example is draft",
+        "criminal-adj-1: example is draft",
+        "criminal-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "core",
+      "issues": [
+        "core-n-1: example is draft",
+        "core-n-2: example is draft",
+        "core-n-3: example is draft",
+        "core-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "upper",
+      "issues": [
+        "upper-adj-1: example is draft",
+        "upper-adj-2: example is draft",
+        "upper-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "rush",
+      "issues": [
+        "rush-n-1: example is draft",
+        "rush-n-2: example is draft",
+        "rush-v-1: example is draft",
+        "rush-v-2: example is draft",
+        "rush-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "necessarily",
+      "issues": [
+        "necessarily-adv-1: example is draft",
+        "necessarily-adv-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "specifically",
+      "issues": [
+        "specifically-adv-1: example is draft",
+        "specifically-adv-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "tired",
+      "issues": [
+        "tired-adj-1: example is draft",
+        "tired-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "employ",
+      "issues": [
+        "employ-n-1: example is draft",
+        "employ-v-1: example is draft",
+        "employ-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "holiday",
+      "issues": [
+        "holiday-n-1: example is draft",
+        "holiday-n-2: example is draft",
+        "holiday-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "vast",
+      "issues": [
+        "vast-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "fewer",
+      "issues": [
+        "fewer-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "household",
+      "issues": [
+        "household-n-1: example is draft",
+        "household-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "resolution",
+      "issues": [
+        "resolution-n-1: example is draft",
+        "resolution-n-2: example is draft",
+        "resolution-n-3: example is draft",
+        "resolution-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "abortion",
+      "issues": [
+        "abortion-n-1: example is draft",
+        "abortion-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "witness",
+      "issues": [
+        "witness-n-1: example is draft",
+        "witness-n-2: example is draft",
+        "witness-v-1: example is draft",
+        "witness-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "apart",
+      "issues": [
+        "apart-adv-1: example is draft",
+        "apart-adv-2: example is draft",
+        "apart-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "match",
+      "issues": [
+        "match-n-1: example is draft",
+        "match-n-2: example is draft",
+        "match-n-3: example is draft",
+        "match-v-1: example is draft",
+        "match-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "barely",
+      "issues": [
+        "barely-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "sector",
+      "issues": [
+        "sector-n-1: example is draft",
+        "sector-n-2: example is draft",
+        "sector-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "emphasize",
+      "issues": [
+        "emphasize-v-1: example is draft",
+        "emphasize-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "representative",
+      "issues": [
+        "representative-n-1: example is draft",
+        "representative-adj-1: example is draft",
+        "representative-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "beneath",
+      "issues": [
+        "beneath-prep-1: example is draft",
+        "beneath-prep-2: example is draft",
+        "beneath-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "incident",
+      "issues": [
+        "incident-n-1: example is draft",
+        "incident-n-2: example is draft",
+        "incident-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "beside",
+      "issues": [
+        "beside-prep-1: example is draft",
+        "beside-prep-2: example is draft",
+        "beside-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "limited",
+      "issues": [
+        "limited-adj-1: example is draft",
+        "limited-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "proud",
+      "issues": [
+        "proud-adj-1: example is draft",
+        "proud-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "flow",
+      "issues": [
+        "flow-n-1: example is draft",
+        "flow-n-2: example is draft",
+        "flow-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "faculty",
+      "issues": [
+        "faculty-n-1: example is draft",
+        "faculty-n-2: example is draft",
+        "faculty-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "waste",
+      "issues": [
+        "waste-n-1: example is draft",
+        "waste-n-2: example is draft",
+        "waste-v-1: example is draft",
+        "waste-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "increased",
+      "issues": [
+        "increased-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "merely",
+      "issues": [
+        "merely-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "mass",
+      "issues": [
+        "mass-n-1: example is draft",
+        "mass-n-2: example is draft",
+        "mass-n-3: example is draft",
+        "mass-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "experiment",
+      "issues": [
+        "experiment-n-1: example is draft",
+        "experiment-n-2: example is draft",
+        "experiment-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "definitely",
+      "issues": [
+        "definitely-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "bomb",
+      "issues": [
+        "bomb-n-1: example is draft",
+        "bomb-v-1: example is draft",
+        "bomb-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "liberal",
+      "issues": [
+        "liberal-n-1: example is draft",
+        "liberal-adj-1: example is draft",
+        "liberal-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "enormous",
+      "issues": [
+        "enormous-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "tone",
+      "issues": [
+        "tone-n-1: example is draft",
+        "tone-n-2: example is draft",
+        "tone-n-3: example is draft",
+        "tone-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "massive",
+      "issues": [
+        "massive-adj-1: example is draft",
+        "massive-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "engineer",
+      "issues": [
+        "engineer-n-1: example is draft",
+        "engineer-n-2: example is draft",
+        "engineer-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "wheel",
+      "issues": [
+        "wheel-n-1: example is draft",
+        "wheel-n-2: example is draft",
+        "wheel-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "decline",
+      "issues": [
+        "decline-n-1: example is draft",
+        "decline-v-1: example is draft",
+        "decline-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "invest",
+      "issues": [
+        "invest-v-1: example is draft",
+        "invest-v-2: example is draft",
+        "invest-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "cable",
+      "issues": [
+        "cable-n-1: example is draft",
+        "cable-n-2: example is draft",
+        "cable-n-3: example is draft",
+        "cable-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "towards",
+      "issues": [
+        "towards-prep-1: example is draft",
+        "towards-prep-2: example is draft",
+        "towards-prep-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "expose",
+      "issues": [
+        "expose-v-1: example is draft",
+        "expose-v-2: example is draft",
+        "expose-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "rural",
+      "issues": [
+        "rural-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "narrow",
+      "issues": [
+        "narrow-adj-1: example is draft",
+        "narrow-adj-2: example is draft",
+        "narrow-v-1: example is draft",
+        "narrow-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "cream",
+      "issues": [
+        "cream-n-1: example is draft",
+        "cream-n-2: example is draft",
+        "cream-n-3: example is draft",
+        "cream-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "secretary",
+      "issues": [
+        "secretary-n-1: example is draft",
+        "secretary-n-2: example is draft",
+        "secretary-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "gate",
+      "issues": [
+        "gate-n-1: example is draft",
+        "gate-n-2: example is draft",
+        "gate-n-3: example is draft",
+        "gate-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "solid",
+      "issues": [
+        "solid-n-1: example is draft",
+        "solid-adj-1: example is draft",
+        "solid-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "noise",
+      "issues": [
+        "noise-n-1: example is draft",
+        "noise-n-2: example is draft",
+        "noise-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "typically",
+      "issues": [
+        "typically-adv-1: example is draft",
+        "typically-adv-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "grass",
+      "issues": [
+        "grass-n-1: example is draft",
+        "grass-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "hat",
+      "issues": [
+        "hat-n-1: example is draft",
+        "hat-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "unfortunately",
+      "issues": [
+        "unfortunately-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "legislation",
+      "issues": [
+        "legislation-n-1: example is draft",
+        "legislation-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "succeed",
+      "issues": [
+        "succeed-v-1: example is draft",
+        "succeed-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "celebrate",
+      "issues": [
+        "celebrate-v-1: example is draft",
+        "celebrate-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "achievement",
+      "issues": [
+        "achievement-n-1: example is draft",
+        "achievement-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "fishing",
+      "issues": [
+        "fishing-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "accuse",
+      "issues": [
+        "accuse-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "useful",
+      "issues": [
+        "useful-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "reject",
+      "issues": [
+        "reject-v-1: example is draft",
+        "reject-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "talent",
+      "issues": [
+        "talent-n-1: example is draft",
+        "talent-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "taste",
+      "issues": [
+        "taste-n-1: example is draft",
+        "taste-n-2: example is draft",
+        "taste-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "characteristic",
+      "issues": [
+        "characteristic-n-1: example is draft",
+        "characteristic-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "milk",
+      "issues": [
+        "milk-n-1: example is draft",
+        "milk-v-1: example is draft",
+        "milk-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "escape",
+      "issues": [
+        "escape-v-1: example is draft",
+        "escape-v-2: example is draft",
+        "escape-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "cast",
+      "issues": [
+        "cast-v-1: example is draft",
+        "cast-v-2: example is draft",
+        "cast-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "sentence",
+      "issues": [
+        "sentence-n-1: example is draft",
+        "sentence-n-2: example is draft",
+        "sentence-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "unusual",
+      "issues": [
+        "unusual-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "closely",
+      "issues": [
+        "closely-adv-1: example is draft",
+        "closely-adv-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "convince",
+      "issues": [
+        "convince-v-1: example is draft",
+        "convince-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "height",
+      "issues": [
+        "height-n-1: example is draft",
+        "height-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "physician",
+      "issues": [
+        "physician-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "assess",
+      "issues": [
+        "assess-v-1: example is draft",
+        "assess-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "plenty",
+      "issues": [
+        "plenty-pron-1: example is draft",
+        "plenty-pron-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "virtually",
+      "issues": [
+        "virtually-adv-1: example is draft",
+        "virtually-adv-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "addition",
+      "issues": [
+        "addition-n-1: example is draft",
+        "addition-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "sharp",
+      "issues": [
+        "sharp-adj-1: example is draft",
+        "sharp-adj-2: example is draft",
+        "sharp-adj-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "creative",
+      "issues": [
+        "creative-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "lower",
+      "issues": [
+        "lower-v-1: example is draft",
+        "lower-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "approve",
+      "issues": [
+        "approve-v-1: example is draft",
+        "approve-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "explanation",
+      "issues": [
+        "explanation-n-1: example is draft",
+        "explanation-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "gay",
+      "issues": [
+        "gay-adj-1: example is draft",
+        "gay-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "honor",
+      "issues": [
+        "honor-n-1: example is draft",
+        "honor-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "proper",
+      "issues": [
+        "proper-adj-1: example is draft",
+        "proper-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "campus",
+      "issues": [
+        "campus-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "guilty",
+      "issues": [
+        "guilty-adj-1: example is draft",
+        "guilty-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "acquire",
+      "issues": [
+        "acquire-v-1: example is draft",
+        "acquire-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "technical",
+      "issues": [
+        "technical-adj-1: example is draft",
+        "technical-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "compete",
+      "issues": [
+        "compete-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "plus",
+      "issues": [
+        "plus-prep-1: example is draft",
+        "plus-conj-1: example is draft",
+        "plus-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "immigrant",
+      "issues": [
+        "immigrant-n-1: example is draft",
+        "immigrant-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "weak",
+      "issues": [
+        "weak-adj-1: example is draft",
+        "weak-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "illegal",
+      "issues": [
+        "illegal-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "hi",
+      "issues": [
+        "hi-int-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "alternative",
+      "issues": [
+        "alternative-n-1: example is draft",
+        "alternative-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "column",
+      "issues": [
+        "column-n-1: example is draft",
+        "column-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "interaction",
+      "issues": [
+        "interaction-n-1: example is draft",
+        "interaction-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "personality",
+      "issues": [
+        "personality-n-1: example is draft",
+        "personality-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "curriculum",
+      "issues": [
+        "curriculum-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "signal",
+      "issues": [
+        "signal-n-1: example is draft",
+        "signal-n-2: example is draft",
+        "signal-v-1: example is draft",
+        "signal-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "king",
+      "issues": [
+        "king-n-1: example is draft",
+        "king-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "passenger",
+      "issues": [
+        "passenger-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "assistance",
+      "issues": [
+        "assistance-n-1: example is draft",
+        "assistance-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "forever",
+      "issues": [
+        "forever-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "regard",
+      "issues": [
+        "regard-n-1: example is draft",
+        "regard-n-2: example is draft",
+        "regard-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "israeli",
+      "issues": [
+        "israeli-n-1: example is draft",
+        "israeli-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "twenty",
+      "issues": [
+        "twenty-num-1: example is draft",
+        "twenty-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "knock",
+      "issues": [
+        "knock-v-1: example is draft",
+        "knock-v-2: example is draft",
+        "knock-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "lab",
+      "issues": [
+        "lab-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "wrap",
+      "issues": [
+        "wrap-v-1: example is draft",
+        "wrap-n-1: example is draft",
+        "wrap-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "display",
+      "issues": [
+        "display-v-1: example is draft",
+        "display-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "criticism",
+      "issues": [
+        "criticism-n-1: example is draft",
+        "criticism-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "asset",
+      "issues": [
+        "asset-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "depression",
+      "issues": [
+        "depression-n-1: example is draft",
+        "depression-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "spiritual",
+      "issues": [
+        "spiritual-adj-1: example is draft",
+        "spiritual-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "musical",
+      "issues": [
+        "musical-adj-1: example is draft",
+        "musical-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "prayer",
+      "issues": [
+        "prayer-n-1: example is draft",
+        "prayer-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "journalist",
+      "issues": [
+        "journalist-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "suspect",
+      "issues": [
+        "suspect-v-1: example is draft",
+        "suspect-v-2: example is draft",
+        "suspect-n-1: example is draft",
+        "suspect-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "scholar",
+      "issues": [
+        "scholar-n-1: example is draft",
+        "scholar-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "warning",
+      "issues": [
+        "warning-n-1: example is draft",
+        "warning-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "climate",
+      "issues": [
+        "climate-n-1: example is draft",
+        "climate-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "cheese",
+      "issues": [
+        "cheese-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "observation",
+      "issues": [
+        "observation-n-1: example is draft",
+        "observation-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "payment",
+      "issues": [
+        "payment-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "childhood",
+      "issues": [
+        "childhood-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "sir",
+      "issues": [
+        "sir-n-1: example is draft",
+        "sir-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "permit",
+      "issues": [
+        "permit-v-1: example is draft",
+        "permit-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "definition",
+      "issues": [
+        "definition-n-1: example is draft",
+        "definition-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "cigarette",
+      "issues": [
+        "cigarette-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "priority",
+      "issues": [
+        "priority-n-1: example is draft",
+        "priority-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "bread",
+      "issues": [
+        "bread-n-1: example is draft",
+        "bread-n-2: example is draft",
+        "bread-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "creation",
+      "issues": [
+        "creation-n-1: example is draft",
+        "creation-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "graduate",
+      "issues": [
+        "graduate-v-1: example is draft",
+        "graduate-v-2: example is draft",
+        "graduate-n-1: example is draft",
+        "graduate-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "request",
+      "issues": [
+        "request-n-1: example is draft",
+        "request-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "emotion",
+      "issues": [
+        "emotion-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "scream",
+      "issues": [
+        "scream-v-1: example is draft",
+        "scream-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "dramatic",
+      "issues": [
+        "dramatic-adj-1: example is draft",
+        "dramatic-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "universe",
+      "issues": [
+        "universe-n-1: example is draft",
+        "universe-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "gap",
+      "issues": [
+        "gap-n-1: example is draft",
+        "gap-n-2: example is draft",
+        "gap-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "deeply",
+      "issues": [
+        "deeply-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "excellent",
+      "issues": [
+        "excellent-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "prosecutor",
+      "issues": [
+        "prosecutor-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "lucky",
+      "issues": [
+        "lucky-adj-1: example is draft",
+        "lucky-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "drag",
+      "issues": [
+        "drag-v-1: example is draft",
+        "drag-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "airline",
+      "issues": [
+        "airline-n-1: example is draft",
+        "airline-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "library",
+      "issues": [
+        "library-n-1: example is draft",
+        "library-n-2: example is draft",
+        "library-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "agenda",
+      "issues": [
+        "agenda-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "recover",
+      "issues": [
+        "recover-v-1: example is draft",
+        "recover-v-2: example is draft",
+        "recover-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "factory",
+      "issues": [
+        "factory-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "selection",
+      "issues": [
+        "selection-n-1: example is draft",
+        "selection-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "primarily",
+      "issues": [
+        "primarily-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "roof",
+      "issues": [
+        "roof-n-1: example is draft",
+        "roof-n-2: example is draft",
+        "roof-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "unable",
+      "issues": [
+        "unable-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "expense",
+      "issues": [
+        "expense-n-1: example is draft",
+        "expense-n-2: example is draft",
+        "expense-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "initiative",
+      "issues": [
+        "initiative-n-1: example is draft",
+        "initiative-n-2: example is draft",
+        "initiative-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "diet",
+      "issues": [
+        "diet-n-1: example is draft",
+        "diet-n-2: example is draft",
+        "diet-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "arrest",
+      "issues": [
+        "arrest-v-1: example is draft",
+        "arrest-v-2: example is draft",
+        "arrest-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "funding",
+      "issues": [
+        "funding-n-1: example is draft",
+        "funding-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "therapy",
+      "issues": [
+        "therapy-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "wash",
+      "issues": [
+        "wash-v-1: example is draft",
+        "wash-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "schedule",
+      "issues": [
+        "schedule-n-1: example is draft",
+        "schedule-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "sad",
+      "issues": [
+        "sad-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "brief",
+      "issues": [
+        "brief-adj-1: example is draft",
+        "brief-n-1: example is draft",
+        "brief-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "housing",
+      "issues": [
+        "housing-n-1: example is draft",
+        "housing-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "post",
+      "issues": [
+        "post-n-1: example is draft",
+        "post-n-2: example is draft",
+        "post-n-3: example is draft",
+        "post-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "purchase",
+      "issues": [
+        "purchase-n-1: example is draft",
+        "purchase-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "existing",
+      "issues": [
+        "existing-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "steel",
+      "issues": [
+        "steel-n-1: example is draft",
+        "steel-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "regarding",
+      "issues": [
+        "regarding-prep-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "shout",
+      "issues": [
+        "shout-v-1: example is draft",
+        "shout-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "remaining",
+      "issues": [
+        "remaining-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "visual",
+      "issues": [
+        "visual-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "fairly",
+      "issues": [
+        "fairly-adv-1: example is draft",
+        "fairly-adv-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "violent",
+      "issues": [
+        "violent-adj-1: example is draft",
+        "violent-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "chip",
+      "issues": [
+        "chip-n-1: example is draft",
+        "chip-n-2: example is draft",
+        "chip-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "silent",
+      "issues": [
+        "silent-adj-1: example is draft",
+        "silent-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "suppose",
+      "issues": [
+        "suppose-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "self",
+      "issues": [
+        "self-n-1: example is draft",
+        "self-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "bike",
+      "issues": [
+        "bike-n-1: example is draft",
+        "bike-n-2: example is draft",
+        "bike-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "tea",
+      "issues": [
+        "tea-n-1: example is draft",
+        "tea-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "perceive",
+      "issues": [
+        "perceive-v-1: example is draft",
+        "perceive-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "comparison",
+      "issues": [
+        "comparison-n-1: example is draft",
+        "comparison-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "settlement",
+      "issues": [
+        "settlement-n-1: example is draft",
+        "settlement-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "layer",
+      "issues": [
+        "layer-n-1: example is draft",
+        "layer-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "planning",
+      "issues": [
+        "planning-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "description",
+      "issues": [
+        "description-n-1: example is draft",
+        "description-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "slide",
+      "issues": [
+        "slide-n-1: example is draft",
+        "slide-n-2: example is draft",
+        "slide-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "widely",
+      "issues": [
+        "widely-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "wedding",
+      "issues": [
+        "wedding-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "inform",
+      "issues": [
+        "inform-v-1: example is draft",
+        "inform-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "portion",
+      "issues": [
+        "portion-n-1: example is draft",
+        "portion-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "territory",
+      "issues": [
+        "territory-n-1: example is draft",
+        "territory-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "immediate",
+      "issues": [
+        "immediate-adj-1: example is draft",
+        "immediate-adj-2: example is draft",
+        "immediate-adj-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "opponent",
+      "issues": [
+        "opponent-n-1: example is draft",
+        "opponent-n-2: example is draft",
+        "opponent-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "abandon",
+      "issues": [
+        "abandon-v-1: example is draft",
+        "abandon-v-2: example is draft",
+        "abandon-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "transform",
+      "issues": [
+        "transform-v-1: example is draft",
+        "transform-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "tension",
+      "issues": [
+        "tension-n-1: example is draft",
+        "tension-n-2: example is draft",
+        "tension-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "leading",
+      "issues": [
+        "leading-adj-1: example is draft",
+        "leading-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "bother",
+      "issues": [
+        "bother-v-1: example is draft",
+        "bother-v-2: example is draft",
+        "bother-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "consist",
+      "issues": [
+        "consist-v-1: example is draft",
+        "consist-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "alcohol",
+      "issues": [
+        "alcohol-n-1: example is draft",
+        "alcohol-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "enable",
+      "issues": [
+        "enable-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "saving",
+      "issues": [
+        "saving-n-1: example is draft",
+        "saving-n-2: example is draft",
+        "saving-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "bend",
+      "issues": [
+        "bend-v-1: example is draft",
+        "bend-v-2: example is draft",
+        "bend-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "desert",
+      "issues": [
+        "desert-n-1: example is draft",
+        "desert-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "shall",
+      "issues": [
+        "shall-modal-1: example is draft",
+        "shall-modal-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "error",
+      "issues": [
+        "error-n-1: example is draft",
+        "error-n-2: example is draft",
+        "error-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "cop",
+      "issues": [
+        "cop-n-1: example is draft",
+        "cop-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "arab",
+      "issues": [
+        "arab-n-1: example is draft",
+        "arab-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "double",
+      "issues": [
+        "double-adj-1: example is draft",
+        "double-n-1: example is draft",
+        "double-n-2: example is draft",
+        "double-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "spanish",
+      "issues": [
+        "spanish-n-1: example is draft",
+        "spanish-n-2: example is draft",
+        "spanish-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "sand",
+      "issues": [
+        "sand-n-1: example is draft",
+        "sand-v-1: example is draft",
+        "sand-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "print",
+      "issues": [
+        "print-v-1: example is draft",
+        "print-n-1: example is draft",
+        "print-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "preserve",
+      "issues": [
+        "preserve-v-1: example is draft",
+        "preserve-v-2: example is draft",
+        "preserve-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "ceo",
+      "issues": [
+        "ceo-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "passage",
+      "issues": [
+        "passage-n-1: example is draft",
+        "passage-n-2: example is draft",
+        "passage-n-3: example is draft",
+        "passage-n-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "formal",
+      "issues": [
+        "formal-adj-1: example is draft",
+        "formal-adj-2: example is draft",
+        "formal-adj-3: example is draft",
+        "formal-adj-4: example is draft"
+      ]
+    },
+    {
+      "lemma": "transition",
+      "issues": [
+        "transition-n-1: example is draft",
+        "transition-n-2: example is draft",
+        "transition-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "existence",
+      "issues": [
+        "existence-n-1: example is draft",
+        "existence-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "participation",
+      "issues": [
+        "participation-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "album",
+      "issues": [
+        "album-n-1: example is draft",
+        "album-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "arrange",
+      "issues": [
+        "arrange-v-1: example is draft",
+        "arrange-v-2: example is draft",
+        "arrange-v-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "atmosphere",
+      "issues": [
+        "atmosphere-n-1: example is draft",
+        "atmosphere-n-2: example is draft",
+        "atmosphere-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "joint",
+      "issues": [
+        "joint-n-1: example is draft",
+        "joint-n-2: example is draft",
+        "joint-n-3: example is draft",
+        "joint-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "reply",
+      "issues": [
+        "reply-n-1: example is draft",
+        "reply-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "cycle",
+      "issues": [
+        "cycle-n-1: example is draft",
+        "cycle-n-2: example is draft",
+        "cycle-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "lock",
+      "issues": [
+        "lock-n-1: example is draft",
+        "lock-n-2: example is draft",
+        "lock-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "opposite",
+      "issues": [
+        "opposite-adj-1: example is draft",
+        "opposite-prep-1: example is draft",
+        "opposite-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "deserve",
+      "issues": [
+        "deserve-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "consistent",
+      "issues": [
+        "consistent-adj-1: example is draft",
+        "consistent-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "resistance",
+      "issues": [
+        "resistance-n-1: example is draft",
+        "resistance-n-2: example is draft",
+        "resistance-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "discovery",
+      "issues": [
+        "discovery-n-1: example is draft",
+        "discovery-n-2: example is draft",
+        "discovery-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "exposure",
+      "issues": [
+        "exposure-n-1: example is draft",
+        "exposure-n-2: example is draft",
+        "exposure-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "pose",
+      "issues": [
+        "pose-v-1: example is draft",
+        "pose-v-2: example is draft",
+        "pose-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "stream",
+      "issues": [
+        "stream-n-1: example is draft",
+        "stream-n-2: example is draft",
+        "stream-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "sale",
+      "issues": [
+        "sale-n-1: example is draft",
+        "sale-n-2: example is draft",
+        "sale-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "pot",
+      "issues": [
+        "pot-n-1: example is draft",
+        "pot-n-2: example is draft",
+        "pot-n-3: example is draft",
+        "pot-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "mine",
+      "issues": [
+        "mine-pron-1: example is draft",
+        "mine-n-1: example is draft",
+        "mine-n-2: example is draft",
+        "mine-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "grand",
+      "issues": [
+        "grand-adj-1: example is draft",
+        "grand-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "hello",
+      "issues": [
+        "hello-interj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "tale",
+      "issues": [
+        "tale-n-1: example is draft",
+        "tale-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "knife",
+      "issues": [
+        "knife-n-1: example is draft",
+        "knife-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "coalition",
+      "issues": [
+        "coalition-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "resolve",
+      "issues": [
+        "resolve-v-1: example is draft",
+        "resolve-v-2: example is draft",
+        "resolve-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "racial",
+      "issues": [
+        "racial-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "phase",
+      "issues": [
+        "phase-n-1: example is draft",
+        "phase-n-2: example is draft",
+        "phase-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "joke",
+      "issues": [
+        "joke-n-1: example is draft",
+        "joke-n-2: example is draft",
+        "joke-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "coat",
+      "issues": [
+        "coat-n-1: example is draft",
+        "coat-n-2: example is draft",
+        "coat-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "mexican",
+      "issues": [
+        "mexican-n-1: example is draft",
+        "mexican-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "symptom",
+      "issues": [
+        "symptom-n-1: example is draft",
+        "symptom-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "manufacturer",
+      "issues": [
+        "manufacturer-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "philosophy",
+      "issues": [
+        "philosophy-n-1: example is draft",
+        "philosophy-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "potato",
+      "issues": [
+        "potato-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "quote",
+      "issues": [
+        "quote-v-1: example is draft",
+        "quote-v-2: example is draft",
+        "quote-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "foundation",
+      "issues": [
+        "foundation-n-1: example is draft",
+        "foundation-n-2: example is draft",
+        "foundation-n-3: example is draft"
+      ]
+    },
+    {
+      "lemma": "online",
+      "issues": [
+        "online-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "negotiation",
+      "issues": [
+        "negotiation-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "urge",
+      "issues": [
+        "urge-n-1: example is draft",
+        "urge-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "occasion",
+      "issues": [
+        "occasion-n-1: example is draft",
+        "occasion-n-2: example is draft",
+        "occasion-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "dust",
+      "issues": [
+        "dust-n-1: example is draft",
+        "dust-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "breathe",
+      "issues": [
+        "breathe-v-1: example is needs-review",
+        "breathe-v-2: example is needs-review"
+      ]
+    },
+    {
+      "lemma": "elect",
+      "issues": [
+        "elect-v-1: example is draft",
+        "elect-v-2: example is draft",
+        "elect-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "investigator",
+      "issues": [
+        "investigator-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "jacket",
+      "issues": [
+        "jacket-n-1: example is draft",
+        "jacket-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "ordinary",
+      "issues": [
+        "ordinary-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "glad",
+      "issues": [
+        "glad-adj-1: example is draft",
+        "glad-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "reduction",
+      "issues": [
+        "reduction-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "rarely",
+      "issues": [
+        "rarely-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "pack",
+      "issues": [
+        "pack-n-1: example is draft",
+        "pack-n-2: example is draft",
+        "pack-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "suicide",
+      "issues": [
+        "suicide-n-1: example is draft",
+        "suicide-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "numerous",
+      "issues": [
+        "numerous-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "substance",
+      "issues": [
+        "substance-n-1: example is draft",
+        "substance-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "discipline",
+      "issues": [
+        "discipline-n-1: example is draft",
+        "discipline-n-2: example is draft",
+        "discipline-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "elsewhere",
+      "issues": [
+        "elsewhere-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "iron",
+      "issues": [
+        "iron-n-1: example is draft",
+        "iron-n-2: example is draft",
+        "iron-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "practical",
+      "issues": [
+        "practical-adj-1: example is draft",
+        "practical-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "moreover",
+      "issues": [
+        "moreover-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "passion",
+      "issues": [
+        "passion-n-1: example is draft",
+        "passion-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "volunteer",
+      "issues": [
+        "volunteer-n-1: example is draft",
+        "volunteer-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "implement",
+      "issues": [
+        "implement-n-1: example is draft",
+        "implement-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "essentially",
+      "issues": [
+        "essentially-adv-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "gene",
+      "issues": [
+        "gene-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "enforcement",
+      "issues": [
+        "enforcement-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "sauce",
+      "issues": [
+        "sauce-n-1: example is draft",
+        "sauce-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "vs",
+      "issues": [
+        "vs-prep-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "independence",
+      "issues": [
+        "independence-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "marketing",
+      "issues": [
+        "marketing-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "priest",
+      "issues": [
+        "priest-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "amazing",
+      "issues": [
+        "amazing-adj-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "intense",
+      "issues": [
+        "intense-adj-1: example is draft",
+        "intense-adj-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "advance",
+      "issues": [
+        "advance-v-1: example is draft",
+        "advance-v-2: example is draft",
+        "advance-n-1: example is draft",
+        "advance-n-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "employer",
+      "issues": [
+        "employer-n-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "shock",
+      "issues": [
+        "shock-n-1: example is draft",
+        "shock-n-2: example is draft",
+        "shock-v-1: example is draft"
+      ]
+    },
+    {
+      "lemma": "inspire",
+      "issues": [
+        "inspire-v-1: example is draft",
+        "inspire-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "adjust",
+      "issues": [
+        "adjust-v-1: example is draft",
+        "adjust-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "retire",
+      "issues": [
+        "retire-v-1: example is draft",
+        "retire-v-2: example is draft"
+      ]
+    },
+    {
+      "lemma": "kiss",
+      "issues": [
+        "kiss-n-1: example is draft",
+        "kiss-v-1: example is draft"
+      ]
+    }
+  ],
+  "ok": true,
+  "publishReady": false,
+  "problems": [],
+  "warnings": [
+    "Not machine-checkable — confirm by review: original definitions kept or explicitly merged; no Chinese quietly dropped; every merge carries its reason;例句 only serves its own sense; 阅读原句 is never reused as a curated example; word-form relations are correct."
+  ]
+}

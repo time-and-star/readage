@@ -1,0 +1,110 @@
+{
+    "schemaVersion":  2,
+    "source":  "assets/brand/readge-icon.png",
+    "sourceSha256":  "a5468f4a4621102795c354900d270d31b8c8eadb347ed8f803300d90c9e01958",
+    "launcher":  {
+                     "icon":  "mipmap/readge_launcher",
+                     "roundIcon":  "mipmap/readge_launcher_round",
+                     "drawableType":  "bitmap"
+                 },
+    "adaptiveLayerDp":  108,
+    "adaptiveArtworkDp":  64,
+    "frames":  [
+                   {
+                       "path":  "android/app/src/main/res/mipmap-mdpi/readge_launcher.png",
+                       "size":  48,
+                       "artworkSize":  48,
+                       "sha256":  "41950e602bf33f55b0626386287920fe73b46db4e0527f2592029a00c3a4f005"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-mdpi/readge_launcher_round.png",
+                       "size":  48,
+                       "artworkSize":  48,
+                       "sha256":  "41950e602bf33f55b0626386287920fe73b46db4e0527f2592029a00c3a4f005"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png",
+                       "size":  108,
+                       "artworkSize":  64,
+                       "sha256":  "6777b1099c1bddac6b55bbb794beaab9806b27c7968d2a870a47c4244945d787"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-hdpi/readge_launcher.png",
+                       "size":  72,
+                       "artworkSize":  72,
+                       "sha256":  "16dffdf369574d6683bedcdf22e1d57e5d43f20a4e9a2d89b5a30583917f816e"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-hdpi/readge_launcher_round.png",
+                       "size":  72,
+                       "artworkSize":  72,
+                       "sha256":  "16dffdf369574d6683bedcdf22e1d57e5d43f20a4e9a2d89b5a30583917f816e"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
+                       "size":  162,
+                       "artworkSize":  96,
+                       "sha256":  "a683c5ecb472aaa1bb9a59fdd31d4934d0d6d25aa537c9cd4bc437fcd68fc70c"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-xhdpi/readge_launcher.png",
+                       "size":  96,
+                       "artworkSize":  96,
+                       "sha256":  "7835d234ffae4bcfc158ee6d56c14d871d168adbef9a944e1096d8506364d42e"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-xhdpi/readge_launcher_round.png",
+                       "size":  96,
+                       "artworkSize":  96,
+                       "sha256":  "7835d234ffae4bcfc158ee6d56c14d871d168adbef9a944e1096d8506364d42e"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png",
+                       "size":  216,
+                       "artworkSize":  128,
+                       "sha256":  "e7861348127b5550664ce52bc38db91a8c7e3f5992284eac1f3a609fc4f17de2"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-xxhdpi/readge_launcher.png",
+                       "size":  144,
+                       "artworkSize":  144,
+                       "sha256":  "0a08dd041b927912c34f2ca4dd2ed23bf0883c25cf514e4168a0930e79f9e990"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-xxhdpi/readge_launcher_round.png",
+                       "size":  144,
+                       "artworkSize":  144,
+                       "sha256":  "0a08dd041b927912c34f2ca4dd2ed23bf0883c25cf514e4168a0930e79f9e990"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png",
+                       "size":  324,
+                       "artworkSize":  192,
+                       "sha256":  "0377ebdf2e7b74150cd33fe08eb04f5de14d643f35958b9b33a2bedda11e3b7e"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-xxxhdpi/readge_launcher.png",
+                       "size":  192,
+                       "artworkSize":  192,
+                       "sha256":  "cc390b21a3fcf99762e48998fead3fbc21bd78759c0934ae728bb6316f286a30"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-xxxhdpi/readge_launcher_round.png",
+                       "size":  192,
+                       "artworkSize":  192,
+                       "sha256":  "cc390b21a3fcf99762e48998fead3fbc21bd78759c0934ae728bb6316f286a30"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png",
+                       "size":  432,
+                       "artworkSize":  256,
+                       "sha256":  "319e512cc31cc016ba322fd3d8409faa7357299ce2f3169a94821df35cb1f280"
+                   },
+                   {
+                       "path":  "android/app/src/main/res/drawable/readge_mark.png",
+                       "size":  256,
+                       "artworkSize":  256,
+                       "sha256":  "2ece354280f40998e17efb605949a90c2eed53e72f3db29c8742453b794e8684"
+                   }
+               ]
+}

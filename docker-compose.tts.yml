@@ -1,0 +1,6 @@
+services:
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.9.0
+    ports:
+      - "127.0.0.1:8880:8880"
+    restart: unless-stopped

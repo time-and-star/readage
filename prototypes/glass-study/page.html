@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>玻璃 · 光与缝</title>
+  <style>
+    :root { color-scheme: dark; font-family: "Microsoft YaHei", system-ui, sans-serif; background: #151b1b; color: #eee9df; --gold: #d2b98b; --muted: #b0b5ad; --border: #46504a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: radial-gradient(ellipse at 50% 10%, #35403b 0, #1f2825 34%, #151b1b 78%); min-height: 100vh; }
+    button, input, select { font: inherit; }
+    button, .upload { cursor: pointer; }
+    button { color: inherit; background: transparent; border: 1px solid var(--border); border-radius: 5px; padding: 10px 15px; }
+    button:hover, .upload:hover { border-color: var(--gold); }
+    button:focus-visible, input:focus-visible, select:focus-visible, .upload:focus-within { outline: 2px solid var(--gold); outline-offset: 4px; }
+    button[aria-pressed="true"] { background: #d2b98b; color: #18201b; border-color: #d2b98b; }
+    .study { max-width: 1440px; margin: 0 auto; padding: 36px 32px 48px; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
+    .eyebrow { color: var(--gold); font-size: 11px; letter-spacing: .18em; margin: 0 0 10px; }
+    h1 { font: 400 clamp(25px, 3vw, 38px)/1.2 "Songti SC", "SimSun", Georgia, serif; margin: 0; letter-spacing: .12em; }
+    .intro { color: var(--muted); font-size: 13px; margin: 12px 0 0; line-height: 1.7; }
+    .tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .upload { display: inline-flex; align-items: center; justify-content: center; position: relative; padding: 10px 15px; border: 1px solid #a99370; border-radius: 5px; color: #efe5cf; background: #343f34; }
+    .upload input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+    .tools button, .upload { font-size: 13px; white-space: nowrap; }
+    .source-row { display: flex; justify-content: space-between; gap: 16px; font-size: 12px; color: var(--muted); padding: 16px 0; border-top: 1px solid #3b453e; }
+    #source { overflow-wrap: anywhere; }
+    #analysis { color: #d5c8ad; white-space: nowrap; }
+    #error { color: #ffbdb0; font-size: 13px; line-height: 1.7; }
+    .options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 30px; }
+    .option { min-width: 0; padding: 18px; border: 1px solid #4b554e; border-radius: 9px; background: #202924; transition: border-color .2s, background .2s; }
+    .option.selected { border-color: var(--gold); background: #283129; }
+    .option-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 14px; }
+    .option h2 { font: 400 20px/1.2 "Songti SC", "SimSun", Georgia, serif; letter-spacing: .04em; margin: 0; }
+    .ratio { font-family: Georgia, serif; font-size: 19px; color: var(--gold); }
+    .frame { padding: 9px; border: 1px solid #a3987e; box-shadow: inset 0 0 0 2px #252d27, inset 0 0 0 3px #8b806a, 0 14px 28px #080d0980; background: #b2a890; line-height: 0; overflow: hidden; }
+    canvas { display: block; width: 100%; height: auto; background: #212822; }
+    .option-footer { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 16px; }
+    .option-desc { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0; }
+    .values { color: #d8ccaf; margin-top: 2px; }
+    .choose { padding: 8px 12px; font-size: 12px; white-space: nowrap; }
+    .editor { margin-top: 28px; padding: 22px; border: 1px solid #525d50; border-radius: 9px; background: #202924; }
+    .editor-heading { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-bottom: 20px; }
+    .editor-heading h2 { font-size: 15px; font-weight: 400; margin: 0; }
+    #selected-name { color: var(--gold); margin-left: 8px; }
+    #restore { padding: 7px 12px; font-size: 12px; }
+    .sliders { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px; }
+    .control label { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; font-size: 13px; }
+    .control output { color: var(--gold); font-variant-numeric: tabular-nums; }
+    input[type="range"] { width: 100%; accent-color: var(--gold); cursor: ew-resize; margin: 0; }
+    .shared { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 20px; padding-top: 17px; border-top: 1px solid #3b453e; font-size: 12px; color: var(--muted); }
+    select { border: 1px solid #636c5c; border-radius: 4px; padding: 7px 25px 7px 9px; background: #202924; color: #eee9df; }
+    .local { margin-left: auto; font-size: 11px; }
+    @media (min-width: 1180px) { .options { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; } .option { padding: 14px; } .option-heading { gap: 8px; } .option h2 { font-size: 18px; } .option-footer { align-items: start; flex-direction: column; } .choose { align-self: stretch; } }
+    @media (max-width: 620px) { .study { padding: 24px 16px 32px; } header { align-items: start; flex-direction: column; gap: 18px; } .options { grid-template-columns: 1fr; gap: 20px; } .sliders { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 23px 18px; } .source-row { flex-direction: column; gap: 6px; } .local { margin-left: 0; width: 100%; } }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  </style>
+</head>
+<body>
+  <main class="study" id="glass-study" data-sample="__SAMPLE_PHOTO__">
+    <header>
+      <div>
+        <p class="eyebrow">LIGHT THROUGH GLASS</p>
+        <h1>玻璃 · 光与缝</h1>
+        <p class="intro">同一张照片，同一套碎玻璃。四种光感，缝宽比例 1∶2∶4∶6。</p>
+      </div>
+      <div class="tools">
+        <label class="upload">选择自己的照片<input id="photo" type="file" accept="image/*" aria-label="选择自己的照片"></label>
+        <button id="sample" type="button">示例照片</button>
+        <button id="original" type="button" aria-pressed="false">查看原图</button>
+      </div>
+    </header>
+    <div class="source-row"><span id="source">示例：Somi · 来自你的杂志藏书</span><span id="analysis" role="status">准备玻璃纹样…</span></div>
+    <p id="error" role="alert" hidden></p>
+    <section class="options" aria-label="四种玻璃方案">
+      <article class="option" data-preset="0">
+        <div class="option-heading"><h2>纤细微光</h2><span class="ratio" data-ratio>×1</span></div>
+        <div class="frame"><canvas id="glass-0" role="img" aria-label="纤细微光，同一照片上的细透光缝"></canvas></div>
+        <div class="option-footer"><p class="option-desc">保留细节，轻轻透光<span class="values" data-values></span></p><button class="choose" type="button" aria-pressed="false" data-select="0">选择并调节</button></div>
+      </article>
+      <article class="option" data-preset="1">
+        <div class="option-heading"><h2>清透棱光</h2><span class="ratio" data-ratio>×2</span></div>
+        <div class="frame"><canvas id="glass-1" role="img" aria-label="清透棱光，同一照片上的适中透光缝"></canvas></div>
+        <div class="option-footer"><p class="option-desc">棱线清晰，光感适中<span class="values" data-values></span></p><button class="choose" type="button" aria-pressed="false" data-select="1">选择并调节</button></div>
+      </article>
+      <article class="option selected" data-preset="2">
+        <div class="option-heading"><h2>宽缝圣光</h2><span class="ratio" data-ratio>×4</span></div>
+        <div class="frame"><canvas id="glass-2" role="img" aria-label="宽缝圣光，同一照片上的宽透光缝"></canvas></div>
+        <div class="option-footer"><p class="option-desc">光穿过裂隙，明亮而鲜明<span class="values" data-values></span></p><button class="choose" type="button" aria-pressed="true" data-select="2">已选 · 可调节</button></div>
+      </article>
+      <article class="option" data-preset="3">
+        <div class="option-heading"><h2>弥散辉光</h2><span class="ratio" data-ratio>×6</span></div>
+        <div class="frame"><canvas id="glass-3" role="img" aria-label="弥散辉光，同一照片上的最宽透光缝"></canvas></div>
+        <div class="option-footer"><p class="option-desc">宽缝与光晕，偏浓郁的圣光<span class="values" data-values></span></p><button class="choose" type="button" aria-pressed="false" data-select="3">选择并调节</button></div>
+      </article>
+    </section>
+    <section class="editor" aria-label="调节当前方案">
+      <div class="editor-heading"><h2>调节当前方案<span id="selected-name">宽缝圣光</span></h2><button id="restore" type="button">恢复此方案默认值</button></div>
+      <div class="sliders">
+        <div class="control"><label for="seamWidth">透光缝宽<output id="seamWidth-value">3.2</output></label><input id="seamWidth" type="range" min="0.2" max="8" step="0.1" value="3.2"></div>
+        <div class="control"><label for="transmission">透光强度<output id="transmission-value">78%</output></label><input id="transmission" type="range" min="0" max="1" step="0.01" value="0.78"></div>
+        <div class="control"><label for="halo">光晕扩散<output id="halo-value">8</output></label><input id="halo" type="range" min="0" max="20" step="0.5" value="8"></div>
+        <div class="control"><label for="refraction">玻璃折射<output id="refraction-value">2.6</output></label><input id="refraction" type="range" min="0" max="8" step="0.1" value="2.6"></div>
+      </div>
+      <div class="shared"><label for="panes">共同分片数量</label><select id="panes"><option value="auto">跟随照片复杂度</option value="60">60 块</option><option value="80">80 块</option><option value="160">160 块</option><option value="240">240 块</option><option value="320">320 块</option></select><span>四个方案始终共用同一纹样</span><span class="local">照片仅在本页处理</span></div>
+    </section>
+  </main>
+  <script>__STUDY_SCRIPT__</script>
+</body>
+</html>

@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-app-starting>
   <head>
     <meta charset="UTF-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#07131f" />
+    <meta name="theme-color" content="#ff5b22" />
     <meta
       name="description"
       content="ReadAge finds your reading level and turns it into a path forward."
@@ -16,11 +16,42 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="application-name" content="ReadAge" />
     <meta name="apple-mobile-web-app-title" content="ReadAge" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/brand/readge-icon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/brand/readge-icon-16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/brand/readge-icon-180.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="stylesheet" href="/src/startup.css" />
     <title>ReadAge — Find Your Reading Edge</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main class="app-startup" data-startup-screen aria-busy="true">
+        <div class="app-startup__content">
+          <div class="app-startup__hero">
+            <div class="app-startup__art" aria-hidden="true">
+              <svg class="app-startup__composition" viewBox="0 0 360 370" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <g transform="rotate(-19 180 185)">
+                  <rect x="-43" y="61" width="345" height="43" rx="21.5" fill="#FFBB8D"/>
+                  <rect x="72" y="136" width="256" height="114" rx="33" fill="#FFF7E9"/>
+                  <circle cx="72" cy="136" r="35" fill="#211A16"/>
+                  <circle cx="328" cy="250" r="35" fill="#211A16"/>
+                  <rect x="-26" y="279" width="189" height="29" rx="14.5" fill="#FFBB8D"/>
+                  <rect x="351" y="156" width="84" height="29" rx="14.5" fill="#FFBB8D"/>
+                </g>
+              </svg>
+            </div>
+            <h1 class="app-startup__name">ReadAge</h1>
+          </div>
+          <div class="app-startup__loading">
+            <span class="app-startup__activity" aria-hidden="true"></span>
+            <p class="app-startup__status" data-startup-status role="status" aria-live="polite">正在打开阅读空间…</p>
+            <p class="app-startup__hint" data-startup-hint hidden></p>
+          </div>
+        </div>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

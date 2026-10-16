@@ -1,6 +1,10 @@
 ﻿import type { TutorRequest, TutorResponse, TutorSuccessResponse } from '../types';
 import { getJsonApiHeaders } from './apiAuth';
 
+export class TutorApiError extends Error {
+  constructor(public readonly code: string, message: string) { super(message); this.name = 'TutorApiError'; }
+}
+
 /** Interactive recommendations should fall back before the UI feels stuck. */
 export const RECOMMENDATION_INTERACTION_BUDGET_MS = 15_000;
 
@@ -12,6 +16,8 @@ export const TUTOR_TIMEOUT_MS: Partial<Record<TutorRequest['intent'], number>> &
   rate_article: 180_000,
   rewrite_article: 180_000,
   recommend_article: RECOMMENDATION_INTERACTION_BUDGET_MS,
+  reading_verification: 15_000,
+  after_reading: 32_000,
   explain: 60_000,
   discuss: 90_000,
 };
@@ -20,6 +26,8 @@ export const TUTOR_TIMEOUT_MS: Partial<Record<TutorRequest['intent'], number>> &
 export const TUTOR_MAX_RETRIES: Partial<Record<TutorRequest['intent'], number>> & { default: number } = {
   default: 3,
   recommend_article: 0,
+  reading_verification: 0,
+  after_reading: 0,
   translate_article: 3,
   rewrite_article: 3,
 };
@@ -223,6 +231,9 @@ async function postTutorOnce<T>(
     if (body.ok !== true) {
       const errBody = body as Extract<TutorResponse<T>, { ok: false }>;
       const msg = errBody.error?.message || `Tutor request failed (${response.status}).`;
+      if (errBody.error?.code?.startsWith('AI_') || errBody.error?.code === 'SENSITIVE_API_DISABLED') {
+        throw new TutorApiError(errBody.error.code, msg);
+      }
       if (response.status === 429 || /concurrency|rate/i.test(msg)) {
         throw new Error(`429 ${msg}`);
       }

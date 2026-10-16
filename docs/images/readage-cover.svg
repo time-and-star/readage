@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="760" viewBox="0 0 1440 760" role="img" aria-labelledby="title desc">
+  <title id="title">ReadAge — 在阅读中积累，让记忆持续发生</title>
+  <desc id="desc">橙色与暖纸色的 ReadAge 品牌封面。右侧以示意文章、上下文查词卡和复习卡表达阅读、查词与记忆的连接。此图为功能示意，非应用截图。</desc>
+  <defs>
+    <pattern id="grain" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r=".7" fill="#211a16" opacity=".08"/></pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="180%" height="180%"><feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#5b2b17" flood-opacity=".16"/></filter>
+  </defs>
+  <rect width="1440" height="760" rx="28" fill="#ff5b22"/>
+  <rect width="1440" height="760" rx="28" fill="url(#grain)"/>
+  <g fill="#211a16" font-family="Arial,'Microsoft YaHei',sans-serif">
+    <text x="72" y="79" font-size="17" letter-spacing="4">READ. REMEMBER. RETURN.</text>
+    <text x="65" y="276" font-size="126" font-weight="800" letter-spacing="-9">ReadAge.</text>
+    <text x="73" y="350" font-size="36" font-weight="700">在阅读中积累，</text>
+    <text x="73" y="405" font-size="36" font-weight="700">让记忆持续发生。</text>
+    <text x="75" y="475" font-size="20">文章 · 查词 · 朗读 · 翻译 · 间隔复习</text>
+    <path d="M75 558h450" stroke="#211a16" stroke-width="2" opacity=".35"/>
+    <text x="75" y="605" font-size="19" font-weight="700">浏览器 / Windows / Android</text>
+    <text x="75" y="641" font-size="17">本地档案 · 开放源码 · Apache 2.0</text>
+  </g>
+  <circle cx="1325" cy="109" r="155" fill="#ffbf68"/>
+  <circle cx="1325" cy="109" r="96" fill="#211a16"/>
+  <g transform="translate(730 112) rotate(-5 270 230)" filter="url(#shadow)">
+    <rect width="565" height="440" rx="18" fill="#f8f6f0"/>
+    <rect x="0" y="0" width="565" height="55" rx="18" fill="#ece7dc"/>
+    <path d="M0 40h565v15H0z" fill="#ece7dc"/>
+    <circle cx="27" cy="28" r="5" fill="#ff5b22"/><circle cx="46" cy="28" r="5" fill="#d2cabc"/><circle cx="65" cy="28" r="5" fill="#d2cabc"/>
+    <g font-family="Arial,'Microsoft YaHei',sans-serif" fill="#2b2723">
+      <text x="38" y="101" font-size="12" letter-spacing="3" fill="#817367">READING SPACE</text>
+      <text x="38" y="147" font-size="30" font-weight="700">A little more, every day.</text>
+      <text x="38" y="199" font-size="19">Reading opens a door to new ideas.</text>
+      <rect x="118" y="217" width="90" height="29" rx="5" fill="#ffcf9e"/>
+      <text x="38" y="239" font-size="19">We make progress through small,</text>
+      <text x="38" y="278" font-size="19">thoughtful steps — one page at a time.</text>
+    </g>
+    <path d="M40 321h470M40 348h435M40 375h460" stroke="#ddd5c6" stroke-width="10" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(940 405) rotate(5 195 125)" filter="url(#shadow)">
+    <rect width="382" height="241" rx="18" fill="#fffdf7" stroke="#e1d6c6"/>
+    <g font-family="Arial,'Microsoft YaHei',sans-serif" fill="#2b2723">
+      <text x="26" y="44" font-size="13" fill="#8b7b6c">CONTEXTUAL LOOKUP</text>
+      <text x="26" y="92" font-size="34" font-weight="700">progress</text>
+      <text x="26" y="124" font-size="16" fill="#827568">/ˈprəʊɡres/   n.</text>
+      <text x="26" y="160" font-size="22">进步；进展</text>
+      <rect x="24" y="185" width="333" height="35" rx="8" fill="#f2eadb"/>
+      <text x="43" y="209" font-size="15">在原文中理解，再用词卡主动回忆</text>
+    </g>
+  </g>
+  <path d="M653 606h166v51H653z" fill="#211a16"/>
+  <circle cx="687" cy="683" r="20" fill="#ffcf9e"/>
+  <text x="1363" y="721" text-anchor="end" font-size="13" font-family="Arial,'Microsoft YaHei',sans-serif" fill="#4d2a1b">产品流程示意 · 实际界面见下方截图</text>
+</svg>

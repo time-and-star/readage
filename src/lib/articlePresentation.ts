@@ -49,9 +49,24 @@ function isImportFurnitureParagraph(value: string): boolean {
   );
 }
 
-function isTitleParagraph(value: string, articleTitle: string): boolean {
-  const paragraph = normalizeComparableText(value);
-  const title = normalizeComparableText(articleTitle);
+function normalizeTitleText(value: string): string {
+  const normalized = value
+    .normalize('NFKC')
+    .replace(/[‘’‚‛]/g, "'")
+    .replace(/[“”„‟]/g, '"')
+    .replace(/[‐‑‒–—−]/g, '-')
+    .replace(/\s*-\s*/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const quoted = normalized.match(/^(?:"(.*)"|'(.*)'|«(.*)»)$/u);
+  const text = quoted ? quoted[1] ?? quoted[2] ?? quoted[3] : normalized;
+  return text.trim().toLowerCase();
+}
+
+/** Match an entire imported heading, without discarding body-sentence punctuation. */
+export function isDuplicateArticleTitle(value: string, articleTitle: string): boolean {
+  const paragraph = normalizeTitleText(value);
+  const title = normalizeTitleText(articleTitle);
   return Boolean(title) && paragraph === title;
 }
 
@@ -64,7 +79,7 @@ export function classifyArticleParagraph(
     || isSeparatorParagraph(paragraph)
     || isImportFurnitureParagraph(paragraph)
   ) return 'furniture';
-  if (isTitleParagraph(paragraph, articleTitle)) return 'title';
+  if (isDuplicateArticleTitle(paragraph, articleTitle)) return 'title';
   if (AUTHOR_PREFIX_RE.test(paragraph.trim())) return 'author';
   return 'body';
 }

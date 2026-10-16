@@ -1,3 +1,6 @@
+import type { DictionaryRecord, DictionarySourceView, DictionarySourceIssue, DictionarySourceMiss, DictionaryOriginalContent } from '../packages/dictionary/compat/englishTypes';
+import type { DictionaryDisplayRef, LearningTermRef } from '../packages/dictionary/contracts';
+export type * from '../packages/dictionary/compat/englishTypes';
 export type ArticleSource =
   | 'user_input'
   | 'library'
@@ -20,7 +23,8 @@ export type ProficiencyLevel = 0 | 1 | 2 | 3 | 4;
 export type MagazineSourceId = 'economist' | 'new_yorker' | 'atlantic' | 'wired' | string;
 export type MagazineIssueStatus = 'ready' | 'parsing' | 'failed' | 'partial';
 export type MagazineFormat = 'epub' | 'pdf' | 'html';
-export type MagazineSourceProvider = 'github' | 'news_in_levels';
+export type MagazineSourceProvider = 'github' | 'news_in_levels' | 'rss_fulltext';
+export type MagazineSourceKind = 'issue' | 'web_articles' | 'graded_news';
 
 export interface MagazineSourceMeta {
   id: MagazineSourceId;
@@ -29,6 +33,9 @@ export interface MagazineSourceMeta {
   /** Fixed source page for non-GitHub providers. */
   sourceUrl?: string;
   provider?: MagazineSourceProvider;
+  sourceKind?: MagazineSourceKind;
+  /** Exact hosts allowed for article images; never a wildcard or a tracking host. */
+  imageHosts?: string[];
   displayName: string;
   levelHint?: string;
   topic?: string;
@@ -37,6 +44,7 @@ export interface MagazineSourceMeta {
 export interface MagazineIssue {
   id: string;
   sourceId: MagazineSourceId;
+  sourceKind?: MagazineSourceKind;
   issueLabel: string;
   title: string;
   publishedAt?: string;
@@ -71,6 +79,7 @@ export interface MagazineSourceSummary {
   displayName: string;
   levelHint?: string;
   topic?: string;
+  sourceKind?: MagazineSourceKind;
   issueCount: number;
 }
 
@@ -100,6 +109,7 @@ export interface MagazineSyncResult {
 
 export type LearningEventType =
   | 'click'
+  | 'flashcard_review'
   | 'exposure'
   | 'grammar_query'
   | 'discussion'
@@ -124,13 +134,46 @@ export interface ArticleLevelRating {
   estimatedWordCount?: number;
 }
 
+/** A binary asset placed between text paragraphs without changing their indices. */
+export interface ArticleMedia {
+  src: string;
+  alt?: string;
+  caption?: string;
+  /** Zero-based paragraph index; -1 places the image before the first paragraph. */
+  afterParagraphIndex: number;
+}
+
+/** A picture-led entry into an article already in the local magazine library. */
+export interface MagazineGalleryItem {
+  /** Ephemeral stream round, permitting a new cycle after a small collection is exhausted. */
+  streamRound?: number;
+  articleId: string;
+  title: string;
+  image: ArticleMedia;
+  sourceName: string;
+  issueLabel: string;
+}
+
+export interface ArticleSourceDocument {
+  format: 'pdf';
+  /** Local source URL; original pages are rendered only when requested. */
+  src: string;
+  pageNumber: number;
+  pageCount: number;
+}
+
 export interface Article {
   id: string;
+  /** BCP 47 source language. Existing articles without this field remain English. */
+  language?: string;
   title: string;
   description: string;
   date: string;
   status: ArticleStatus;
   content: string[];
+  /** Optional document images in source order. An empty array means extraction was completed. */
+  media?: ArticleMedia[];
+  sourceDocument?: ArticleSourceDocument;
   keyWords?: string[];
   source?: ArticleSource;
   level?: string;
@@ -142,6 +185,12 @@ export interface Article {
   embeddedReviewWords?: string[];
   magazineIssueId?: string;
   magazineSourceId?: MagazineSourceId;
+  /** Shared by every article parsed from one imported file. */
+  importBatchId?: string;
+  /** File name shown as this import's shelf title. */
+  importBatchTitle?: string;
+  /** File kind used by the shelf card. */
+  importBatchFormat?: 'epub' | 'pdf' | 'docx' | 'html' | 'text';
   /**
    * Chinese translation per paragraph, aligned with `content` indices.
    * Filled by the import module in the background after store.
@@ -251,10 +300,18 @@ export interface LearningEvent {
   articleId?: string;
   lemma?: string;
   createdAt: string;
+  /** Captured local date for learning outside the current timezone. */
+  localDate?: string;
   detail?: string;
 }
 
 export interface GrammarExplanation {
+  learningTermRef?: LearningTermRef;
+  dictionaryRef?: DictionaryDisplayRef;
+  dictionarySources?: DictionarySourceView[];
+  originalDictionaryContent?: DictionaryOriginalContent;
+  dictionarySourceIssues?: DictionarySourceIssue[];
+  dictionarySourceMisses?: DictionarySourceMiss[];
   wordOrPhrase: string;
   type: string;
   phonetic?: string;
@@ -278,6 +335,11 @@ export interface GrammarExplanation {
   collocations?: Array<{ en: string; zh: string }>;
   /** Words in the same family (strong derivations first). */
   relatedWords?: string[];
+  /** Canonical dictionary record used by the shared word-card renderer. */
+  dictionaryRecord?: DictionaryRecord;
+  /** The sentence selected in the article; never presented as a curated example. */
+  readingOriginalSentence?: string;
+  readingOriginalWord?: string;
 }
 
 export interface TranslationResult {
@@ -329,6 +391,7 @@ export interface ArticleProgressRow {
   clickCount: number;
   discussionCount: number;
   hasSession: boolean;
+  lastOpenedAt?: string;
 }
 
 export interface LearningSignals {
@@ -344,6 +407,8 @@ export type TutorIntent =
   | 'recommend_article'
   | 'rewrite_article'
   | 'rate_article'
+  | 'reading_verification'
+  | 'after_reading'
   | 'discuss';
 
 /** Full-article translate: one Chinese string per English paragraph (same length). */
@@ -361,6 +426,12 @@ export interface TutorRequest {
   targetLanguage?: string;
   topic?: string;
   reviewWords?: string[];
+  /** Previously read English contexts excluded from new verification questions. */
+  verificationContexts?: string[];
+  articleTitle?: string;
+  learnerWords?: ReadingLearnerWord[];
+  learningSummary?: ReadingLearnerSummary;
+  allowImmediatePractice?: boolean;
   level?: string;
   history?: ChatMessage[];
   /** 1-based paragraph index when translating one paragraph during import. */
@@ -372,6 +443,37 @@ export interface TutorRequest {
    * Model must return the same number of Chinese translations.
    */
   paragraphs?: string[];
+}
+
+/** Bounded learning evidence shared with the reading agent, never a raw user journal. */
+export interface ReadingLearnerWord {
+  wordId: string;
+  inArticle: boolean;
+  eligibleDelayed: boolean;
+  memoryScore: number | null;
+  confidence: number | null;
+  exposureCount: number;
+  reviewCount: number;
+  lastSeenAt: string | null;
+  lastAssistedAt: string | null;
+  lastReviewAt: string | null;
+  lastOutcome?: 'recognized' | 'incorrect' | 'uncertain' | 'guessed' | 'skipped';
+  lastOutcomePurpose?: 'delayed_verification' | 'immediate_practice';
+  recentContext?: string;
+}
+
+export interface ReadingLearnerSummary {
+  trackedWordCount: number;
+  articleWordCount: number;
+  eligibleDelayedCount: number;
+}
+
+export interface ReadingAgentDecision {
+  action: 'ask' | 'skip';
+  reasonZh: string;
+  wordId?: string;
+  purpose?: 'delayed_verification' | 'immediate_practice';
+  level?: string;
 }
 
 export interface TutorSuccessResponse<T> {

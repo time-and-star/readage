@@ -140,7 +140,10 @@ export function getLearningActivityDateKeys(
     if (key) keys.add(key);
   };
 
-  events.forEach((learningEvent) => addDate(learningEvent.createdAt));
+  events.forEach((learningEvent) => {
+    if (learningEvent.localDate && dateFromKey(learningEvent.localDate)) keys.add(learningEvent.localDate);
+    else addDate(learningEvent.createdAt);
+  });
   Object.values(sessions).forEach((session) => addDate(session.lastOpenedAt));
   articles.forEach((article) => {
     addDate(article.lastOpenedAt);

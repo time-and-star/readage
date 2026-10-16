@@ -18,7 +18,7 @@ import type { DailyWordEvidence } from '../src/lib/memoryV2/types';
 const NOW = new Date('2026-08-01T12:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
 
-test('classifies first, natural, scheduled, and forced exposures with the 24-hour rule', () => {
+test('requires 24 elapsed hours and a later local day for recall credit', () => {
   assert.deepEqual(
     classifyExposure({ now: NOW, isRecommendation: false, lastEffectiveExposureAt: null }),
     { kind: 'new', isValid: false },
@@ -35,14 +35,43 @@ test('classifies first, natural, scheduled, and forced exposures with the 24-hou
     classifyExposure({
       now: NOW,
       isRecommendation: true,
+      hasFsrsReview: true,
       nextReview: new Date(NOW.getTime() - DAY).toISOString(),
       lastEffectiveExposureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
     }),
     { kind: 'scheduled', isValid: true },
   );
   assert.deepEqual(
-    classifyExposure({ now: NOW, isRecommendation: false, forcedExposure: true }),
+    classifyExposure({ now: NOW, isRecommendation: false, forcedExposure: true,
+      lastEffectiveExposureAt: new Date(NOW.getTime() - DAY).toISOString() }),
     { kind: 'forced', isValid: true },
+  );
+});
+
+test('allows the same article again on a later local day', () => {
+  assert.deepEqual(
+    classifyExposure({
+      now: NOW,
+      isRecommendation: true,
+      hasFsrsReview: true,
+      nextReview: new Date(NOW.getTime() - DAY).toISOString(),
+      lastEffectiveExposureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
+      articleId: 'article-a',
+      lastEffectiveArticleId: 'article-a',
+    }),
+    { kind: 'scheduled', isValid: true },
+  );
+  assert.deepEqual(
+    classifyExposure({
+      now: NOW,
+      isRecommendation: true,
+      hasFsrsReview: true,
+      nextReview: new Date(NOW.getTime() - DAY).toISOString(),
+      lastEffectiveExposureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
+      articleId: 'article-b',
+      lastEffectiveArticleId: 'article-a',
+    }),
+    { kind: 'scheduled', isValid: true },
   );
 });
 
@@ -68,6 +97,97 @@ test('records first exposure without treating it as an effective review', () => 
   assert.equal(updated.exposureHistory.length, 1);
   assert.equal(updated.lastEffectiveExposureAt, null);
   assert.equal(updated.successfulExposureCount, 0);
+  assert.equal(updated.firstUnconfirmedExposureAt, NOW.toISOString());
+});
+
+test('does not move the first confirmation window after invalid natural retries', () => {
+  const first = classifyExposure({
+    now: NOW,
+    isRecommendation: false,
+    lastExposureAt: null,
+    lastEffectiveExposureAt: null,
+  });
+  assert.deepEqual(first, { kind: 'new', isValid: false });
+
+  const retryAt = new Date(NOW.getTime() + 6 * 60 * 60 * 1000);
+  const retry = classifyExposure({
+    now: retryAt,
+    isRecommendation: false,
+    userTimezone: 'UTC',
+    articleId: 'article-b',
+    lastEffectiveArticleId: 'article-a',
+    lastExposureAt: NOW.toISOString(),
+    firstUnconfirmedExposureAt: NOW.toISOString(),
+    lastEffectiveExposureAt: null,
+  });
+  assert.deepEqual(retry, { kind: 'natural', isValid: false });
+
+  const eligibleAt = new Date(NOW.getTime() + 24 * 60 * 60 * 1000);
+  const eligible = classifyExposure({
+    now: eligibleAt,
+    isRecommendation: false,
+    userTimezone: 'UTC',
+    articleId: 'article-c',
+    lastEffectiveArticleId: 'article-a',
+    lastExposureAt: retryAt.toISOString(),
+    firstUnconfirmedExposureAt: NOW.toISOString(),
+    lastEffectiveExposureAt: null,
+  });
+  assert.deepEqual(eligible, { kind: 'natural', isValid: true });
+});
+
+test('deduplicates same-day rereads but counts the same occurrence again on a later day', () => {
+  let profile = createEmptyRmeProfile();
+  profile = recordExposure(profile, {
+    articleId: 'article-a',
+    occurrenceId: 'article-a:p0:w1',
+    now: NOW,
+    localDate: '2026-08-01',
+    kind: 'natural',
+    isValid: true,
+    quality: 1,
+  });
+
+  const sameDay = recordExposure(profile, {
+    articleId: 'article-a',
+    occurrenceId: 'article-a:p0:w1',
+    now: new Date(NOW.getTime() + 6 * 60 * 60 * 1000),
+    localDate: '2026-08-01',
+    kind: 'natural',
+    isValid: false,
+    quality: 0,
+  });
+  assert.equal(sameDay.exposureHistory.length, 1);
+  assert.equal(sameDay.successfulExposureCount, 1);
+
+  profile = recordExposure(profile, {
+    articleId: 'article-a',
+    occurrenceId: 'article-a:p0:w1',
+    now: new Date(NOW.getTime() + DAY),
+    localDate: '2026-08-02',
+    kind: 'natural',
+    isValid: true,
+    quality: 1,
+  });
+  assert.equal(profile.exposureHistory.length, 2);
+  assert.equal(profile.successfulExposureCount, 2);
+  assert.equal(profile.lastEffectiveLocalDate, '2026-08-02');
+});
+
+test('uses confirmation instead of scheduled classification before the first FSRS review', () => {
+  assert.deepEqual(
+    classifyExposure({
+      now: NOW,
+      isRecommendation: true,
+      hasFsrsReview: false,
+      nextReview: new Date(NOW.getTime() - DAY).toISOString(),
+      lastExposureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
+      firstUnconfirmedExposureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
+      articleId: 'article-b',
+      lastEffectiveArticleId: 'article-a',
+    }),
+    { kind: 'confirmation', isValid: true },
+  );
 });
 
 test('enters forced exposure after three failures and recovers after two good days', () => {
@@ -100,7 +220,7 @@ test('does not recover forced exposure from a low-quality Good day', () => {
   assert.equal(profile.forcedExposure, false);
 });
 
-test('confidence combines history, FSRS retention, recent quality, and frequency', () => {
+test('recall confidence follows FSRS independently of passive exposure quality', () => {
   let profile = createEmptyRmeProfile();
   profile = recordExposure(profile, {
     articleId: 'a', occurrenceId: 'o1', now: NOW, kind: 'natural', isValid: true, quality: 1,
@@ -112,8 +232,19 @@ test('confidence combines history, FSRS retention, recent quality, and frequency
   const confidence = calculateConfidence(profile, {
     stabilityDays: 10,
     lastReview: new Date(NOW.getTime() - DAY).toISOString(),
+    hasRecallEvidence: true,
   }, NOW);
   assert.ok(confidence > 0 && confidence < 100);
+  assert.equal(confidence, calculateConfidence(createEmptyRmeProfile(), {
+    stabilityDays: 10,
+    lastReview: new Date(NOW.getTime() - DAY).toISOString(),
+    hasRecallEvidence: true,
+  }, NOW));
+  assert.equal(calculateConfidence(profile, {
+    stabilityDays: 10,
+    lastReview: new Date(NOW.getTime() - DAY).toISOString(),
+    hasRecallEvidence: false,
+  }, NOW), 0);
   assert.equal(stageFromConfidence(0), 0);
   assert.equal(stageFromConfidence(90), 4);
 });
@@ -155,7 +286,7 @@ test('article score sums unique opportunity coverage before secondary signals', 
   assert.ok(high.articleScore > low.articleScore);
 });
 
-test('FSRS finalization persists forced and recovered V4 state across days', () => {
+test('ordinary reading cannot clear a forced review state without verified success', () => {
   const evidence = (date: string, pendingGrade: 'Good' | 'Again'): DailyWordEvidence => ({
     userId: 'u1',
     wordId: 'abandon',
@@ -176,5 +307,6 @@ test('FSRS finalization persists forced and recovered V4 state across days', () 
 
   state = finalizeDailyEvidence(state, evidence('2026-07-23', 'Good'), 'u1', 'UTC')!;
   state = finalizeDailyEvidence(state, evidence('2026-07-24', 'Good'), 'u1', 'UTC')!;
-  assert.equal(state.rme?.forcedExposure, false);
+  assert.equal(state.rme?.forcedExposure, true);
+  assert.equal(state.fsrsReviews.length, 3);
 });

@@ -2,10 +2,15 @@
 import test from 'node:test';
 
 import {
+  flushPendingPersistentWrites,
+  updatePersistentValue,
+  readPersistentValue,
   normalizeArticleSessions,
   STORAGE_KEYS,
   readStorage,
   writeStorage,
+  commitPersistentUpdate,
+  mergeChatMessages,
 } from '../src/lib/storage';
 
 class MemoryStorage implements Storage {
@@ -17,6 +22,39 @@ class MemoryStorage implements Storage {
   removeItem(key: string) { this.values.delete(key); }
   setItem(key: string, value: string) { this.values.set(key, value); }
 }
+
+test('concurrent operations rebase on the latest stored value without losing either update', async () => {
+  const storage = new MemoryStorage();
+  await Promise.all([
+    commitPersistentUpdate<string[]>(storage, 'events', [], previous => [...previous, 'tab-a']),
+    commitPersistentUpdate<string[]>(storage, 'events', [], previous => [...previous, 'tab-b']),
+  ]);
+  assert.deepEqual(JSON.parse(storage.getItem('events')!), ['tab-a', 'tab-b']);
+});
+
+test('stale chat snapshots keep messages added by another tab', () => {
+  const a = { id: 'a', sender: 'user' as const, text: 'First', timestamp: '2026-09-09T01:00:00Z' };
+  const b = { ...a, id: 'b', text: 'Second', timestamp: '2026-09-09T01:01:00Z' };
+  const c = { ...a, id: 'c', text: 'Third', timestamp: '2026-09-09T01:02:00Z' };
+  assert.deepEqual(mergeChatMessages([a, b], [a, c]), [a, b, c]);
+});
+
+test('failed persistence can be retried without double applying the operation', async () => {
+  const storage = new MemoryStorage();
+  const write = storage.setItem.bind(storage);
+  storage.setItem = () => { throw new Error('quota'); };
+  await assert.rejects(commitPersistentUpdate<number>(storage, 'count', 0, count => count + 1), /quota/);
+  storage.setItem = write;
+  await commitPersistentUpdate<number>(storage, 'count', 0, count => count + 1);
+  assert.equal(storage.getItem('count'), '1');
+});
+
+test('corrupted persisted data is not silently overwritten', async () => {
+  const storage = new MemoryStorage();
+  storage.setItem('events', '{broken');
+  await assert.rejects(commitPersistentUpdate<string[]>(storage, 'events', [], previous => [...previous, 'new']));
+  assert.equal(storage.getItem('events'), '{broken');
+});
 
 test('uses versioned keys and falls back safely for missing or corrupt JSON', () => {
   const storage = new MemoryStorage();
@@ -95,4 +133,38 @@ test('normalizes parsed storage before it reaches application state', () => {
   );
 
   assert.equal(normalized, fallback);
+});
+
+test('backup flush waits for in-flight writes and refuses to omit failed pending records', async () => {
+  const storage = new MemoryStorage();
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  Object.defineProperty(globalThis, 'window', { value: { localStorage: storage }, configurable: true });
+  Object.defineProperty(globalThis, 'navigator', { value: { locks: { request: async (_: string, commit: () => Promise<unknown>) => {
+    await gate; return commit();
+  } } }, configurable: true });
+  try {
+    const write = updatePersistentValue('test:backup-flush', 0, value => value + 1);
+    assert.equal(readPersistentValue('test:backup-flush', 0), 1);
+    assert.equal(storage.getItem('test:backup-flush'), null);
+    let finished = false;
+    const flushing = flushPendingPersistentWrites().then(() => { finished = true; });
+    await Promise.resolve();
+    assert.equal(finished, false);
+    release!();
+    await Promise.all([write, flushing]);
+    assert.equal(storage.getItem('test:backup-flush'), '1');
+    const save = storage.setItem.bind(storage);
+    storage.setItem = () => { throw new Error('quota'); };
+    await assert.rejects(updatePersistentValue('test:backup-flush', 0, value => value + 1), /quota/);
+    await assert.rejects(flushPendingPersistentWrites(), /备份未导出/);
+    storage.setItem = save;
+    await flushPendingPersistentWrites();
+    assert.equal(storage.getItem('test:backup-flush'), '2');
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow); else Reflect.deleteProperty(globalThis, 'window');
+    if (previousNavigator) Object.defineProperty(globalThis, 'navigator', previousNavigator); else Reflect.deleteProperty(globalThis, 'navigator');
+  }
 });

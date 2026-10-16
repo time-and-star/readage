@@ -104,30 +104,36 @@ export function endRecommendationFeed(
 export function selectLibraryFallback(
   library: Article[],
   history: Article[],
-  excludedArticleIds: ReadonlySet<string>
+  excludedArticleIds: ReadonlySet<string>,
+  isEligible: (article: Article) => boolean = () => true,
+  allowCompleted = false,
 ): Article | null {
   const storedById = new Map(history.map((article) => [article.id, article]));
   return library.find((candidate) => {
     if (excludedArticleIds.has(candidate.id)) return false;
     const stored = storedById.get(candidate.id);
-    return (stored?.status ?? candidate.status) !== 'Completed';
+    return (allowCompleted || (stored?.status ?? candidate.status) !== 'Completed')
+      && isEligible(candidate);
   }) ?? null;
 }
 
 /**
- * Articles the user has already opened (history) plus any feed-session excludes.
- * Used so recommendation never re-serves the same piece.
+ * Explicit feed-session excludes, plus history when the caller wants normal
+ * recommendations to avoid previously opened pieces.
  */
 export function collectExcludedArticleIds(
   explicitExcludeIds: readonly string[],
-  history: readonly Article[]
+  history: readonly Article[],
+  excludeHistory = true,
 ): Set<string> {
   const excluded = new Set<string>();
   for (const id of explicitExcludeIds) {
     if (id) excluded.add(id);
   }
-  for (const article of history) {
-    if (article?.id) excluded.add(article.id);
+  if (excludeHistory) {
+    for (const article of history) {
+      if (article?.id) excluded.add(article.id);
+    }
   }
   return excluded;
 }

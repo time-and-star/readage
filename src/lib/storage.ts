@@ -1,5 +1,6 @@
-﻿import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react';
 import type { ArticleSession, ChatMessage } from '../types';
+import { commitLocalSetting, flushLocalDatabaseWrites, getApplicationStorage, isLocalDatabaseActive } from './localDatabase';
 
 const PREFIX = 'english-ai:v2';
 
@@ -10,10 +11,21 @@ export const STORAGE_KEYS = {
   sessions: `${PREFIX}:sessions`,
   weakPoints: `${PREFIX}:weakPoints`,
   learningDays: `${PREFIX}:learningDays`,
-  readingAssessment: `${PREFIX}:readingAssessment`,
+  readingBookmark: `${PREFIX}:readingBookmark`,
+  readingBookmarks: `${PREFIX}:readingBookmarks`,
+  readingParagraphProgress: `${PREFIX}:readingParagraphProgress`,
+  libraryView: `${PREFIX}:libraryView`,
+  readingPreference: `${PREFIX}:readingPreference`,
+  externalActivity: `${PREFIX}:externalActivity`,
 } as const;
 
 export type StorageNormalizer<T> = (value: unknown, fallback: T) => T;
+
+export function mergeChatMessages(previous: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  const messages = new Map(previous.map(message => [message.id, message]));
+  for (const message of incoming) messages.set(message.id, message);
+  return [...messages.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
 
 
 function normalizeCount(value: unknown): number {
@@ -87,7 +99,142 @@ export function writeStorage<T>(storage: Storage | undefined, key: string, value
 }
 
 function getBrowserStorage(): Storage | undefined {
-  return typeof window === 'undefined' ? undefined : window.localStorage;
+  return getApplicationStorage();
+}
+
+type PendingWrite<T> = { action: SetStateAction<T>; operationId: string; resolve: () => void; reject: (error: Error) => void };
+type PersistentEntry<T> = {
+  value: T; fallback: T; normalize?: StorageNormalizer<T>; listeners: Set<() => void>;
+  pending: PendingWrite<T>[]; running: boolean; currentFlush?: Promise<void>;
+};
+const entries = new Map<string, PersistentEntry<any>>();
+const errors = new Map<string, string>();
+const statusListeners = new Set<() => void>();
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
+const applyAction = <T,>(previous: T, action: SetStateAction<T>): T =>
+  typeof action === 'function' ? (action as (value: T) => T)(previous) : action;
+function notifyStatus() { statusListeners.forEach(listener => listener()); }
+
+function entryFor<T>(key: string, fallback: T, normalize?: StorageNormalizer<T>): PersistentEntry<T> {
+  if (!entries.has(key)) entries.set(key, {
+    value: readStorage(getBrowserStorage(), key, fallback, normalize), fallback, normalize,
+    listeners: new Set(), pending: [], running: false,
+  });
+  return entries.get(key)!;
+}
+
+/** Route restoration must include queued changes when a previous screen has just unmounted. */
+export function readPersistentValue<T>(key: string, fallback: T, normalize?: StorageNormalizer<T>): T {
+  return entryFor(key, fallback, normalize).value;
+}
+
+/** Rebase operations on the latest value while holding the cross-tab write lock. */
+export async function commitPersistentUpdate<T>(
+  storage: Storage, key: string, fallback: T, action: SetStateAction<T>, normalize?: StorageNormalizer<T>, operationId?: string,
+): Promise<T> {
+  if (isLocalDatabaseActive() && storage === getApplicationStorage()) return commitLocalSetting(key, fallback, action, normalize, operationId);
+  const commit = async () => {
+    const raw = storage.getItem(key);
+    const parsed = raw === null ? fallback : JSON.parse(raw);
+    const previous = normalize ? normalize(parsed, fallback) : parsed as T;
+    const next = applyAction(previous, action);
+    const serialized = JSON.stringify(next);
+    if (serialized !== raw) storage.setItem(key, serialized);
+    return next;
+  };
+  if (typeof navigator !== 'undefined' && navigator.locks) {
+    return navigator.locks.request('readage-application-writer-v1', commit);
+  }
+  if (typeof window !== 'undefined') throw new Error('请使用 localhost 或 HTTPS，以安全保存多标签页学习记录。');
+  return commit();
+}
+
+async function performEntryFlush<T>(key: string, entry: PersistentEntry<T>) {
+  entry.running = true;
+  try {
+    while (entry.pending.length) {
+      const pending = entry.pending[0];
+      try {
+        const storage = getBrowserStorage();
+        if (!storage) throw new Error('浏览器未允许本地存储。');
+        const committed = await commitPersistentUpdate(storage, key, entry.fallback, pending.action, entry.normalize, pending.operationId);
+        entry.pending.shift();
+        entry.value = entry.pending.reduce((value, item) => applyAction(value, item.action), committed);
+        errors.delete(key);
+        if (!errors.size && retryTimer) { clearTimeout(retryTimer); retryTimer = undefined; }
+        entry.listeners.forEach(listener => listener());
+        notifyStatus();
+        pending.resolve();
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error('保存失败');
+        errors.set(key, failure.message);
+        notifyStatus();
+        pending.reject(failure);
+        if (!retryTimer) retryTimer = setTimeout(() => { retryTimer = undefined; retryPersistentWrites(); }, 5_000);
+        break;
+      }
+    }
+  } finally { entry.running = false; }
+}
+
+function flushEntry<T>(key: string, entry: PersistentEntry<T>): Promise<void> {
+  if (entry.currentFlush) return entry.currentFlush;
+  const task = performEntryFlush(key, entry);
+  entry.currentFlush = task;
+  const release = () => { if (entry.currentFlush === task) entry.currentFlush = undefined; };
+  void task.then(release, release);
+  return task;
+}
+
+/** A backup must not omit optimistic records that have not reached storage yet. */
+export async function flushPendingPersistentWrites(): Promise<void> {
+  while ([...entries.values()].some(entry => entry.pending.length || entry.currentFlush)) {
+    await Promise.all([...entries].map(([key, entry]) => flushEntry(key, entry)));
+    if ([...entries].some(([key, entry]) => entry.pending.length && errors.has(key))) {
+      throw new Error('学习记录尚未全部保存，备份未导出。请保持页面打开并重试保存。');
+    }
+  }
+  await flushLocalDatabaseWrites();
+}
+
+export function updatePersistentValue<T>(key: string, fallback: T, action: SetStateAction<T>): Promise<void> {
+  const entry = entryFor(key, fallback);
+  const previous = entry.value;
+  entry.value = applyAction(previous, action);
+  const done = new Promise<void>((resolve, reject) => entry.pending.push({ action, operationId: crypto.randomUUID(), resolve, reject }));
+  if (!Object.is(previous, entry.value)) entry.listeners.forEach(listener => listener());
+  void flushEntry(key, entry);
+  return done;
+}
+export function retryPersistentWrites() { entries.forEach((entry, key) => { void flushEntry(key, entry); }); }
+const persistenceError = () => errors.size ? '学习记录尚未全部保存，请保持页面打开。系统会自动重试，也可点击重试保存。' : null;
+export function usePersistenceError() {
+  return useSyncExternalStore(listener => { statusListeners.add(listener); return () => { statusListeners.delete(listener); }; }, persistenceError, () => null);
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('readage-local-data-changed', event => {
+    const changedKeys = (event as CustomEvent<{ keys?: string[] }>).detail?.keys;
+    const keys = changedKeys ? new Set(changedKeys) : null;
+    entries.forEach((entry, key) => {
+      if (keys && !keys.has(key)) return;
+      const committed = readStorage(getBrowserStorage(), key, entry.fallback, entry.normalize);
+      entry.value = entry.pending.reduce((value, item) => applyAction(value, item.action), committed);
+      entry.listeners.forEach(listener => listener());
+    });
+  });
+  window.addEventListener('storage', event => {
+    entries.forEach((entry, key) => {
+      if (event.key !== null && event.key !== key) return;
+      const committed = readStorage(getBrowserStorage(), key, entry.fallback, entry.normalize);
+      entry.value = entry.pending.reduce((value, item) => applyAction(value, item.action), committed);
+      entry.listeners.forEach(listener => listener());
+    });
+  });
+  window.addEventListener('beforeunload', event => {
+    if ([...entries.values()].some(entry => entry.pending.length)) { event.preventDefault(); event.returnValue = ''; }
+  });
+  window.addEventListener('online', retryPersistentWrites);
 }
 
 export function usePersistentState<T>(
@@ -95,20 +242,15 @@ export function usePersistentState<T>(
   initialValue: T | (() => T),
   normalize?: StorageNormalizer<T>
 ): [T, Dispatch<SetStateAction<T>>] {
-  const [value, setValue] = useState<T>(() => {
-    const fallback = typeof initialValue === 'function'
-      ? (initialValue as () => T)()
-      : initialValue;
-    return readStorage(getBrowserStorage(), key, fallback, normalize);
-  });
-
-  useEffect(() => {
-    const storage = getBrowserStorage();
-    if (storage && !writeStorage(storage, key, value)) {
-      console.error(`Failed to persist application state for ${key}`);
-    }
-  }, [key, value]);
-
+  const fallback = typeof initialValue === 'function' ? (initialValue as () => T)() : initialValue;
+  const entry = entryFor(key, fallback, normalize);
+  const subscribe = useCallback((listener: () => void) => {
+    entry.listeners.add(listener); return () => { entry.listeners.delete(listener); };
+  }, [entry]);
+  const value = useSyncExternalStore(subscribe, () => entry.value, () => entry.value);
+  const setValue = useCallback<Dispatch<SetStateAction<T>>>(action => {
+    void updatePersistentValue(key, entry.fallback, action).catch(() => {});
+  }, [key, entry]);
   return [value, setValue];
 }
 

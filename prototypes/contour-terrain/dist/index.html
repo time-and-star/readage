@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#edf0e8">
+  <title>地形工坊 · 2.5D 等高线地块</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="workshop">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="地形工坊"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m16 3 13 7-13 7L3 10Zm-13 13 13 7 13-7M3 22l13 7 13-7"/></svg><span>地形工坊<span class="brand-en">TERRAIN ATELIER</span></span></a>
+      <span class="prototype">交互原型 <span class="status-dot"></span></span>
+      <button class="quiet" id="reset">恢复初始地形</button>
+    </header>
+    <main class="workspace">
+      <aside class="panel" aria-label="地形工具">
+        <div class="panel-heading"><span class="eyebrow">LANDSCAPE / 01</span><h1>一块地，<br>从起伏开始。</h1><p>雕刻坡面，观察每一条等高线。</p></div>
+        <section class="section">
+          <h2>地形底稿 <span>24 × 24 m</span></h2>
+          <div class="preset-row" aria-label="选择地形">
+            <button class="preset active" data-preset="valley" aria-pressed="true"><svg viewBox="0 0 60 34" aria-hidden="true"><path d="M3 27 16 9l13 15L43 6l14 21"/><path d="m3 31 54 0"/></svg>山谷</button>
+            <button class="preset" data-preset="island" aria-pressed="false"><svg viewBox="0 0 60 34" aria-hidden="true"><path d="M3 27 16 25l9-13 8-5 11 17 13 3"/><path d="m3 31 54 0"/></svg>岛丘</button>
+            <button class="preset" data-preset="plateau" aria-pressed="false"><svg viewBox="0 0 60 34" aria-hidden="true"><path d="M3 27 14 25l9-15h22l12 17"/><path d="m3 31 54 0"/></svg>台地</button>
+          </div>
+        </section>
+        <section class="section tools-section">
+          <h2>地形工具 <span>拖动绘制</span></h2>
+          <div class="tools" role="group" aria-label="地形工具">
+            <button class="tool active" data-tool="inspect" aria-pressed="true"><span>⌖</span>查看</button>
+            <button class="tool" data-tool="raise" aria-pressed="false"><span>↥</span>抬高</button>
+            <button class="tool" data-tool="lower" aria-pressed="false"><span>↧</span>降低</button>
+            <button class="tool" data-tool="smooth" aria-pressed="false"><span>≈</span>平滑</button>
+            <button class="tool" data-tool="flatten" aria-pressed="false"><span>⊟</span>整平</button>
+          </div>
+          <div id="brush-options" class="brush-options" hidden>
+            <label class="range-label" for="radius">笔刷半径 <output id="radius-value">2.0 m</output></label>
+            <input id="radius" type="range" min="0.8" max="4" step="0.1" value="2">
+            <label class="range-label" for="strength">笔刷力度 <output id="strength-value">0.18 m</output></label>
+            <input id="strength" type="range" min="0.04" max="0.4" step="0.02" value="0.18">
+            <label class="flatten-label" id="flatten-option" for="target" hidden>目标标高 <span><input id="target" type="number" min="-1.5" max="8" step="0.1" value="1.5"> m</span></label>
+          </div>
+          <button class="undo" id="undo" disabled><span>↶</span> 撤销上一步 <kbd>Ctrl Z</kbd></button>
+        </section>
+        <section class="section layers">
+          <h2>地形图层</h2>
+          <label class="toggle-row"><span><i class="legend-line contours"></i>等高线</span><input id="contours" type="checkbox" checked><span class="switch" aria-hidden="true"></span></label>
+          <label class="select-row" for="interval">线间高差 <select id="interval"><option value="0.5">0.5 m</option><option value="1" selected>1 m</option><option value="2">2 m</option></select></label>
+          <label class="toggle-row"><span><i class="legend-line grid"></i>米制网格</span><input id="grid" type="checkbox" checked><span class="switch" aria-hidden="true"></span></label>
+          <label class="toggle-row"><span><i class="legend-line water"></i>水面 · 0.35 m</span><input id="water" type="checkbox" checked><span class="switch" aria-hidden="true"></span></label>
+        </section>
+        <div class="scale-card"><svg viewBox="0 0 90 60" aria-hidden="true"><path d="m45 12 26 13-26 13-26-13Z"/><path class="dimension" d="M19 44h52M19 41v6m52-6v6"/><text x="45" y="57" text-anchor="middle">52 px</text></svg><div><strong>1 格 = 1 × 1 m</strong><span>平地 52 × 26 px</span><span>高度 26 px / m</span><small>基准缩放 100%</small></div></div>
+      </aside>
+      <section class="scene-panel" aria-label="2.5D 地形预览">
+        <div class="scene-top"><div><span class="eyebrow">ISOMETRIC LANDSCAPE</span><h2 id="terrain-name">河谷与双丘</h2></div><div class="view-badge"><span class="status-dot"></span>2.5D · 等距视角</div></div>
+        <div class="viewport" id="viewport">
+          <canvas id="terrain" aria-label="可编辑的2.5D山谷地块，平地菱形网格52乘26像素，高程每米26像素" tabindex="0"></canvas>
+          <canvas id="overlay" aria-hidden="true"></canvas>
+          <div class="north"><svg viewBox="0 0 44 54" aria-hidden="true"><path d="m22 13 8 24-8-5-8 5Z"/></svg><span>N</span></div>
+          <div class="view-controls" aria-label="视图控制"><button id="zoom-out" aria-label="缩小视图">−</button><button id="zoom-value" title="回到100%基准比例">100%</button><button id="zoom-in" aria-label="放大视图">＋</button><span></span><button id="fit" title="完整查看地块" aria-label="完整查看地块"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5"/></svg></button><button id="pan" aria-pressed="false" aria-label="切换拖动视图" title="拖动视图">✥</button></div>
+          <div class="elevation-legend"><span>高程</span><div></div><span id="legend-range">0 — 5 m</span></div>
+          <div class="scene-hint" id="scene-hint">点选格子查看 · 滚轮缩放 · 空格 + 拖动平移</div>
+        </div>
+        <footer class="scene-footer"><div class="selection" id="selection" aria-live="polite"><span class="selection-dot"></span><span>点选地块，查看标高与坡度</span></div><span class="footer-scale" id="footer-scale">52 × 26 px / 格 @ 100%</span></footer>
+      </section>
+    </main>
+    <div class="toast" id="toast" role="status" hidden></div>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

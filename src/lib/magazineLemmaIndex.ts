@@ -5,6 +5,7 @@
 
 import type { Article } from '../types';
 import type { ArticleCandidate } from './memoryV2/recommendation';
+import { isNonStoryArticleTitle } from './articleEligibility';
 
 export interface MagazineLemmaIndexArticle {
   id: string;
@@ -53,7 +54,8 @@ export function expandLemmaIndexToCandidates(
   const candidates: ArticleCandidate[] = [];
 
   for (const row of index.articles) {
-    if (!row?.id || excluded.has(row.id)) continue;
+    // Cached indexes from older versions can still contain publication directories.
+    if (!row?.id || excluded.has(row.id) || isNonStoryArticleTitle(row.title)) continue;
     const lemmas: string[] = [];
     for (const idx of row.lemmaIndices) {
       const word = index.vocab[idx];
@@ -150,11 +152,11 @@ export async function fetchMagazineLemmaIndex(
 /** Load a single full magazine article body after ranking. */
 export async function fetchMagazineArticleById(
   articleId: string,
-  options?: { fetchImpl?: typeof fetch; signal?: AbortSignal }
+  options?: { fetchImpl?: typeof fetch; signal?: AbortSignal; deferMedia?: boolean }
 ): Promise<Article | null> {
   const fetchImpl = options?.fetchImpl ?? fetch;
   const res = await fetchImpl(
-    `/api/magazines/articles/${encodeURIComponent(articleId)}`,
+    `/api/magazines/articles/${encodeURIComponent(articleId)}${options?.deferMedia ? '?media=defer' : ''}`,
     { signal: options?.signal }
   );
   if (!res.ok) return null;

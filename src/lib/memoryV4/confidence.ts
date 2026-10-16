@@ -3,6 +3,7 @@ import type {
   RmeMemoryProfile,
   RmeMemoryStage,
 } from './types';
+import { calculateFsrsForgettingCurve } from '../fsrs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const clamp = (value: number, min = 0, max = 1): number =>
@@ -14,31 +15,35 @@ export function calculateFsrsRetention(
 ): number {
   if (!fsrs.lastReview || !Number.isFinite(fsrs.stabilityDays) || fsrs.stabilityDays <= 0) return 0;
   const reviewedAt = new Date(fsrs.lastReview).getTime();
-  if (!Number.isFinite(reviewedAt)) return 0;
+  if (!Number.isFinite(reviewedAt) || !Number.isFinite(now.getTime())) return 0;
   const elapsedDays = Math.max(0, now.getTime() - reviewedAt) / DAY_MS;
-  return Math.pow(0.9, elapsedDays / fsrs.stabilityDays);
+  return calculateFsrsForgettingCurve(elapsedDays, fsrs.stabilityDays);
 }
 
+export function calculateRecentExposureFrequency(profile: RmeMemoryProfile, now: Date): number {
+  const windowStart = now.getTime() - 7 * DAY_MS;
+  if (!Number.isFinite(windowStart)) return 0;
+  return clamp(profile.exposureHistory.filter((item) => {
+    const timestamp = Date.parse(item.occurredAt);
+    return item.isValid && timestamp >= windowStart && timestamp <= now.getTime();
+  }).length / 3);
+}
+
+/** Callers with source-aware history exclude lookup-only FSRS cards. */
+export interface RecallConfidenceInput extends FsrsRetentionInput {
+  hasRecallEvidence?: boolean;
+}
+
+/** Current FSRS recall prediction; passive reading is tracked independently. */
 export function calculateConfidence(
-  profile: RmeMemoryProfile,
-  fsrs: FsrsRetentionInput,
+  _profile: RmeMemoryProfile,
+  fsrs: RecallConfidenceInput,
   now: Date,
 ): number {
-  const totalOutcomes = profile.successfulExposureCount + profile.failedExposureCount;
-  if (totalOutcomes === 0) return 0;
-
-  const historySuccess = profile.successfulExposureCount / totalOutcomes;
-  const fsrsRetention = calculateFsrsRetention(fsrs, now);
-  const validRecent = profile.exposureHistory.filter((item) => item.isValid).slice(-5);
-  const recentQuality = validRecent.length === 0
-    ? 0
-    : validRecent.reduce((sum, item) => sum + item.quality, 0) / validRecent.length;
-  const windowStart = now.getTime() - 7 * DAY_MS;
-  const recentFrequency = clamp(
-    profile.exposureHistory.filter((item) => item.isValid && new Date(item.occurredAt).getTime() >= windowStart).length / 3,
-  );
-
-  return clamp(historySuccess * fsrsRetention * recentQuality * recentFrequency) * 100;
+  // Legacy pure callers supply an already-reviewed FSRS card without source
+  // metadata. Source-aware application callers must explicitly pass this gate.
+  if (fsrs.hasRecallEvidence === false) return 0;
+  return calculateFsrsRetention(fsrs, now) * 100;
 }
 
 export function stageFromConfidence(confidence: number): RmeMemoryStage {

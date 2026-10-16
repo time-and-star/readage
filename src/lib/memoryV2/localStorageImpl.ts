@@ -11,6 +11,7 @@ import {
   FinalizationTask,
 } from './types';
 import { MemoryStorage } from './storage';
+import { mergeRawEvents } from './rawEventPersistence';
 
 const STORAGE_PREFIX = 'english-ai:v2:memory';
 
@@ -71,11 +72,20 @@ function deleteKey(key: string): void {
 }
 
 function readIndex(key: string): string[] {
-  return readJSON<string[]>(key) || [];
+  const value = readJSON<unknown>(key);
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+    ? value
+    : [];
 }
 
 function writeIndex(key: string, items: string[]): void {
   writeJSON(key, items);
+}
+
+function splitWordDateIndexEntry(entry: string): [string, string] | null {
+  const separator = entry.lastIndexOf(':');
+  if (separator <= 0 || separator === entry.length - 1) return null;
+  return [entry.slice(0, separator), entry.slice(separator + 1)];
 }
 
 function addToIndex(indexKey: string, item: string): void {
@@ -92,7 +102,100 @@ function removeFromIndex(indexKey: string, item: string): void {
   writeIndex(indexKey, filtered);
 }
 
+function storageKeys(): string[] {
+  const storage = getStorage();
+  if (!storage) return [];
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key) keys.push(key);
+  }
+  return keys;
+}
+
+function repairIndex(indexKey: string, candidates: string[]): string[] {
+  const current = readIndex(indexKey);
+  const merged = [...current];
+  for (const candidate of candidates) if (!merged.includes(candidate)) merged.push(candidate);
+  if (merged.length !== current.length) {
+    try {
+      writeIndex(indexKey, merged);
+    } catch (error) {
+      // The data record is still readable even when quota pressure blocks repair.
+      console.warn('Failed to repair memory index:', indexKey, error);
+    }
+  }
+  return merged;
+}
+
+function rawIndexEntries(userId: string): string[] {
+  const prefix = `${STORAGE_PREFIX}:raw:${userId}:`;
+  return storageKeys()
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length));
+}
+
+function dailyIndexEntries(userId: string): string[] {
+  const prefix = `${STORAGE_PREFIX}:daily:${userId}:`;
+  return storageKeys()
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length));
+}
+
+function articleIndexEntries(userId: string, wordId: string, localDate: string): string[] {
+  const prefix = `${STORAGE_PREFIX}:article:${userId}:${wordId}:`;
+  const suffix = `:${localDate}`;
+  return storageKeys()
+    .filter((key) => key.startsWith(prefix) && key.endsWith(suffix))
+    .map((key) => key.slice(prefix.length, key.length - suffix.length));
+}
+
+function stateIndexEntries(userId: string): string[] {
+  const prefix = `${STORAGE_PREFIX}:state:${userId}:`;
+  return storageKeys()
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length));
+}
+
+function taskIndexEntries(userId: string): string[] {
+  const prefix = `${STORAGE_PREFIX}:task:${userId}:`;
+  return storageKeys()
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length));
+}
+
 export class LocalStorageMemoryStorage implements MemoryStorage {
+  async getAllArticleEvidence(userId: string): Promise<ArticleWordEvidence[]> {
+    const prefix = `${STORAGE_PREFIX}:article:${userId}:`;
+    return storageKeys().filter(key => key.startsWith(prefix))
+      .map(key => readJSON<ArticleWordEvidence>(key))
+      .filter((row): row is ArticleWordEvidence => Boolean(row && row.userId === userId && row.clickedOccurrenceCount > 0));
+  }
+
+  async getMeta<T>(key: string): Promise<T | null> {
+    return readJSON<T>(`${STORAGE_PREFIX}:meta:${key}`);
+  }
+
+  async setMeta(key: string, value: unknown): Promise<void> {
+    if (!getStorage()) throw new Error('学习记录存储不可用。');
+    writeJSON(`${STORAGE_PREFIX}:meta:${key}`, value);
+  }
+
+  async getWordDailyEvidence(userId: string, wordId: string): Promise<DailyWordEvidence[]> {
+    const rows: DailyWordEvidence[] = [];
+    for (const entry of repairIndex(KEYS.dailyEvidenceIndex(userId), dailyIndexEntries(userId))) {
+      if (!entry.startsWith(`${wordId}:`)) continue;
+      const row = await this.getDailyEvidence(userId, wordId, entry.slice(wordId.length + 1));
+      if (row) rows.push(row);
+    }
+    return rows;
+  }
+  async getAllDailyEvidence(userId: string): Promise<DailyWordEvidence[]> {
+    const prefix = `${STORAGE_PREFIX}:daily:${userId}:`;
+    return storageKeys().filter(key => key.startsWith(prefix))
+      .map(key => readJSON<DailyWordEvidence>(key))
+      .filter((row): row is DailyWordEvidence => Boolean(row && row.userId === userId));
+  }
   // ==================== 原始事件 ====================
 
   async saveRawEvent(event: RawWordEvent): Promise<void> {
@@ -101,10 +204,14 @@ export class LocalStorageMemoryStorage implements MemoryStorage {
 
     // 读取现有事件
     const events = readJSON<RawWordEvent[]>(key) || [];
-    events.push(event);
+    const merged = mergeRawEvents(events, [event]);
+    if (merged.length === events.length && merged.every((event, index) => event === events[index])) {
+      addToIndex(KEYS.rawEventsIndex(userId), `${wordId}:${localDate}`);
+      return;
+    }
 
     // 保存
-    writeJSON(key, events);
+    writeJSON(key, merged);
 
     // 更新索引
     addToIndex(KEYS.rawEventsIndex(userId), `${wordId}:${localDate}`);
@@ -124,8 +231,7 @@ export class LocalStorageMemoryStorage implements MemoryStorage {
 
     for (const [key, batch] of groups) {
       const existing = readJSON<RawWordEvent[]>(key) || [];
-      existing.push(...batch);
-      writeJSON(key, existing);
+      writeJSON(key, mergeRawEvents(existing, batch));
       const sample = batch[0];
       addToIndex(
         KEYS.rawEventsIndex(sample.userId),
@@ -162,9 +268,11 @@ export class LocalStorageMemoryStorage implements MemoryStorage {
     const allEvents: RawWordEvent[] = [];
 
     // 遍历索引找到相关日期
-    const index = readIndex(KEYS.rawEventsIndex(userId));
+    const index = repairIndex(KEYS.rawEventsIndex(userId), rawIndexEntries(userId));
     for (const entry of index) {
-      const [entryWordId, entryDate] = entry.split(':');
+      const parsed = splitWordDateIndexEntry(entry);
+      if (!parsed) continue;
+      const [entryWordId, entryDate] = parsed;
       if (entryWordId === wordId && entryDate >= startDate && entryDate <= endDate) {
         const events = await this.getRawEventsByDate(userId, wordId, entryDate);
         allEvents.push(...events);
@@ -203,7 +311,7 @@ export class LocalStorageMemoryStorage implements MemoryStorage {
     localDate: string
   ): Promise<ArticleWordEvidence[]> {
     const indexKey = KEYS.articleEvidenceIndex(userId, wordId, localDate);
-    const articleIds = readIndex(indexKey);
+    const articleIds = repairIndex(indexKey, articleIndexEntries(userId, wordId, localDate));
 
     const evidences: ArticleWordEvidence[] = [];
     for (const articleId of articleIds) {
@@ -238,11 +346,13 @@ export class LocalStorageMemoryStorage implements MemoryStorage {
   }
 
   async getUnfinalizedDailyEvidence(userId: string): Promise<DailyWordEvidence[]> {
-    const index = readIndex(KEYS.dailyEvidenceIndex(userId));
+    const index = repairIndex(KEYS.dailyEvidenceIndex(userId), dailyIndexEntries(userId));
     const evidences: DailyWordEvidence[] = [];
 
     for (const entry of index) {
-      const [wordId, localDate] = entry.split(':');
+      const parsed = splitWordDateIndexEntry(entry);
+      if (!parsed) continue;
+      const [wordId, localDate] = parsed;
       const evidence = await this.getDailyEvidence(userId, wordId, localDate);
       if (evidence && !evidence.finalizedAt) {
         evidences.push(evidence);
@@ -256,11 +366,13 @@ export class LocalStorageMemoryStorage implements MemoryStorage {
     userId: string,
     localDate: string
   ): Promise<DailyWordEvidence[]> {
-    const index = readIndex(KEYS.dailyEvidenceIndex(userId));
+    const index = repairIndex(KEYS.dailyEvidenceIndex(userId), dailyIndexEntries(userId));
     const evidences: DailyWordEvidence[] = [];
 
     for (const entry of index) {
-      const [wordId, entryDate] = entry.split(':');
+      const parsed = splitWordDateIndexEntry(entry);
+      if (!parsed) continue;
+      const [wordId, entryDate] = parsed;
       if (entryDate === localDate) {
         const evidence = await this.getDailyEvidence(userId, wordId, localDate);
         if (evidence && !evidence.finalizedAt) {
@@ -319,7 +431,7 @@ export class LocalStorageMemoryStorage implements MemoryStorage {
   }
 
   async getAllMemoryStates(userId: string): Promise<WordMemoryState[]> {
-    const index = readIndex(KEYS.memoryStateIndex(userId));
+    const index = repairIndex(KEYS.memoryStateIndex(userId), stateIndexEntries(userId));
     const states: WordMemoryState[] = [];
 
     for (const wordId of index) {
@@ -345,7 +457,7 @@ export class LocalStorageMemoryStorage implements MemoryStorage {
   }
 
   async getPendingFinalizationTasks(userId: string): Promise<FinalizationTask[]> {
-    const index = readIndex(KEYS.finalizationTaskIndex(userId));
+    const index = repairIndex(KEYS.finalizationTaskIndex(userId), taskIndexEntries(userId));
     const tasks: FinalizationTask[] = [];
 
     for (const localDate of index) {
