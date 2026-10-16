@@ -34,6 +34,52 @@ function launchCode(code: string): ChildProcess {
   return spawn(process.execPath, ['--input-type=module', '--eval', code], { stdio: 'ignore', windowsHide: true });
 }
 
+test('default readiness checks honor the configured Kokoro port without changing the process environment', async () => {
+  const originalPort = process.env.TTS_KOKORO_PORT;
+  const server = healthServer(() => ({ ok: true, engine: 'kokoro-js', ready: true }));
+  const baseUrl = await listen(server);
+  try {
+    const result = await ensureLocalKokoro({
+      environment: { TTS_KOKORO_PORT: new URL(baseUrl).port },
+      log: () => {}, launch: () => { throw new Error('must not launch a duplicate engine'); },
+    });
+    assert.equal(result.reused, true);
+    assert.equal(result.child, null);
+    assert.equal(process.env.TTS_KOKORO_PORT, originalPort);
+  } finally {
+    await close(server);
+  }
+});
+
+test('default Kokoro readiness keeps port 8880 for an unset or blank environment value', async t => {
+  const urls: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: string) => {
+    urls.push(input);
+    return new Response(JSON.stringify({ ok: true, engine: 'kokoro-js', ready: true }));
+  });
+  for (const environment of [{}, { TTS_KOKORO_PORT: '' }, { TTS_KOKORO_PORT: '  ' }]) {
+    assert.equal((await ensureLocalKokoro({ environment, log: () => {},
+      launch: () => { throw new Error('must not launch'); } })).reused, true);
+  }
+  assert.deepEqual(urls, Array(3).fill('http://127.0.0.1:8880/health'));
+});
+
+test('invalid configured ports fail before startup and explicit readiness overrides still work', async () => {
+  for (const TTS_KOKORO_PORT of ['0', '-1', '65536', '8881.5', '1e3', 'Infinity', '8881/v1', 'http://remote.test']) {
+    await assert.rejects(ensureLocalKokoro({ environment: { TTS_KOKORO_PORT }, log: () => {},
+      launch: () => { throw new Error('invalid ports must not launch'); } }), /TTS_KOKORO_PORT.*整数/);
+  }
+  const server = healthServer(() => ({ ok: true, engine: 'kokoro-js', ready: true }));
+  const baseUrl = await listen(server);
+  try {
+    const result = await ensureLocalKokoro({ baseUrl, environment: { TTS_KOKORO_PORT: 'invalid' },
+      log: () => {}, launch: () => { throw new Error('must not launch'); } });
+    assert.equal(result.reused, true);
+  } finally {
+    await close(server);
+  }
+});
+
 test('a healthy Kokoro service is reused and remains running after launcher cleanup', async () => {
   const server = healthServer(() => ({ ok: true, engine: 'kokoro-js', ready: true }));
   const baseUrl = await listen(server);

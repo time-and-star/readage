@@ -8,6 +8,7 @@ import { DictionarySourceIssues } from './DictionarySourceIssues';
 import { SpeechFeedback } from './SpeechControls';
 import { ForgettingCurvePanel } from './ForgettingCurvePanel';
 import { FlashcardStudySettings } from './FlashcardStudySettings';
+import { FlashcardHeadword } from './FlashcardHeadword';
 import { WordMemoryDetailsPanel } from './WordMemoryDetailsPanel';
 import { buildWordMemoryDetails } from '../lib/wordMemoryDetails';
 import { resolveLearningWordIds } from '../lib/dictionaryClient';
@@ -21,6 +22,7 @@ import {
   advanceFlashcardSession,
   buildFlashcardQueue,
   correctFlashcardRating,
+  getFlashcardIdentityWordIds,
   getManagedFlashcardWordIds,
   previewFlashcardIntervals,
   submitFlashcardRating,
@@ -152,12 +154,12 @@ export const FlashcardReviewScreen: React.FC<FlashcardReviewScreenProps> = ({ na
     void (async () => {
       try {
         await store.ensureReady();
-        const [nextStates, nextPreferences] = await Promise.all([
+        let [nextStates, nextPreferences] = await Promise.all([
           store.system.getReadingVerificationMemoryStates(store.userId),
           store.system.getFlashcardStudyPreferences(store.userId),
         ]);
         if (!active) return;
-        const candidates = nextStates.map(state => state.wordId);
+        const candidates = getFlashcardIdentityWordIds(nextStates, nextPreferences);
         const nextCanonical = new Map<string, string>();
         let resolverTimer: ReturnType<typeof setTimeout> | undefined;
         try {
@@ -171,6 +173,13 @@ export const FlashcardReviewScreen: React.FC<FlashcardReviewScreenProps> = ({ na
           if (active) setIdentityNotice('词形归并暂不可用，已按现有词汇记录准备词卡。');
         } finally {
           if (resolverTimer) clearTimeout(resolverTimer);
+        }
+        if (!active) return;
+        const repairTargets = new Set(nextStates.filter(state => state.fsrsReviews
+          .some(review => review.source === undefined && review.rating === 3)).map(state => state.wordId));
+        const repairIdentities = new Map([...nextCanonical].filter(([, canonical]) => repairTargets.has(canonical)));
+        if (repairIdentities.size && await store.repairCanonicalRecallHistory(repairIdentities)) {
+          nextStates = await store.system.getReadingVerificationMemoryStates(store.userId);
         }
         if (!active) return;
         setStates(nextStates);
@@ -483,13 +492,19 @@ export const FlashcardReviewScreen: React.FC<FlashcardReviewScreenProps> = ({ na
     const targets = new Set(wordIds);
     // Keep legacy aliases excluded even if the dictionary resolver later goes offline.
     for (const [alias, canonical] of canonicalWordIds) if (targets.has(canonical)) targets.add(alias);
-    await store.updateFlashcardWords([...targets], action);
+    if (action === 'resume') {
+      await store.restoreFlashcardWords(wordIds.map(wordId => ({ wordId,
+        relatedWordIds: [...targets].filter(id => id === wordId || canonicalWordIds.get(id) === wordId) })));
+    } else await store.updateFlashcardWords([...targets], action);
     await refreshStudyPlan();
   };
 
   const importStudyWords = async (wordIds: string[]) => {
-    const existingStates = await store.system.getReadingVerificationMemoryStates(store.userId);
-    const existingIds = existingStates.map(state => state.wordId);
+    const [existingStates, existingPreferences] = await Promise.all([
+      store.system.getReadingVerificationMemoryStates(store.userId),
+      store.system.getFlashcardStudyPreferences(store.userId),
+    ]);
+    const existingIds = getFlashcardIdentityWordIds(existingStates, existingPreferences);
     const ids = await resolveLearningWordIds(existingIds);
     const nextCanonical = new Map(existingIds.map((word, index) => [word, ids[index]]));
     wordIds.forEach(word => nextCanonical.set(word, word));
@@ -551,7 +566,7 @@ export const FlashcardReviewScreen: React.FC<FlashcardReviewScreenProps> = ({ na
       {savedMessage && !rated && <p className="flashcard-review__feedback">{savedMessage}</p>}
 
       {queue === null ? <section className="flashcard-review__state flashcard-review__state--collection" aria-busy={loading}>
-        <div className="flashcard-collection-art" style={artworkStyle('ReadAge')} aria-hidden="true"><span className="flashcard-collection-art__edition">READAGE — A WORD COLLECTION</span><span className="flashcard-collection-art__poem">A little.<br/>Every day.</span></div>
+        <div className="flashcard-collection-art" style={artworkStyle('ReadAge')} aria-hidden="true"><span className="flashcard-collection-art__edition">ReadAge — A WORD COLLECTION</span><span className="flashcard-collection-art__poem">A little.<br/>Every day.</span></div>
         <div className="flashcard-review__state-copy">{loadError ? <><RotateCcw size={25} aria-hidden="true" /><h2>词库暂时未能打开</h2><p role="alert">{loadError}</p><button type="button" className="flashcard-review__primary" onClick={() => setRefreshKey(key => key + 1)}>重新加载 <ArrowRight size={16} aria-hidden="true" /></button></>
           : <><span className="flashcard-review__loader" aria-hidden="true" /><h2>正在准备你的词卡</h2><p role="status">读取学习记录，优先安排到期的单词。</p></>}</div>
       </section> : current ? <section className="flashcard-session" aria-label="单词回忆练习">
@@ -563,12 +578,12 @@ export const FlashcardReviewScreen: React.FC<FlashcardReviewScreenProps> = ({ na
           aria-busy={!!flipPhase || saving}>
           <div className="flashcard-sheet__hero">
           <div className="flashcard-sheet__art" aria-hidden="true" />
-          <div className="flashcard-sheet__top">{!revealed && <span className="flashcard-sheet__edition">READAGE / NO. {String(reviewedCount + 1).padStart(2, '0')}</span>}<button type="button" className="flashcard-sheet__sound" aria-label={`朗读 ${current.canonicalWordId}`} onClick={event => { event.stopPropagation(); speech.speak(current.canonicalWordId); }}><Volume2 size={19} aria-hidden="true" /></button></div>
+          <div className="flashcard-sheet__top">{!revealed && <span className="flashcard-sheet__edition">ReadAge / NO. {String(reviewedCount + 1).padStart(2, '0')}</span>}<button type="button" className="flashcard-sheet__sound" aria-label={`朗读 ${current.canonicalWordId}`} onClick={event => { event.stopPropagation(); speech.speak(current.canonicalWordId); }}><Volume2 size={19} aria-hidden="true" /></button></div>
           {!revealed ? <button ref={revealRef} type="button" className="flashcard-sheet__front" onClick={event => { event.stopPropagation(); activateCard(); }} disabled={!!flipPhase || saving} aria-label={`翻开词卡 ${current.canonicalWordId}`} aria-expanded={false} aria-controls={answerId}>
-            <h2 id={`${answerId}-word`} lang="en">{current.canonicalWordId}</h2>
-            {dictionaryCard?.phonetic && <span className="flashcard-sheet__phonetic">{dictionaryCard.phonetic}</span>}
+            <FlashcardHeadword id={`${answerId}-word`} word={current.canonicalWordId} />
+            {compactCard?.phonetic && <span className="flashcard-sheet__phonetic">{compactCard.phonetic}</span>}
           </button> :
-            <div className="flashcard-sheet__word"><h2 id={`${answerId}-word`} lang="en"><button ref={backActionRef} type="button" className="flashcard-sheet__back-action" disabled={!!flipPhase || saving || !!saveError || correctionOpen} aria-label={`${rated ? '进入下一张词卡' : '返回正面评分'}，${current.canonicalWordId}`} aria-describedby={`${answerId}-hint`} onClick={event => { event.stopPropagation(); activateCard(); }}>{current.canonicalWordId}</button></h2>{dictionaryCard?.phonetic && <p className="flashcard-sheet__phonetic">{dictionaryCard.phonetic}</p>}</div>
+            <div className="flashcard-sheet__word"><FlashcardHeadword id={`${answerId}-word`} word={current.canonicalWordId}><button ref={backActionRef} type="button" className="flashcard-sheet__back-action" disabled={!!flipPhase || saving || !!saveError || correctionOpen} aria-label={`${rated ? '进入下一张词卡' : '返回正面评分'}，${current.canonicalWordId}`} aria-describedby={`${answerId}-hint`} onClick={event => { event.stopPropagation(); activateCard(); }}>{current.canonicalWordId}</button></FlashcardHeadword>{compactCard?.phonetic && <p className="flashcard-sheet__phonetic">{compactCard.phonetic}</p>}</div>
           }
           {!revealed && <div className="flashcard-response" aria-label="选择本次回忆情况" aria-busy={saving || !!flipPhase} onClick={event => event.stopPropagation()}>
             {current.isPractice ? <div className="flashcard-response__practice"><button type="button" disabled={!!flipPhase || saving || rated} onClick={() => void rate('again')}>仍需巩固</button><button type="button" disabled={!!flipPhase || saving || rated} onClick={() => void rate('good')}>想起来了 <Check size={16} aria-hidden="true" /></button></div>
@@ -607,7 +622,7 @@ export const FlashcardReviewScreen: React.FC<FlashcardReviewScreenProps> = ({ na
                 {current.contextTexts?.[0] && <section className="flashcard-sheet__context"><h3>阅读语境</h3><p lang="en">{current.contextTexts[0]}</p></section>}
                 {!hasDictionaryDetails && compactCard?.meaningZh && compactCard.definitionEn && <section className="flashcard-sheet__context"><h3>英文释义{compactCard.partOfSpeech && <span className="flashcard-sheet__pos" lang="en"> {compactCard.partOfSpeech}</span>}</h3><p lang="en">{compactCard.definitionEn}</p></section>}
                 {!hasDictionaryDetails && !(compactCard?.meaningZh && compactCard.definitionEn) && compactCard?.partOfSpeech && <p>词性 <span className="flashcard-sheet__pos" lang="en">{compactCard.partOfSpeech}</span></p>}
-                {hasDictionaryDetails && dictionaryCard && <section className="flashcard-sheet__dictionary">{dictionaryCard.dictionarySources?.length ? <DictionarySourceSections sources={dictionaryCard.dictionarySources} initiallyExpanded={false} />
+                {hasDictionaryDetails && dictionaryCard && <section className="flashcard-sheet__dictionary">{dictionaryCard.dictionarySources?.length ? <DictionarySourceSections sources={dictionaryCard.dictionarySources} initiallyExpanded={false} preferAuthored />
                       : dictionaryCard.originalDictionaryContent ? <DictionaryOriginalContent content={dictionaryCard.originalDictionaryContent} />
                       : dictionaryCard.dictionaryRecord ? <DictionarySenseGroups record={dictionaryCard.dictionaryRecord} idPrefix={answerId} />
                       : <ol className="flashcard-sheet__legacy-senses">{dictionaryCard.senses?.map((sense, index) => <li key={index}>
@@ -625,12 +640,12 @@ export const FlashcardReviewScreen: React.FC<FlashcardReviewScreenProps> = ({ na
         {saveError && <div className="flashcard-review__error" role="alert"><p>{saveError}</p><div>{correctionRef.current ? <><button type="button" disabled={saving} onClick={() => void reloadRatedReview()}>重新读取本次评分</button><button type="button" disabled={saving} onClick={() => correctionRef.current && void correctRating(correctionRef.current.rating)}>{saving ? '保存中…' : '重试修改评分'}</button></> : <>{reloadAvailable && <button type="button" disabled={saving} onClick={() => void reloadQueue()}>重新加载词卡</button>}<button type="button" disabled={saving} onClick={() => submissionRef.current && void rate(submissionRef.current.rating)}>{saving ? '保存中…' : '重试保存'}</button></>}</div></div>}
         {!revealed && <p className="flashcard-session__hint">{current.isPractice ? '本轮巩固' : '先回忆，再选择熟悉程度。'}</p>}
       </section> : finished && initialTotal > 0 ? <section className="flashcard-review__state flashcard-review__state--collection flashcard-review__state--done">
-        <div className="flashcard-collection-art" style={artworkStyle(states[0]?.wordId ?? 'ReadAge')} aria-hidden="true"><span className="flashcard-collection-art__edition">READAGE — ONE STEP FURTHER</span><span className="flashcard-collection-art__poem">Slowly,<br/>they stay.</span></div>
+        <div className="flashcard-collection-art" style={artworkStyle(states[0]?.wordId ?? 'ReadAge')} aria-hidden="true"><span className="flashcard-collection-art__edition">ReadAge — ONE STEP FURTHER</span><span className="flashcard-collection-art__poem">Slowly,<br/>they stay.</span></div>
         <div className="flashcard-review__state-copy"><p className="flashcard-review__eyebrow">A MOMENT WELL SPENT</p><h2>这一轮，收好了</h2><p>已复习 <strong>{reviewedCount}</strong> 个词{skippedCards.length ? `，${skippedCards.length} 个词暂时跳过` : '，下一次复习已安排'}。</p>
         {nextDueLabel && <p className="flashcard-review__next">下一批词卡：{nextDueLabel}</p>}
         <div className="flashcard-review__state-actions">{skippedCards.length > 0 ? <button type="button" className="flashcard-review__primary" onClick={() => startNextBatch(skippedCards)}>重试跳过的词 <ArrowRight size={16} aria-hidden="true" /></button> : !loading && queueSummary.cards.length > 0 ? <button type="button" className="flashcard-review__primary" onClick={() => startNextBatch(queueSummary.cards)}>继续下一轮 <ArrowRight size={16} aria-hidden="true" /></button> : null}<button type="button" className="flashcard-review__text-action" onClick={onOpenReading}>去推荐阅读 <ArrowRight size={15} aria-hidden="true" /></button></div></div>
       </section> : <section className="flashcard-review__state flashcard-review__state--collection">
-        <div className="flashcard-collection-art" style={artworkStyle('ReadAge')} aria-hidden="true"><span className="flashcard-collection-art__edition">READAGE — YOUR PERSONAL COLLECTION</span><span className="flashcard-collection-art__poem">The words<br/>we keep.</span></div>
+        <div className="flashcard-collection-art" style={artworkStyle('ReadAge')} aria-hidden="true"><span className="flashcard-collection-art__edition">ReadAge — YOUR PERSONAL COLLECTION</span><span className="flashcard-collection-art__poem">The words<br/>we keep.</span></div>
         <div className="flashcard-review__state-copy"><p className="flashcard-review__eyebrow">ROOM FOR DISCOVERY</p><h2>{queueSummary.remainingNewCount ? preferences.dailyNewWordLimit === 0 ? '当前设置为仅复习' : '今日新词已学完' : states.length ? '暂时没有待学词卡' : '从阅读里，收藏第一张词卡'}</h2><p>{queueSummary.remainingNewCount ? `还有 ${queueSummary.remainingNewCount} 个待学词，调整每日新词数量后即可继续学习。` : states.length ? '词表中没有待学或到期的单词。阅读查词或导入词表，添加下一批词卡。' : '阅读时查过的词会来到这里，也可以导入自己的词表。'}</p>{nextDueLabel && <p className="flashcard-review__next">下次到期 · {nextDueLabel}</p>}<div className="flashcard-review__state-actions">{queueSummary.remainingNewCount ? <button type="button" className="flashcard-review__primary" onClick={() => setSettingsOpen(true)}>调整学习数量 <Settings2 size={15} aria-hidden="true" /></button> : <button type="button" className="flashcard-review__primary" onClick={onOpenReading}>去推荐阅读 <ArrowRight size={16} aria-hidden="true" /></button>}<button type="button" className="flashcard-review__text-action" onClick={() => setSettingsOpen(true)}>学习设置</button></div></div>
       </section>}
 

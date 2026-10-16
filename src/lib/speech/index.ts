@@ -1,10 +1,19 @@
+import { getApplicationStorage } from '../localDatabase';
 import { APP_STORAGE_PREFIX, getJsonApiHeaders } from '../apiAuth';
 import { estimateWordTimeline, mapSpokenChunks, speechWords, wordIndexAtTime, type SpokenWord } from './wordTiming';
+import { IS_ANDROID, IS_OFFLINE_APP } from '../platform/runtime';
+import { nativeBundledSpeechAdapter } from '../platform/nativeBundledSpeech';
 
 export type SpeechLanguage = 'en-US' | 'en-GB';
 export interface SpeechPreferences { lang: SpeechLanguage; rate: number }
-export interface SpeechTarget { articleId: string; startOffset: number }
-export interface SpeechOptions extends Partial<SpeechPreferences> { scope?: string; target?: SpeechTarget }
+export interface SpeechTarget {
+  articleId: string;
+  startOffset: number;
+  /** A dictionary word keeps its clicked source range even when speaking a different lemma. */
+  endOffset?: number;
+}
+export interface SpeechOptions { lang?: string; rate?: number; scope?: string; target?: SpeechTarget }
+interface SpeechSettings { lang: string; rate: number }
 export interface SpeechProgress {
   scope?: string;
   target?: SpeechTarget;
@@ -20,6 +29,9 @@ export interface SpeechTiming {
   inferenceMs?: number;
   preprocessingMs?: number;
   encodingMs?: number;
+  engineLoadMs?: number;
+  native?: boolean;
+  openingCacheHit?: boolean;
 }
 export interface SpeechState {
   status: 'idle' | 'loading' | 'speaking' | 'error';
@@ -29,7 +41,13 @@ export interface SpeechState {
   timing?: SpeechTiming;
 }
 export interface SpeechSnapshot { preferences: SpeechPreferences; state: SpeechState }
-export interface SpeechResult { provider: 'browser' | 'openai-compatible'; cancelled: boolean; fallback?: boolean }
+export interface SpeechResult { provider: 'browser' | 'openai-compatible' | 'android-offline'; cancelled: boolean; fallback?: boolean }
+
+export interface NativeSpeechAdapter {
+  maxTextLength?: number;
+  prepare?(text: string, settings: { lang: string; rate: number }, signal: AbortSignal): Promise<void>;
+  speak(text: string, settings: { lang: string; rate: number }, onProgress: (range?: { start: number; end: number; estimated?: boolean }, timing?: { elapsedMs?: number; engineLoadMs?: number; openingCacheHit?: boolean; buffering?: boolean }) => void, signal: AbortSignal): Promise<void>;
+}
 
 const PREFERENCES_KEY = `${APP_STORAGE_PREFIX}:speech-preferences`;
 const FALLBACK_NOTICE = '语音服务暂不可用，已使用设备语音。';
@@ -45,6 +63,8 @@ export interface SpeechEnvironment {
   revokeObjectURL: (url: string) => void;
   storage?: Pick<Storage, 'getItem' | 'setItem'>;
   voiceWaitMs?: number;
+  nativeSpeech?: NativeSpeechAdapter;
+  allowBrowserFallback?: boolean;
 }
 
 function normalizePreferences(value: Partial<SpeechPreferences>, base = DEFAULT_PREFERENCES): SpeechPreferences {
@@ -55,9 +75,36 @@ function normalizePreferences(value: Partial<SpeechPreferences>, base = DEFAULT_
   };
 }
 
+function speechSettings(options: SpeechOptions, preferences: SpeechPreferences): SpeechSettings {
+  let lang = options.lang || preferences.lang;
+  try { lang = Intl.getCanonicalLocales(lang)[0]; } catch { throw new SpeechFailure('朗读语言标识无效。', false); }
+  if (lang === 'fr') lang = 'fr-FR';
+  if (lang === 'ja') lang = 'ja-JP';
+  if (lang === 'en') lang = preferences.lang;
+  return { lang, rate: normalizePreferences({ rate: options.rate }, preferences).rate };
+}
+
+function speechSentences(text: string, language: string): string[] {
+  const sentences = typeof Intl.Segmenter === 'function'
+    ? Array.from(new Intl.Segmenter(language, { granularity: 'sentence' }).segment(text), part => part.segment)
+    : text.match(/[^.!?。！？]+[.!?。！？]*["')\]”’」』）]*\s*|[.!?。！？]+/g) || [text];
+  if (language.split('-')[0].toLowerCase() !== 'ja') return sentences;
+  // Some ICU versions attach an opening Japanese quote to the preceding sentence.
+  // Keep it with the following words so the opening audio ends at the actual pause.
+  let opening = '';
+  const corrected = sentences.map(sentence => {
+    const value = opening + sentence;
+    opening = value.match(/[「『（【〈《]+\s*$/)?.[0] || '';
+    return opening ? value.slice(0, -opening.length) : value;
+  });
+  if (opening) corrected[corrected.length - 1] += opening;
+  return corrected.filter(Boolean);
+}
+
 /** Preserve punctuation and paragraph breaks; split oversized sentences only at word boundaries when possible. */
-export function splitSpeechText(text: string, maxLength = 2000): string[] {
+export function splitSpeechText(text: string, maxLength = 2000, language = 'en'): string[] {
   const limit = Math.max(1, Math.floor(maxLength));
+  const sentenceSeparator = language.split('-')[0].toLowerCase() === 'ja' ? '' : ' ';
   const normalized = text.replace(/\r\n?/g, '\n').trim();
   if (!normalized) return [];
   const chunks: string[] = [];
@@ -76,9 +123,7 @@ export function splitSpeechText(text: string, maxLength = 2000): string[] {
       append(paragraph, '\n\n');
       continue;
     }
-    const sentences = typeof Intl.Segmenter === 'function'
-      ? Array.from(new Intl.Segmenter('en', { granularity: 'sentence' }).segment(paragraph), (part) => part.segment)
-      : paragraph.match(/[^.!?]+[.!?]*["')\]]*\s*|[.!?]+/g) || [paragraph];
+    const sentences = speechSentences(paragraph, language);
     let first = true;
     for (const sentence of sentences) {
       let remaining = sentence.trim();
@@ -87,11 +132,11 @@ export function splitSpeechText(text: string, maxLength = 2000): string[] {
         if (end < 1 || end > limit) end = limit;
         // Avoid cutting a UTF-16 surrogate pair at a forced boundary.
         if (end > 1 && /[\uD800-\uDBFF]/.test(remaining[end - 1])) end -= 1;
-        append(remaining.slice(0, end), first ? '\n\n' : ' ');
+        append(remaining.slice(0, end), first ? '\n\n' : sentenceSeparator);
         first = false;
         remaining = remaining.slice(end).trimStart();
       }
-      append(remaining, first ? '\n\n' : ' ');
+      append(remaining, first ? '\n\n' : sentenceSeparator);
       first = false;
     }
   }
@@ -100,7 +145,7 @@ export function splitSpeechText(text: string, maxLength = 2000): string[] {
 }
 
 /** Start with a short natural phrase, then keep CPU synthesis ahead of playback with smaller chunks. */
-export function splitRemoteSpeechText(text: string, maxLength = 2000, openingSentenceLimit = 180): string[] {
+export function splitRemoteSpeechText(text: string, maxLength = 2000, openingSentenceLimit = 180, language = 'en'): string[] {
   const normalized = text.replace(/\r\n?/g, '\n').trim();
   if (!normalized) return [];
   const limit = Math.max(1, Math.min(200, Math.floor(maxLength)));
@@ -108,25 +153,30 @@ export function splitRemoteSpeechText(text: string, maxLength = 2000, openingSen
   if (normalized.length <= openingLimit) return [normalized];
 
   const firstSentence = typeof Intl.Segmenter === 'function'
-    ? new Intl.Segmenter('en', { granularity: 'sentence' }).segment(normalized)[Symbol.iterator]().next().value?.segment
-    : normalized.match(/^[\s\S]*?[.!?]["'”’)\]]*(?=\s|$)/)?.[0];
+    ? speechSentences(normalized, language)[0]
+    : normalized.match(/^[\s\S]*?(?:[.!?]["'”’)\]]*(?=\s|$)|[。！？]["'”’)\]」』）]*)/)?.[0];
   const sentenceEnd = firstSentence?.trimEnd().length ?? normalized.length;
   let headEnd = sentenceEnd;
   if (sentenceEnd > Math.min(openingSentenceLimit, limit)) {
     const opening = normalized.slice(0, openingLimit);
-    const phraseEnds = Array.from(opening.matchAll(/[,;]["'”’)\]]*(?=\s|$)/g), (match) => match.index! + match[0].length);
+    const phraseEnds = Array.from(opening.matchAll(/(?:[,;]["'”’)\]]*(?=\s|$)|[、，；：]["'”’)\]」』）]*)/g), (match) => match.index! + match[0].length);
     const phraseEnd = phraseEnds.filter((end) => end >= openingLimit / 2).pop();
     const wordEnd = opening.search(/\s+\S*$/);
     headEnd = phraseEnd ?? (wordEnd > 0 ? wordEnd : openingLimit);
     if (headEnd > 1 && /[\uD800-\uDBFF]/.test(normalized[headEnd - 1])) headEnd -= 1;
   }
   // Both parts come from the same offsets, so repeated phrases cannot be skipped or replayed.
-  return [normalized.slice(0, headEnd).trimEnd(), ...splitSpeechText(normalized.slice(headEnd), limit)];
+  return [normalized.slice(0, headEnd).trimEnd(), ...splitSpeechText(normalized.slice(headEnd), limit, language)];
 }
 
 export function selectEnglishVoice(voices: SpeechSynthesisVoice[], lang: SpeechLanguage): SpeechSynthesisVoice | undefined {
+  return selectSpeechVoice(voices, lang);
+}
+
+export function selectSpeechVoice(voices: SpeechSynthesisVoice[], lang: string): SpeechSynthesisVoice | undefined {
   const exact = voices.filter((voice) => voice.lang.toLowerCase().replace('_', '-') === lang.toLowerCase());
-  const candidates = exact.length ? exact : voices.filter((voice) => /^en(?:[-_]|$)/i.test(voice.lang));
+  const base = lang.split('-')[0].toLowerCase();
+  const candidates = exact.length ? exact : voices.filter((voice) => voice.lang.toLowerCase().split(/[-_]/)[0] === base);
   return candidates.slice().sort((a, b) => {
     const quality = (voice: SpeechSynthesisVoice) =>
       (/natural|neural|premium|enhanced/i.test(voice.name) ? 2 : 0) + (voice.default ? 1 : 0);
@@ -196,7 +246,7 @@ export function createSpeechClient(environment: SpeechEnvironment) {
     audioCache.set(key, { blob, expiresAt: Date.now() + 10 * 60_000 });
     cachedAudioBytes += blob.size;
   };
-  let cachedStatus: { configured: boolean; provider: string; maxTextLength: number; preload: boolean; checkedAt: number } | undefined;
+  let cachedStatus: { configured: boolean; provider: string; maxTextLength: number; preload: boolean; languages: string[]; checkedAt: number } | undefined;
   const publish = (state: SpeechState) => {
     snapshot = { preferences, state: active?.timing ? { ...state, timing: { ...active.timing } } : state };
     listeners.forEach((listener) => listener());
@@ -232,14 +282,15 @@ export function createSpeechClient(environment: SpeechEnvironment) {
     });
     ensureActive(session);
   };
-  const speakBrowser = async (text: string, settings: SpeechPreferences, session: Session, notice?: string, source = text, sourceOffset = 0) => {
+  const speakBrowser = async (text: string, settings: SpeechSettings, session: Session, notice?: string, source = text, sourceOffset = 0) => {
     const synthesis = environment.getSynthesis();
     if (!synthesis) throw new SpeechFailure('当前设备无法朗读，请连接语音服务或使用支持朗读的浏览器。', false);
     await waitForVoices(synthesis, session);
     ensureActive(session);
-    const voice = selectEnglishVoice(synthesis.getVoices(), settings.lang);
+    const voice = selectSpeechVoice(synthesis.getVoices(), settings.lang);
+    if (!voice && settings.lang.split('-')[0] !== 'en') throw new SpeechFailure('当前设备没有此语言的声音，请接入对应语言的语音服务。', false);
     synthesis.cancel();
-    const chunks = splitSpeechText(text, 500);
+    const chunks = splitSpeechText(text, 500, settings.lang);
     const mapped = mapSpokenChunks(source, chunks).map(words => words.map(word => ({ ...word, start: word.start + sourceOffset, end: word.end + sourceOffset })));
     for (const [index, chunk] of chunks.entries()) {
       ensureActive(session);
@@ -308,6 +359,7 @@ export function createSpeechClient(environment: SpeechEnvironment) {
         configured: data.configured === true,
         provider: data.provider,
         preload: data.preload === true,
+        languages: Array.isArray(data.languages) ? data.languages.filter((lang: unknown) => typeof lang === 'string') : ['en-US', 'en-GB'],
         maxTextLength: Number.isFinite(data.maxTextLength) ? Math.max(1, Math.min(2000, Math.floor(data.maxTextLength))) : 2000,
         checkedAt: Date.now(),
       };
@@ -318,7 +370,7 @@ export function createSpeechClient(environment: SpeechEnvironment) {
       session.requests.delete(controller);
     }
   };
-  const fetchAudio = async (text: string, settings: SpeechPreferences, controller: AbortController) => {
+  const fetchAudio = async (text: string, settings: SpeechSettings, controller: AbortController) => {
     const timeout = setTimeout(() => controller.abort(), 130_000);
     try {
       const response = await environment.fetch('/api/tts/synthesize', {
@@ -350,7 +402,7 @@ export function createSpeechClient(environment: SpeechEnvironment) {
       clearTimeout(timeout);
     }
   };
-  const synthesize = async (text: string, settings: SpeechPreferences, session: Session): Promise<Blob> => {
+  const synthesize = async (text: string, settings: SpeechSettings, session: Session): Promise<Blob> => {
     ensureActive(session);
     const key = JSON.stringify([text, settings.lang, settings.rate]);
     const cached = audioCache.get(key);
@@ -414,25 +466,31 @@ export function createSpeechClient(environment: SpeechEnvironment) {
       audio = environment.createAudio();
       audio.src = url;
       const notice = session.target ? '正在朗读 · 词框位置为估计' : undefined;
-      publish({ status: 'speaking', scope: session.scope, notice });
       await new Promise<void>((resolve, reject) => {
         let timer: ReturnType<typeof setInterval> | undefined;
+        let finished = false;
+        let started = false;
         const update = () => {
-          if (audio!.paused || session.controller.signal.aborted || active !== session) return;
+          if (finished || audio!.paused || session.controller.signal.aborted || active !== session) return;
           const timeline = estimateWordTimeline(chunk, audio!.duration);
           const word = words[wordIndexAtTime(timeline, audio!.currentTime)];
           if (word && session.target) publishProgress(session, word, true);
         };
         const playing = () => {
-          if (session.controller.signal.aborted || active !== session) return;
-          if (session.timing && session.timing.firstPlaybackMs === undefined) {
-            session.timing.firstPlaybackMs = performance.now() - session.startedAt!;
+          if (finished || session.controller.signal.aborted || active !== session) return;
+          if (!started) {
+            started = true;
+            if (session.timing && session.timing.firstPlaybackMs === undefined) {
+              session.timing.firstPlaybackMs = performance.now() - session.startedAt!;
+            }
             publish({ status: 'speaking', scope: session.scope, notice });
           }
           update();
           if (!timer && session.target) timer = setInterval(update, 60);
         };
         const finish = (error?: Error) => {
+          if (finished) return;
+          finished = true;
           clearInterval(timer);
           audio!.onplaying = null;
           audio!.ontimeupdate = null;
@@ -449,7 +507,7 @@ export function createSpeechClient(environment: SpeechEnvironment) {
         audio!.onloadedmetadata = update;
         audio!.onerror = () => finish(new SpeechFailure('音频播放失败，请重试。'));
         session.controller.signal.addEventListener('abort', abort, { once: true });
-        try { Promise.resolve(audio!.play()).catch((error) => finish(new SpeechFailure(error?.name === 'NotAllowedError'
+        try { Promise.resolve(audio!.play()).then(playing, (error) => finish(new SpeechFailure(error?.name === 'NotAllowedError'
           ? '浏览器阻止了音频播放，请再次点击朗读。' : '音频播放失败，请重试。', error?.name !== 'NotAllowedError'))); }
         catch { finish(new SpeechFailure('音频播放失败，请重试。')); }
       });
@@ -461,16 +519,26 @@ export function createSpeechClient(environment: SpeechEnvironment) {
   /** Prepare only the local engine's opening audio, without playing or changing visible speech state. */
   const prepareText = (text: string, options: SpeechOptions = {}): (() => void) => {
     if (!text.trim() || active) return () => {};
+    if (environment.nativeSpeech && !environment.nativeSpeech.prepare) return () => {};
+    let settings: SpeechSettings;
+    try { settings = speechSettings(options, preferences); } catch { return () => {}; }
     preparations.forEach(session => session.controller.abort());
     preparations.clear();
     const session: Session = { controller: new AbortController(), scope: options.scope, requests: new Set(), background: true };
     preparations.add(session);
-    const settings = normalizePreferences(options, preferences);
+    if (environment.nativeSpeech) {
+      // Optional native preparation owns no audio focus and never delays rendering.
+      const opening = splitSpeechText(text, environment.nativeSpeech.maxTextLength ?? 2000, settings.lang)[0];
+      void environment.nativeSpeech.prepare!(opening, settings, session.controller.signal)
+        .catch(() => { /* A preparation failure is retried by the explicit reading action. */ })
+        .finally(() => preparations.delete(session));
+      return () => { if (!session.handingOff) session.controller.abort(); };
+    }
     void (async () => {
       const config = await status(session);
       ensureActive(session);
-      if (!config.preload || !config.configured || config.provider !== 'openai-compatible') return;
-      const opening = splitRemoteSpeechText(text, config.maxTextLength, 100)[0];
+      if (!config.preload || !config.configured || config.provider !== 'openai-compatible' || !config.languages.includes(settings.lang)) return;
+      const opening = splitRemoteSpeechText(text, config.maxTextLength, 100, settings.lang)[0];
       if (opening) await synthesize(opening, settings, session);
     })().catch(() => { /* Optional preparation never interrupts reading or triggers device speech. */ })
       .finally(() => preparations.delete(session));
@@ -482,36 +550,74 @@ export function createSpeechClient(environment: SpeechEnvironment) {
     const session: Session = { controller: new AbortController(), scope: options.scope, requests: new Set(), target: options.target,
       startedAt: performance.now(), timing: { statusMs: 0 } };
     active = session;
-    const settings = normalizePreferences(options, preferences);
+    let settings: SpeechSettings = preferences;
     let provider: SpeechResult['provider'] = 'browser';
     let completedChunks = 0;
-    let chunks = splitSpeechText(text);
+    let chunks: string[] = [];
     let fallback = false;
     let fallbackNotice = FALLBACK_NOTICE;
     publish({ status: 'loading', scope: session.scope });
     try {
+      settings = speechSettings(options, preferences);
+      chunks = splitSpeechText(text, environment.nativeSpeech?.maxTextLength ?? 2000, settings.lang);
       if (!chunks.length) return { provider, cancelled: false };
+      if (environment.nativeSpeech) {
+        provider = 'android-offline';
+        const mapped = mapSpokenChunks(text, chunks);
+        for (const [index, chunk] of chunks.entries()) {
+          ensureActive(session);
+          await environment.nativeSpeech.speak(chunk, settings, (range, timing) => {
+            if (session.controller.signal.aborted || active !== session) return;
+            if (timing?.buffering) {
+              publishProgress();
+              publish({ status: 'loading', scope: session.scope });
+              return;
+            }
+            if (session.timing && session.timing.firstPlaybackMs === undefined) {
+              session.timing.firstPlaybackMs = performance.now() - session.startedAt!;
+              session.timing.native = true;
+              if (timing?.elapsedMs !== undefined) session.timing.firstAudioMs = timing.elapsedMs;
+              if (timing?.engineLoadMs !== undefined) session.timing.engineLoadMs = timing.engineLoadMs;
+              session.timing.openingCacheHit = timing?.openingCacheHit;
+            }
+            publish({ status: 'speaking', scope: session.scope });
+            if (range && session.target) {
+              const local = speechWords(chunk);
+              const position = local.findIndex(word => range.start >= word.start && range.start < word.end);
+              if (position >= 0) publishProgress(session, mapped[index][position], range.estimated === true);
+            }
+          }, session.controller.signal);
+          ensureActive(session);
+        }
+        return { provider, cancelled: false };
+      }
       try {
         const config = await status(session);
         session.timing!.statusMs = performance.now() - session.startedAt!;
         ensureActive(session);
-        if (config.configured && config.provider === 'openai-compatible') {
+        if (config.configured && config.provider === 'openai-compatible' && config.languages.includes(settings.lang)) {
           provider = 'openai-compatible';
-          chunks = splitRemoteSpeechText(text, config.maxTextLength, config.preload ? 100 : 180);
+          chunks = splitRemoteSpeechText(text, config.maxTextLength, config.preload ? 100 : 180, settings.lang);
           const mapped = mapSpokenChunks(text, chunks);
           let blob = await synthesize(chunks[0], settings, session);
           session.timing!.firstAudioMs = performance.now() - session.startedAt!;
           if (session.timing!.cache !== 'browser') Object.assign(session.timing!, audioTimings.get(blob));
           for (let index = 0; index < chunks.length; index += 1) {
             ensureActive(session);
+            let nextSettled = false;
             // Capture rejection immediately: prefetch failure must never become an unhandled rejection during playback.
             const next = index + 1 < chunks.length
               ? synthesize(chunks[index + 1], settings, session).then(
-                (value) => ({ ok: true as const, value }), (error) => ({ ok: false as const, error })) : undefined;
+                (value) => { nextSettled = true; return { ok: true as const, value }; },
+                (error) => { nextSettled = true; return { ok: false as const, error }; }) : undefined;
             await playAudio(blob, session, chunks[index], mapped[index]);
             ensureActive(session);
             completedChunks += 1;
             if (next) {
+              if (!nextSettled) {
+                publishProgress();
+                publish({ status: 'loading', scope: session.scope });
+              }
               const result = await next;
               if (result.ok === false) throw result.error;
               blob = result.value;
@@ -523,14 +629,18 @@ export function createSpeechClient(environment: SpeechEnvironment) {
         ensureActive(session);
         session.requests.forEach((controller) => controller.abort());
         if (error instanceof SpeechFailure && !error.allowFallback) throw error;
+        if (environment.allowBrowserFallback === false) throw error;
         if (error instanceof SpeechFailure) fallbackNotice = error.fallbackNotice || `${error.message} 已使用设备语音。`;
         fallback = true;
         cachedStatus = undefined;
       }
+      if (environment.allowBrowserFallback === false) throw new SpeechFailure('本机离线声音尚未就绪，请检查声音包后重试。', false);
       provider = 'browser';
-      const unread = chunks.slice(completedChunks).join('\n\n');
-      const completedWords = chunks.slice(0, completedChunks).map(chunk => speechWords(chunk).length).reduce((sum, count) => sum + count, 0);
-      const sourceStart = speechWords(text)[completedWords]?.start ?? 0;
+      const unread = chunks.slice(completedChunks).join(settings.lang === 'ja-JP' ? '' : '\n\n');
+      // Forced Japanese boundaries can split a word; counting words in the original
+      // text would then skip part of the unread chunk. Follow the completed offsets.
+      const sourceStart = completedChunks
+        ? mapSpokenChunks(text, chunks.slice(0, completedChunks)).at(-1)?.at(-1)?.end ?? 0 : 0;
       await speakBrowser(unread, settings, session, fallback ? fallbackNotice : undefined, text.slice(sourceStart), sourceStart);
       ensureActive(session);
       return { provider, cancelled: false, fallback };
@@ -564,7 +674,7 @@ export function createSpeechClient(environment: SpeechEnvironment) {
 }
 
 function browserStorage(): Storage | undefined {
-  try { return typeof window !== 'undefined' ? window.localStorage : undefined; } catch { return undefined; }
+  return getApplicationStorage();
 }
 const speechClient = createSpeechClient({
   fetch: (input, init) => fetch(input, init),
@@ -574,6 +684,8 @@ const speechClient = createSpeechClient({
   createObjectURL: (blob) => URL.createObjectURL(blob),
   revokeObjectURL: (url) => URL.revokeObjectURL(url),
   storage: browserStorage(),
+  ...(IS_ANDROID ? { nativeSpeech: nativeBundledSpeechAdapter } : {}),
+  allowBrowserFallback: !IS_OFFLINE_APP,
 });
 
 /** A new request replaces current playback and cancels outstanding synthesis. */

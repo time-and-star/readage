@@ -11,8 +11,8 @@ import type {
   MagazineSyncResult,
 } from '../../src/types';
 import { articleContentFingerprint } from '../../src/lib/articleContent';
-import { getArticleCefrLevel } from '../../src/lib/articleLevel';
 import { issueFileKey, MAGAZINE_SOURCES, parseIssueId } from './config';
+import { loadCatalogArticleSummaries } from './catalogArticleCache';
 import {
   getRecommendationPoolRotationDate,
   selectDailyRecommendationStubIds,
@@ -67,6 +67,7 @@ export function mergeConfiguredSourceSummaries(
       displayName: source.displayName,
       levelHint: source.levelHint,
       topic: source.topic,
+      sourceKind: source.sourceKind,
       issueCount: stored?.issueCount ?? 0,
     };
   });
@@ -135,6 +136,7 @@ export async function loadIndex(): Promise<MagazineCatalogIndex> {
       displayName: s.displayName,
       levelHint: s.levelHint,
       topic: s.topic,
+      sourceKind: s.sourceKind,
       issueCount: 0,
     })),
     issues: [],
@@ -160,6 +162,7 @@ export async function rebuildIndexFromIssues(issues: MagazineIssue[], lastSyncAt
     displayName: s.displayName,
     levelHint: s.levelHint,
     topic: s.topic,
+    sourceKind: s.sourceKind,
     issueCount: counts.get(s.id) || 0,
   }));
   const index: MagazineCatalogIndex = {
@@ -247,38 +250,16 @@ export async function loadCatalogArticlePage(
     throw error;
   }
 
-  const rows = (await Promise.all(names.map(async (name): Promise<MagazineCatalogArticleStub | null> => {
-    try {
-      const article = JSON.parse(await fs.readFile(path.join(directory, name), 'utf8')) as Article;
-      const level = getArticleCefrLevel(article);
-      const issueId = article.magazineIssueId || '';
-      const sourceId = article.magazineSourceId || '';
-      if (!article.id || !level || level !== options.level || !issueId || !sourceId) return null;
-
-      const issue = issues.get(issueId);
-      const sourceName = sourceNames.get(sourceId) || sourceId;
-      const issueLabel = issue?.issueLabel || article.date || issueId;
-      const haystack = [article.title, article.description, sourceName, issueLabel]
-        .join(' ')
-        .toLocaleLowerCase();
-      if (normalizedQuery && !haystack.includes(normalizedQuery)) return null;
-
-      return {
-        id: article.id,
-        title: article.title,
-        description: article.description,
-        wordCount: article.content.join(' ').trim().split(/\s+/).filter(Boolean).length,
-        level,
-        sourceId,
-        sourceName,
-        issueId,
-        issueLabel,
-        date: article.date || issue?.publishedAt || issueLabel,
-      } satisfies MagazineCatalogArticleStub;
-    } catch {
-      return null;
-    }
-  }))).filter((article): article is MagazineCatalogArticleStub => article !== null);
+  const summaries = await loadCatalogArticleSummaries(names.map(name => path.join(directory, name)));
+  const rows = summaries.flatMap((article): MagazineCatalogArticleStub[] => {
+    if (article.level !== options.level) return [];
+    const issue = issues.get(article.issueId);
+    const sourceName = sourceNames.get(article.sourceId) || article.sourceId;
+    const issueLabel = issue?.issueLabel || article.date || article.issueId;
+    const haystack = [article.title, article.description, sourceName, issueLabel].join(' ').toLocaleLowerCase();
+    if (normalizedQuery && !haystack.includes(normalizedQuery)) return [];
+    return [{ ...article, sourceName, issueLabel, date: article.date || issue?.publishedAt || issueLabel }];
+  });
 
   rows.sort((a, b) => {
     const byDate = b.date.localeCompare(a.date);

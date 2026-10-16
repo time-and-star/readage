@@ -4,13 +4,13 @@
 
 当前接入 `native-reviewed`、`ecdict`、可选 WordNet 和用户导入的 MDX，保持现有英语页面、教学和导出模型。学习概况底部的“设置与工具 → 词典设置”提供紧凑来源卡片、拖动排序和浏览器 MDX 文件导入。MDX 原文经安全节点转换后展示，不加载词库脚本、样式、图片或音频；没有新增真实日语分析或词库。管理和安装属于应用层，公共 v1 查询契约保持不变。
 
-## ReadAge 自编词典接入
+## readge 自编词典接入
 
-阅读查词、全局搜索、复习词卡及词卡内继续查词共用 `fetchWordCard` 和版本缓存。单词与短语都先查询已启用词典，未收录时才提示翻译。导出、教学兼容层及浏览器扩展通过兼容 API 访问同一运行时。将 `native-reviewed` 启用、排在首位并设为默认后，所有这些入口优先返回完整 ReadAge 自编词库；其他已启用词典继续提供独立来源内容。保留该来源 ID 是为了沿用已保存的来源设置，不代表仅加载审核样本。
+阅读查词、全局搜索、复习词卡及词卡内继续查词共用 `fetchWordCard` 和版本缓存。单词与短语都先查询已启用词典，未收录时才提示翻译。导出、教学兼容层及浏览器扩展通过兼容 API 访问同一运行时。将 `native-reviewed` 启用、排在首位并设为默认后，所有这些入口优先返回完整 readge 自编词库；其他已启用词典继续提供独立来源内容。保留该来源 ID 是为了沿用已保存的来源设置，不代表仅加载审核样本。
 
 词典设置保存后，当前阅读、搜索、复习和嵌套查词立即重新查询；刷新不额外记录查词证据。既有学习身份、存储键及复习安排保持不变。2026-10-08 从桌面 `词典/readage` 的当前发布脚本装配得到 **17,974 个词条、30,538 个义项、0 个待编占位词条**。这是实际自编词库，与阅读应用的 `curated-50.jsonl` 编辑实验样本不同。
 
-`npm run dictionary:import-readage -- "<ReadAge 项目目录>"` 按该目录 `index.html` 引用顺序装配数据，执行原项目数据校验；不扫描备份或草稿脚本。输出位于 `data/dictionary/readage`，包括完整原数据的压缩块、字节索引与数量/哈希清单。服务器按词条读取，词库不进入网页包。更新源词库后重新导入并重启服务。
+`npm run dictionary:import-readage -- "<readge 项目目录>"` 按该目录 `index.html` 引用顺序装配数据，执行原项目数据校验；不扫描备份或草稿脚本。输出位于 `data/dictionary/readage`，包括完整原数据的压缩块、字节索引与数量/哈希清单。服务器按词条读取，词库不进入网页包。更新源词库后重新导入并重启服务。
 
 `ReadAgeAuthoredAdapter` 同时提供中性义项结构、既有英语展示投影和 `readage.authored.v1` 原数据扩展。兼容接口的各来源 `readageContent` 保留完整原词条：中文详解、例句分析、搭配例句、家族词、词源、易混辨析、纠错、语境、练习及参考来源。完整词卡展示这些模块，练习可直接选择答案。原文中的教学 HTML 通过已有安全节点解析器展示。原词库没有阅读应用的审核字段，因此接入不会虚构 `reviewed` 状态；发布例句标注为 `dictionary-source`。
 
@@ -211,6 +211,6 @@ await service.lookup({ text: 'été', language: 'fr' });
 
 ## 验证入口
 
-`dictionaryIntegration` 逐一验证所有已发布 ReadAge 词条的查询、详情、完整词卡、例句、导出及设置缓存切换；`readageEntryUi` 验证全部义项直接展示、搭配分组及逐题练习。
+真实法语来源与语言适配器的安装、词形索引和试读入口见 [法语词典试读](dictionary-french.md)。它通过已有 v1 契约注册和查询，未修改核心接口。`dictionaryIntegration` 逐一验证所有已发布 readge 词条的查询、详情、完整词卡、例句、导出及设置缓存切换。
 
 `npm run check:dictionary` 检查独立模块及示例；`npm run lint` 和 `npm run check:extension` 检查应用和扩展。`dictionaryContract`、`dictionaryAdapters`、`dictionaryCache`、`dictionaryHttp`、`dictionaryBundle` 测试覆盖注册、独立来源、版本、Unicode、批量顺序、取消、故障、身份稳定、HTTP、离线目录和浏览器产物边界。`dictionarySettings` 与 `dictionarySettingsUi` 覆盖配置持久化、立即应用、重启、校验、冲突、保存失败、拖动排序、设置页面和客户端；`dictionaryMdxImport` 验证文件安装及 MDX 格式，`dictionaryOriginalContent` 验证原文安全转换及资源限制；`myLearningScreen` 验证工具集中于概况底部及说明折叠。现有词典模型、编纂审核、学习、阅读、导出和扩展测试继续运行。

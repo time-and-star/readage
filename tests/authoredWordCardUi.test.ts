@@ -9,11 +9,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { Parser } from 'htmlparser2';
 import { createDictionaryRuntime } from '../server/dictionary/runtime';
 import { toEnglishDictionaryEntry } from '../server/dictionary/compatibility';
+import { getCompactWordCard } from '../src/lib/compactWordCard';
+import { toDictionarySourceWordCard } from '../src/lib/dictionaryClient';
 import { toDictionaryWordCard } from '../src/lib/dictionaryClient';
 import type { GrammarExplanation } from '../src/types';
 
 const temporaryDirectory = fs.mkdtempSync(path.resolve('tmp/authored-word-card-ui-'));
-await build({ entryPoints: ['src/components/ReadingLookupCard.tsx', 'src/components/WordCardPanel.tsx'],
+await build({ entryPoints: ['src/components/ReadingLookupCard.tsx', 'src/components/WordCardPanel.tsx', 'src/components/DictionarySourceSections.tsx'],
   absWorkingDir: process.cwd(), outdir: temporaryDirectory, platform: 'node', format: 'esm', bundle: true,
   packages: 'external', loader: { '.css': 'empty' }, target: 'es2022', plugins: [{
     name: 'inline-portals-for-static-render',
@@ -24,12 +26,13 @@ await build({ entryPoints: ['src/components/ReadingLookupCard.tsx', 'src/compone
   }] });
 const { ReadingLookupCard } = await import(pathToFileURL(path.join(temporaryDirectory, 'ReadingLookupCard.js')).href);
 const { WordCardPanel } = await import(pathToFileURL(path.join(temporaryDirectory, 'WordCardPanel.js')).href);
+const { DictionarySourceSections } = await import(pathToFileURL(path.join(temporaryDirectory, 'DictionarySourceSections.js')).href);
 const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
 Object.defineProperty(globalThis, 'document', { configurable: true, value: { body: {} } });
 test.after(() => {
   if (documentDescriptor) Object.defineProperty(globalThis, 'document', documentDescriptor);
   else Reflect.deleteProperty(globalThis, 'document');
-  for (const name of ['ReadingLookupCard.js', 'WordCardPanel.js']) fs.unlinkSync(path.join(temporaryDirectory, name));
+  for (const name of ['ReadingLookupCard.js', 'WordCardPanel.js', 'DictionarySourceSections.js']) fs.unlinkSync(path.join(temporaryDirectory, name));
   fs.rmdirSync(temporaryDirectory);
 });
 
@@ -60,30 +63,60 @@ test('reading lookup keeps the small card and immediately shows the authored Chi
   assert.match(html, /ReadAge 自编词典/);
   assert.match(html, /展开完整词典释义/);
   assert.match(html, /已保存/);
+  assert.match(html, /class="lookup-flashcard-control"/);
+  assert.match(html, /不收录此词/);
 });
 
-test('the small card uses authored translation even when a fallback dictionary is first', async () => {
+test('the small card respects the first matched source instead of overriding it with authored content', async () => {
   const value = await lookup('poem');
-  const authored = value.dictionarySources!.find(source => source.readageContent)!;
+  const authoredSource = value.dictionarySources!.find(source => source.readageContent)!;
+  const authored = { ...authoredSource, dictionaryRef: { ...authoredSource.dictionaryRef, dictionaryName: 'ReadAge 自编词典' } };
   const fallback = value.dictionarySources!.find(source => !source.readageContent)!;
   const result = { ...value, dictionarySources: [fallback, authored] };
   const { html } = render(ReadingLookupCard, result, { selectedText: 'poem' });
   assert.match(html, /class="reading-lookup-card"/);
-  assert.ok(html.includes(`<p class="reading-lookup-card__chinese">${authored.readageContent!.coreMeaning.zh}</p>`));
-  assert.match(html, /reading-lookup-card__source-name">ReadAge 自编词典/);
+  assert.ok(html.includes(getCompactWordCard(toDictionarySourceWordCard(fallback), 'poem').meaningZh!));
+  assert.match(html, /reading-lookup-card__source-name">ECDICT 内置词典/);
+  assert.equal(authored.dictionaryRef.dictionaryName, 'ReadAge 自编词典', 'the stored source name remains intact');
 });
 
-test('search cards prefer an enabled authored match even when another source is first', async () => {
+test('search cards preserve the selected first source and show authored content as an additional dictionary', async () => {
   const value = await lookup('adapt');
   const authored = value.dictionarySources!.find(source => source.readageContent)!;
   const fallback = value.dictionarySources!.find(source => !source.readageContent)!;
   const result = { ...value, wordOrPhrase: 'fallback-headword', dictionaryRef: fallback.dictionaryRef,
     dictionarySources: [fallback, authored] };
   const { html } = render(WordCardPanel, result);
-  assert.match(html, /aria-label="ReadAge 自编词卡"/);
-  assert.match(html, /class="word-card-hero__word">adapt<\/h3>/);
-  assert.doesNotMatch(html, /fallback-headword/);
+  assert.match(html, /aria-label="各词典释义"/);
+  assert.match(html, /class="word-card-hero__word">fallback-headword<\/h3>/);
+  assert.ok(html.indexOf('aria-label="ECDICT 内置词典"') < html.indexOf('aria-label="ReadAge 自编词典"'));
   assert.equal(result.learningTermRef?.stableId, value.learningTermRef?.stableId);
+  assert.match(html, /不收录此词/);
+});
+
+test('flashcard details put the authored dictionary first and expand only that source', async () => {
+  const value = await lookup('horse');
+  const authored = value.dictionarySources!.find(source => source.readageContent)!;
+  const fallback = value.dictionarySources!.find(source => !source.readageContent)!;
+  for (const sources of [[fallback, authored], [fallback]]) {
+    const html = renderToStaticMarkup(React.createElement(DictionarySourceSections, {
+      sources, initiallyExpanded: false, preferAuthored: true,
+    }));
+    const dictionaries: Array<Record<string, string>> = [];
+    const parser = new Parser({ onopentag(tag, attributes) {
+      if (tag === 'details' && attributes.class === 'word-card-dictionary-source') dictionaries.push(attributes);
+    } });
+    parser.end(html);
+    assert.equal(dictionaries.length, sources.length);
+    if (sources.includes(authored)) {
+      assert.equal(dictionaries[0]['aria-label'], 'ReadAge 自编词典');
+      assert.ok('open' in dictionaries[0]);
+      assert.ok(!('open' in dictionaries[1]));
+    } else {
+      assert.ok(!('open' in dictionaries[0]));
+    }
+    assert.equal(sources[0], fallback, 'presentation leaves the original source order intact');
+  }
 });
 
 test('authored child cards retain return navigation and failed learning-record retry', async () => {

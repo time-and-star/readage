@@ -8,7 +8,14 @@ export { stopChild } from './local-process.mjs';
 
 const filename = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(filename), '..');
-const KOKORO_URL = 'http://127.0.0.1:8880';
+function kokoroUrl(environment) {
+  const value = environment.TTS_KOKORO_PORT?.trim() || '8880';
+  const port = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('TTS_KOKORO_PORT 必须是 1–65535 之间的整数。');
+  }
+  return `http://127.0.0.1:${port}`;
+}
 
 async function probeHealth(baseUrl, signal) {
   const controller = new AbortController();
@@ -32,12 +39,14 @@ async function probeHealth(baseUrl, signal) {
 
 /** Start only the optional local engine. A reused service belongs to its original launcher. */
 export async function ensureLocalKokoro({
-  baseUrl = KOKORO_URL,
+  environment = process.env,
+  baseUrl = kokoroUrl(environment),
   timeoutMs = 600_000,
   pollMs = 1000,
   signal,
   launch = () => spawn(process.execPath, [path.join(root, 'scripts/kokoro-service.mjs')], {
-    cwd: root, stdio: 'inherit', env: process.env, windowsHide: true,
+    cwd: root, stdio: 'inherit',
+    env: { ...environment, TTS_KOKORO_PORT: environment.TTS_KOKORO_PORT?.trim() || '8880' }, windowsHide: true,
   }),
   log = console.log,
 } = {}) {
@@ -174,6 +183,11 @@ export async function runLocalApp({ launchApp, engines = [], signal, stopProcess
 }
 
 export async function startLocal() {
+  const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
+  if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 13)) {
+    console.error('电脑学习档案需要 Node.js 22.13 或更新版本，请更新后再启动。');
+    return 1;
+  }
   dotenv.config({ path: path.join(root, '.env'), quiet: true });
   const controller = new AbortController();
   const onSignal = () => controller.abort(new Error('本地启动已停止。'));

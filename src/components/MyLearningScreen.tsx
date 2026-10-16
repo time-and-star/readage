@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useSyncExternalStore } from 'react';
 import { ArrowUpRight, BookOpen, ChevronDown, ChevronRight, Database, Puzzle } from 'lucide-react';
 import { ArticleProgressRow, WeakPointMetric } from '../types';
 import type { WordProficiencyView } from '../lib/memoryV2';
@@ -18,7 +18,16 @@ import {
   readBackupFile,
   validateLocalDataBackup,
   getLocalDataBackupWarning,
+  downloadFullLocalBackup,
+  importFullLocalBackup,
+  importNativeFullLocalBackup,
+  importNativeRecordBackup,
 } from '../lib/localDataBackup';
+import { getLocalDatabaseSnapshot, subscribeLocalDatabase, selectLocalProfile, localDatabaseRequest } from '../lib/localDatabase';
+import type { LocalDataBackup } from '../lib/localDataBackup';
+import { flushPendingPersistentWrites } from '../lib/storage';
+import { IS_ANDROID } from '../lib/platform/runtime';
+import { nativeFiles, pickNativeFile } from '../lib/platform/nativeFiles';
 
 interface MyLearningScreenProps {
   onBack: () => void;
@@ -65,8 +74,9 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   onRetryProficiencies,
 }) => {
   const memoryStore = useMemoryStore();
+  const localDatabase = useSyncExternalStore(subscribeLocalDatabase, getLocalDatabaseSnapshot, () => null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [backupBusy, setBackupBusy] = useState<'export' | 'import' | null>(null);
+  const [backupBusy, setBackupBusy] = useState<'export' | 'full-export' | 'recovery' | 'import' | 'profile' | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [vocabularyExportBusy, setVocabularyExportBusy] = useState(false);
@@ -95,7 +105,8 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
       }
 
       const rows = buildVocabularyExportRows(exportProficiencies, dictionaryEntries);
-      downloadVocabularyCsv(buildVocabularyCsv(rows));
+      const saved = await downloadVocabularyCsv(buildVocabularyCsv(rows));
+      if (!saved) { setVocabularyExportMessage('已取消保存词汇表。'); return; }
       setVocabularyExportMessage(
         dictionaryUnavailable
           ? `已导出 ${rows.length} 个词汇；词典暂不可用，部分音标和翻译为空。`
@@ -115,7 +126,10 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
     try {
       await memoryStore.ensureReady();
       const backup = await exportLocalDataBackup({ memoryStorage: memoryStore.system.getMemoryStorageKind() });
-      downloadLocalDataBackup(backup);
+      if (IS_ANDROID && localDatabase) {
+        const result = await nativeFiles.exportSnapshot({ profileId: localDatabase.profile.id });
+        if (!result.saved) { setBackupMessage('已取消保存备份。'); return; }
+      } else downloadLocalDataBackup(backup);
       const keyCount = Object.keys(backup.localStorage).length;
       setBackupMessage(
         `已导出 ${keyCount} 项本地数据（含词汇记忆库）。文件仅保存在你的设备上。`
@@ -127,22 +141,77 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
     }
   };
 
+  const handleExportFullBackup = async () => {
+    setBackupBusy('full-export'); setBackupError(null); setBackupMessage(null);
+    try {
+      await memoryStore.ensureReady();
+      if (!await downloadFullLocalBackup()) { setBackupMessage('已取消保存完整备份。'); return; }
+      setBackupMessage('已导出完整备份，包含学习记录、文章正文及引用的本地 PDF 和插图。');
+    } catch (error) {
+      setBackupError(error instanceof Error ? error.message : '完整备份导出失败');
+    } finally { setBackupBusy(null); }
+  };
+
+  const handleSelectProfile = async (id: string) => {
+    setBackupBusy('profile'); setBackupError(null);
+    try { await flushPendingPersistentWrites(); await selectLocalProfile(id); }
+    catch (error) { setBackupError(error instanceof Error ? error.message : '档案切换失败'); setBackupBusy(null); }
+  };
+  const handleExportRecovery = async () => {
+    setBackupBusy('recovery'); setBackupError(null); setBackupMessage(null);
+    try {
+      const backup = await localDatabaseRequest<LocalDataBackup>('previous-snapshot');
+      if (IS_ANDROID && localDatabase) {
+        const result = await nativeFiles.exportSnapshot({ profileId: localDatabase.profile.id, previous: true,
+          filename: `ReadAge-before-restore-${backup.exportedAt.slice(0, 10)}.json` });
+        if (!result.saved) { setBackupMessage('已取消保存副本。'); return; }
+      } else downloadLocalDataBackup(backup, `ReadAge-before-restore-${backup.exportedAt.slice(0, 10)}.json`);
+      setBackupMessage('已导出上次恢复前的学习档案。导入该文件可还原原来的记录。');
+    } catch (error) { setBackupError(error instanceof Error ? error.message : '副本导出失败'); }
+    finally { setBackupBusy(null); }
+  };
+
+  const handleNativeImport = async () => {
+    setBackupBusy('import'); setBackupError(null); setBackupMessage(null);
+    let pickedHandle: string | undefined;
+    try {
+      const file = await pickNativeFile('backup');
+      if (!file) { setBackupBusy(null); return; }
+      pickedHandle = file.handle;
+      if (!localDatabase) throw new Error('手机学习档案尚未就绪。');
+      const full = /\.zip$/i.test(file.name);
+      if (!window.confirm(`导入将替换“${localDatabase.profile.name}”的学习进度、文章和记忆记录，不会合并两台设备的进度。恢复前的档案会保留在手机上。是否继续？`)) {
+        setBackupBusy(null); return;
+      }
+      if (full) await importNativeFullLocalBackup(file.handle);
+      else await importNativeRecordBackup(file.handle);
+      setBackupMessage('导入成功，正在刷新页面…');
+      window.setTimeout(() => window.location.reload(), 400);
+    } catch (error) { setBackupError(error instanceof Error ? error.message : '手机备份导入失败。'); setBackupBusy(null); }
+    finally { if (pickedHandle) await nativeFiles.releaseFile({ handle: pickedHandle }).catch(() => {}); }
+  };
+
   const handleImportFile = async (file: File | null) => {
     if (!file) return;
     setBackupBusy('import');
     setBackupError(null);
     setBackupMessage(null);
     try {
-      const raw = await readBackupFile(file);
-      const warning = getLocalDataBackupWarning(validateLocalDataBackup(raw));
+      const fullBackup = /\.zip$/i.test(file.name);
+      if (fullBackup && !localDatabase) throw new Error('请在电脑本地版恢复 ZIP 完整备份。');
+      const raw = fullBackup ? null : await readBackupFile(file);
+      const warning = fullBackup ? null : getLocalDataBackupWarning(validateLocalDataBackup(raw));
       const confirmed = window.confirm(
-        `${warning ? `${warning}\n\n` : ''}导入将覆盖本浏览器中当前的学习进度、文章历史与词汇记忆，且不可撤销。是否继续？`
+        `${warning ? `${warning}\n\n` : ''}${localDatabase
+          ? `导入将替换“${localDatabase.profile.name}”的学习进度、文章历史与词汇记忆。原档案会在本机保留恢复副本。是否继续？`
+          : '导入将覆盖本浏览器中当前的学习进度、文章历史与词汇记忆，且不可撤销。是否继续？'}`
       );
       if (!confirmed) {
         setBackupBusy(null);
         return;
       }
-      await importLocalDataBackup(raw);
+      if (fullBackup) await importFullLocalBackup(file);
+      else await importLocalDataBackup(raw);
       setBackupMessage('导入成功，正在刷新页面…');
       window.setTimeout(() => {
         window.location.reload();
@@ -241,8 +310,22 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
               </summary>
               <div className="learning-backup-content space-y-4">
                 <div className="space-y-3 text-xs leading-6 text-[#85786B]">
-                  <p>学习数据保存在本机浏览器。</p>
+                  <p>{localDatabase ? '学习数据保存在当前设备的本机学习档案中，清除浏览器缓存不会删除学习档案。' : '学习数据保存在本机浏览器。'}</p>
+                  {localDatabase && <label className="flex flex-wrap items-center gap-2">
+                    当前学习档案
+                    <select aria-label="当前学习档案" value={localDatabase.profile.id} disabled={backupBusy !== null}
+                      className="rounded border border-[#DED6C9] bg-white px-2 py-1 text-[#44382D]"
+                      onChange={event => void handleSelectProfile(event.target.value)}>
+                      {localDatabase.profiles.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    </select>
+                  </label>}
+                  {localDatabase && localDatabase.profiles.length > 1 && <p>不同浏览器的旧记录各自保留为独立档案。选择同一档案后，学习进度共用。</p>}
+                  {localDatabase?.error && <p role="alert" className="text-[#A94E2B]">保存暂未完成：{localDatabase.error}。请保持页面打开，应用会继续重试。</p>}
                   <div className="learning-backup-actions">
+                    {localDatabase && <button type="button" onClick={() => void handleExportFullBackup()}
+                      disabled={backupBusy !== null} aria-busy={backupBusy === 'full-export'} className={toolButtonClassName}>
+                      {backupBusy === 'full-export' ? '导出中…' : '导出完整备份'}
+                    </button>}
                     <button
                       type="button"
                       onClick={() => void handleExportVocabulary()}
@@ -263,7 +346,7 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => IS_ANDROID ? void handleNativeImport() : fileInputRef.current?.click()}
                       disabled={backupBusy !== null}
                       aria-busy={backupBusy === 'import'}
                       className={toolButtonClassName}
@@ -273,7 +356,7 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept="application/json,.json"
+                      accept={localDatabase ? 'application/json,application/zip,.json,.zip' : 'application/json,.json'}
                       aria-label="选择学习备份文件"
                       className="hidden"
                       onChange={(event) => {
@@ -285,8 +368,11 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
                   </div>
                   <p>词汇表包含词汇、音标、翻译和熟练度，CSV 文件可用 Excel 打开。</p>
                   {!proficienciesLoading && !proficienciesError && proficiencies.length === 0 && <p>阅读并产生词汇学习记录后，这里会出现可导出的词汇。</p>}
-                  <p>备份为 JSON 文件，可在本机或另一台设备导入恢复。导入前会确认覆盖当前记录。</p>
-                  <p>备份包含浏览器内的学习记录；导入文章的 PDF 原文件和插图保存在本地服务中，迁移设备时需单独迁移这些文件或重新导入文章。</p>
+                  <p>{localDatabase ? '完整备份为 ZIP，包含学习记录、文章正文及引用的本地 PDF 和插图。更换设备时安装对应应用，再导入恢复。词典和语音模型独立管理。' : '备份为 JSON 文件，可在本机或另一台设备导入恢复。导入前会确认覆盖当前记录。'}</p>
+                  <p>{localDatabase ? '“导出备份”保留原来的 JSON 格式，仅包含记录，不包含 PDF 和插图。导入兼容这两种格式，并在替换前保留原档案副本。' : '备份包含浏览器内的学习记录；导入文章的 PDF 原文件和插图保存在本地服务中，迁移设备时需单独迁移这些文件或重新导入文章。'}</p>
+                  {localDatabase && <button type="button" className="underline" disabled={backupBusy !== null} onClick={() => void handleExportRecovery()}>
+                    {backupBusy === 'recovery' ? '导出中…' : '导出上次恢复前的档案'}
+                  </button>}
                 </div>
                 {vocabularyExportMessage && <p className="text-xs leading-5 text-[#2F6B3A]" role="status">{vocabularyExportMessage}</p>}
                 {vocabularyExportError && <p className="text-xs leading-5 text-[#A94E2B]" role="alert">{vocabularyExportError}</p>}

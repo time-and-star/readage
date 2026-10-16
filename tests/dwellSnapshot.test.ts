@@ -63,7 +63,7 @@ test('canonical writes continue one reviewed legacy baseline without resetting o
   assert.deepEqual(await storage.getMemoryState(userId, wordId), canonical);
 });
 
-test('a continued measured encounter after midnight retracts a premature settled Good through real storage', async () => {
+test('historical finalization removes legacy passive Good and a continuing measured encounter cannot resurrect it', async () => {
   const { storage, system } = setup();
   const eventAt = (date: string, dwellTimeMs = 30_000): RawWordEvent => ({ ...snapshot(dwellTimeMs),
     articleId: date, occurrenceId: `${date}:p0:w0:practice`,
@@ -73,7 +73,7 @@ test('a continued measured encounter after midnight retracts a premature settled
   const legacyState = (await storage.getMemoryState(userId, wordId))!;
   await storage.saveMemoryState(submitFsrsReview(legacyState, 'Good', new Date('2020-09-03T15:59:50.000Z')));
   await system.finalizeHistoricalDates(userId, 'Asia/Shanghai');
-  assert.equal((await storage.getMemoryState(userId, wordId))!.fsrsCard.reps, 1);
+  assert.equal((await storage.getMemoryState(userId, wordId))!.fsrsCard.reps, 0, 'the current passive-recall repair removes the legacy review before a continuation');
   assert.equal((await storage.getRawEventsByDate(userId, wordId, '2020-09-03')).length, 0);
   await system.recordBatchEvents([eventAt('2020-09-03', 60_000)]);
   await system.finalizeHistoricalDates(userId, 'Asia/Shanghai');

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Base application theme. -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+        <!-- Customize your theme here. -->
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+    </style>
+
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:background">@null</item>
+        <item name="android:windowBackground">#F8F6F0</item>
+        <item name="android:statusBarColor">#F8F6F0</item>
+        <item name="android:navigationBarColor">#F8F6F0</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+    </style>
+
+
+    <!-- Only active while the web startup shell is visible. The reading theme
+         above remains the normal warm canvas. -->
+    <style name="AppTheme.StartupAppearance" parent="AppTheme.NoActionBar">
+        <item name="android:windowBackground">#FF5B22</item>
+        <item name="android:statusBarColor">#FF5B22</item>
+        <item name="android:navigationBarColor">#FF5B22</item>
+    </style>
+
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#FF5B22</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/readge_splash_mark</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.StartupAppearance</item>
+        <item name="android:statusBarColor">#FF5B22</item>
+        <item name="android:navigationBarColor">#FF5B22</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+    </style>
+</resources>

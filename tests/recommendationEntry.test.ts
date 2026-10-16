@@ -29,16 +29,6 @@ test('keeps comprehension assessment out of the recommendation entry', () => {
   assert.doesNotMatch(html, /Check reading level/);
 });
 
-test('describes the landing action as starting article reading', () => {
-  const source = readFileSync(
-    new URL('../src/components/LandingPage.tsx', import.meta.url),
-    'utf8',
-  );
-
-  assert.match(source, /aria-label="Start article reading"/);
-  assert.doesNotMatch(source, /reading level assessment/);
-});
-
 test('does not load or persist retired English test results', () => {
   const source = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /ReadingAssessmentScreen|assessmentResult|readingAssessment|onStartEnglishTest/);

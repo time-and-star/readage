@@ -44,6 +44,14 @@ npm run translation:setup -- --source "C:\Users\19891\AppData\Local\Temp\local-t
 
 返回 `result.originalText`、`result.translatedText`、`result.targetLanguage`。也支持 `English`；当前阅读界面默认译成中文。`GET /api/translation/status` 提供配置及自动启动状态（`starting`、`ready`、`error`），启动失败时包含具体原因。
 
+现有 Hy-MT2 模型支持日语，无需额外下载翻译模型。日语文章的选句翻译复用这个接口，并传入 `sourceLanguage: "ja"`，得到中文译文；可选的源语言字段使用 BCP 47 标签，后端会校验并转换成提示词中的完整语言名：
+
+```json
+{ "text": "図書館は午後六時に閉まります。", "sourceLanguage": "ja", "targetLanguage": "Chinese" }
+```
+
+日中词典查词由词典接口处理，选句翻译由本机模型处理。
+
 后端向本机模型发送一条 user 消息：
 
 ```text
@@ -53,6 +61,8 @@ The library closes at six, so we should leave now.
 ```
 
 一次最多 1200 个字符，单个 CPU 推理请求执行，最多另排队 4 个请求，默认 60 秒超时。截断或空译文会作为错误处理，不冒充成功结果，也不会自动发送到云端。
+
+日语和法语文章复用原阅读界面的选中翻译操作，使用 `translatePassage` 处理选中的段落或长选区：按句子边界（包括日语 `。！？` 及闭引号）切成最多 600 个 UTF-16 字符的小段，给当前模型的输入及中文输出留出空间；超长单句也会完整分批处理，保留表情及结合字符。每批依次调用同一个本机接口并传递文章源语言，全部成功后合并显示译文，不截取正文或只展示第一批。关闭译文或离开文章会取消当前及后续批次；任何一批失败都会显示错误，可重试完整选区。每批适用单次请求的超时限制，因此长选区的总耗时会比选句更长。英语选区仍使用原来的单次 `translateSelection` 请求。
 
 使用非 v2 的官方 1.25bit Stride16 文件，数据区未改动，仅在独立副本中调整旧 GGUF 类型号以适配固定的 AVX2 分支。版本、SHA256 和运行器文件清单保存在 `local-data/translation/manifest.json`；启动日志位于 `local-data/translation/logs/server.log`。
 
@@ -66,4 +76,8 @@ The library closes at six, so we should leave now.
 
 选句翻译仍可能有误译；例如实测中 `left home too late` 曾被错误译成“回家太晚”。接入成功不代表每一句的译文都准确。
 
-来源：[官方模型](https://huggingface.co/AngelSlim/Hy-MT2-1.8B-1.25Bit-GGUF)、[CPU AVX2 分支](https://github.com/ggml-org/llama.cpp/pull/27377)。
+2026-10-07 已通过正在运行的应用 `POST /api/translation` 实测日中选句翻译：`図書館は午後六時に閉まります。` → `图书馆下午六点关闭。`，约 2.5 秒完成。浏览器到模型的接口回归也验证了 `ja` 源语言被写成“日语”，并拒绝无效的源语言标签。
+
+整段接口实测使用 1391 字符的日语文章，`translatePassage` 完整分为 587、595、209 字符的三次日中请求，全部 HTTP 200，约 66 秒得到 1308 字符中文译文；确认第 1 天至第 40 天的源句均发出，返回译文包含最后一句。回归覆盖分批顺序、完整输入、日语标点及闭引号、Unicode 字符、取消和途中失败。
+
+来源：[腾讯官方模型支持语言](https://huggingface.co/tencent/Hy-MT2-1.8B#supported-languages)、[官方量化模型](https://huggingface.co/AngelSlim/Hy-MT2-1.8B-1.25Bit-GGUF)、[CPU AVX2 分支](https://github.com/ggml-org/llama.cpp/pull/27377)。

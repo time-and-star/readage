@@ -5,6 +5,10 @@ import type { RecommendedArticleCandidate } from '../lib/articleValidation';
 import { splitArticleParagraphs } from '../lib/articleImport';
 import { postTutor } from '../lib/tutorClient';
 import { ON_DEMAND_TRANSLATION } from '../lib/localTranslation';
+import { createImportedArticle, withImportedLanguage } from '../lib/articleLanguage';
+import { languageName } from '../lib/dictionaryTrial';
+import { IS_ANDROID, IS_OFFLINE_APP } from '../lib/platform/runtime';
+import { nativeFiles, pickNativeFile, requestNativeDocumentBatch, type NativePickedFile } from '../lib/platform/nativeFiles';
 import { appendPreparedFileBatch, FILE_IMPORT_BATCH_SIZE, FILE_IMPORT_PREPARATION_LIMIT, requestUserFileBatch, type PreparedFileImport } from '../lib/userFileImport';
 
 interface EnterArticleModalProps {
@@ -21,6 +25,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
 
   const [customTitle, setCustomTitle] = useState('');
   const [customText, setCustomText] = useState('');
+  const [sourceLanguage, setSourceLanguage] = useState('en');
 
   const [topicInput, setTopicInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -36,6 +41,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const nativeSelectionRef = useRef<{ picked: NativePickedFile; file: File } | null>(null);
   const busy = isGenerating || isImportingFile;
 
   useEffect(() => {
@@ -46,6 +52,9 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
       mountedRef.current = false;
       operationRef.current?.abort();
       operationRef.current = null;
+      const selected = nativeSelectionRef.current;
+      nativeSelectionRef.current = null;
+      if (selected) void nativeFiles.releaseFile({ handle: selected.picked.handle }).catch(() => {});
       previousFocus?.focus({ preventScroll: true });
     };
   }, []);
@@ -77,21 +86,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
     const paragraphs = splitArticleParagraphs(customText);
     if (paragraphs.length === 0) return;
 
-    const draft: Article = {
-      id: `custom-${Date.now()}`,
-      title: customTitle.trim() || 'Custom Active Reading Text',
-      description: `${paragraphs[0]?.slice(0, 90) || 'User provided text'}…`,
-      date: new Date().toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-      }),
-      status: 'In Progress',
-      source: 'user_input',
-      content: paragraphs,
-      keyWords: [],
-      importEnrichmentStatus: 'pending',
-    };
+    const draft = createImportedArticle(customText, customTitle || 'Custom Active Reading Text', sourceLanguage);
 
     // Immediate store/open via parent; translation + rating run in background import module.
     submit([draft]);
@@ -122,13 +117,46 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
     }
   };
 
+  const handleNativeDocument = async (continuing = false, retrying = false) => {
+    const controller = beginOperation(); if (!controller) return;
+    setError(null); setIsImportingFile(true);
+    try {
+      let selected = nativeSelectionRef.current;
+      if (!continuing && !retrying) {
+        const picked = await pickNativeFile('document');
+        if (!picked) return;
+        if (!isCurrent(controller)) { await nativeFiles.releaseFile({ handle: picked.handle }).catch(() => {}); return; }
+        if (selected && selected.picked.handle !== picked.handle) await nativeFiles.releaseFile({ handle: selected.picked.handle }).catch(() => {});
+        if (!isCurrent(controller)) { await nativeFiles.releaseFile({ handle: picked.handle }).catch(() => {}); return; }
+        // This File is an identity/name token for the shared prepared-batch model;
+        // source bytes remain in Android's private handle, never a fake upload.
+        selected = { picked, file: new File([], picked.name, { type: picked.mimeType }) };
+        nativeSelectionRef.current = selected;
+        setSelectedFile(selected.file); setPrepared(null); preparedRef.current = null;
+      }
+      if (!selected) throw new Error('请重新选择原文件。');
+      const current = continuing ? preparedRef.current : null;
+      const offset = continuing ? current?.nextOffset : /^[1-9]\d*$/.test(startChapter) ? Number(startChapter) - 1 : -1;
+      if (offset === null || offset === undefined) return;
+      const limit = Math.min(FILE_IMPORT_BATCH_SIZE, FILE_IMPORT_PREPARATION_LIMIT - (current?.articles.length ?? 0));
+      const batch = await requestNativeDocumentBatch(selected.picked, offset, { signal: controller.signal, limit });
+      if (!isCurrent(controller)) return;
+      const next = appendPreparedFileBatch(current, selected.file, batch);
+      preparedRef.current = next; setPrepared(next); setActiveTab('paste');
+    } catch (cause) { if (isCurrent(controller)) setError(cause instanceof Error ? cause.message : '手机文件读取失败。'); }
+    finally {
+      if (isCurrent(controller)) { operationRef.current = null; setIsImportingFile(false); }
+    }
+  };
+
   const submitPrepared = () => {
     const current = preparedRef.current;
     if (!current || operationRef.current) return;
     const unit = current.format === 'pdf' ? '页' : '篇';
     const ending = current.startOffset + current.articles.length;
     const continuation = current.nextOffset !== null ? ` 其余内容可重新选择原文件，从第 ${current.nextOffset + 1} ${unit}继续导入。` : '';
-    submit(current.articles, `已导入第 ${current.startOffset + 1}–${ending} ${unit}，正在打开所选内容。${continuation}`);
+    submit(current.articles.map(article => withImportedLanguage(article, sourceLanguage)),
+      `已导入第 ${current.startOffset + 1}–${ending} ${unit}，正在打开所选内容。${continuation}`);
   };
 
   const handleGenerateTopic = async (e: React.FormEvent) => {
@@ -182,7 +210,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
         onKeyDown={event => {
           if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
           if (event.key === 'Tab') {
-            const entries: HTMLElement[] = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled):not(.sr-only), textarea:not(:disabled), [tabindex="0"]') ?? []);
+            const entries: HTMLElement[] = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled):not(.sr-only), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]') ?? []);
             const first = entries[0]; const last = entries.at(-1);
             if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
             else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -215,7 +243,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
             <FileText className="w-4 h-4" />
             <span>粘贴文字</span>
           </button>
-          <button
+          {!IS_OFFLINE_APP && <button
             type="button"
             onClick={() => setActiveTab('topic')}
             disabled={busy}
@@ -225,7 +253,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
           >
             <Sparkles className="w-4 h-4 text-[#C35E37]" />
             <span className="truncate">AI 写作</span>
-          </button>
+          </button>}
         </div>
 
         {error && (
@@ -236,6 +264,12 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
 
         {activeTab === 'paste' ? (
           <form onSubmit={handlePasteSubmit} className="space-y-4">
+            <label className="block text-xs font-semibold text-[#666056]">文章语言
+              <select aria-label="文章语言" value={sourceLanguage} disabled={busy} onChange={event => setSourceLanguage(event.target.value)}
+                className="mt-1 block w-full rounded-xl border border-[#DDD6C8] bg-white px-4 py-3 text-sm text-[#2B2723]">
+                <option value="en">英语</option><option value="fr">法语</option><option value="ja">日语</option>
+              </select>
+            </label>
             <div>
               <label className="block text-xs font-semibold text-[#666056] uppercase tracking-wider mb-1">
                 标题（可选）
@@ -264,7 +298,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
                 className="w-full bg-white border border-[#DDD6C8] rounded-xl p-4 text-base sm:text-sm text-[#2B2723] outline-none focus:border-[#C35E37] min-h-[10rem]"
               />
               <p className="mt-1.5 text-[11px] text-[#8C8478]">
-                {ON_DEMAND_TRANSLATION ? '导入后即可阅读，选中句子可翻译。' : '导入后即可阅读，译文在后台准备。'}
+                {sourceLanguage !== 'en' ? `保留${languageName(sourceLanguage)}原文，点击词语查看中文释义，也可选中内容查询或翻译。` : ON_DEMAND_TRANSLATION ? '导入后即可阅读，选中句子可翻译。' : '导入后即可阅读，译文在后台准备。'}
               </p>
             </div>
 
@@ -288,7 +322,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => IS_ANDROID ? void handleNativeDocument() : fileInputRef.current?.click()}
                 className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-[#2B2723] disabled:opacity-50"
               >
                 {isImportingFile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
@@ -304,18 +338,18 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
               </label>}
               {selectedFile && <p className="mt-2 break-all text-xs text-[#666056]">{selectedFile.name}</p>}
               {isImportingFile && <div className="mt-2 flex items-center justify-between gap-2 text-xs text-[#666056]" role="status">
-                <span>上传并解析中，最多等待 2 分钟。</span>
+                <span>{IS_ANDROID ? '正在本机解析，最多等待 2 分钟。' : '上传并解析中，最多等待 2 分钟。'}</span>
                 <button type="button" onClick={cancelOperation} className="min-h-11 px-2 underline">取消准备</button>
               </div>}
               {prepared && <div className="mt-3 space-y-2" aria-live="polite">
                 <p className="text-sm text-[#2B2723]">已准备 {prepared.articles.length} {prepared.format === 'pdf' ? '页' : '篇'}，文件共 {prepared.totalCount} {prepared.format === 'pdf' ? '页' : '篇'}。</p>
                 <p className="text-xs text-[#8C8478]">第 {prepared.startOffset + 1}–{prepared.startOffset + prepared.articles.length} {prepared.format === 'pdf' ? '页' : '篇'} · {prepared.articles[0].title}</p>
                 {prepared.nextOffset !== null && (prepared.articles.length < FILE_IMPORT_PREPARATION_LIMIT
-                  ? <button type="button" disabled={busy} onClick={() => void handleFile(prepared.file, true)} className="min-h-11 text-sm underline disabled:opacity-50">继续添加下一批</button>
+                  ? <button type="button" disabled={busy} onClick={() => IS_ANDROID ? void handleNativeDocument(true) : void handleFile(prepared.file, true)} className="min-h-11 text-sm underline disabled:opacity-50">继续添加下一批</button>
                   : <p className="text-xs text-[#8C8478]">本次已准备 {FILE_IMPORT_PREPARATION_LIMIT} 篇。先导入，再选择原文件从第 {prepared.nextOffset + 1} 篇 / 页继续。</p>)}
                 <button type="button" disabled={busy} onClick={submitPrepared} className="app-primary-action w-full min-h-11 rounded-xl px-3 text-sm disabled:opacity-50">导入已准备的 {prepared.articles.length} {prepared.format === 'pdf' ? '页' : '篇'}</button>
               </div>}
-              {selectedFile && !prepared && !busy && <button type="button" onClick={() => void handleFile(selectedFile)} className="mt-2 min-h-11 text-sm underline">重新准备文件</button>}
+              {selectedFile && !prepared && !busy && <button type="button" onClick={() => IS_ANDROID ? void handleNativeDocument(false, true) : void handleFile(selectedFile)} className="mt-2 min-h-11 text-sm underline">重新准备文件</button>}
             </div>
 
             <button

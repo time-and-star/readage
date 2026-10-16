@@ -1,4 +1,4 @@
-import { DEFAULT_SERVICE_ORIGIN, MAX_SYNC_BATCH, normalizeSelectedWord, normalizeServiceOrigin,
+import { DEFAULT_SERVICE_ORIGIN, MAX_SYNC_BATCH, normalizeSelectedWord, normalizeLearningWordId, normalizeServiceOrigin,
   parseLookupEvent, sourcePageId, type LookupEvent } from '../src/lib/browserExtension/protocol';
 import type { DictionaryEntry } from '../src/lib/dictionaryClient';
 import { DictionaryCatalogCache, dictionaryCacheKey, type CatalogSnapshot } from '../packages/dictionary/cache';
@@ -108,7 +108,7 @@ async function loadEntry(origin: string, word: string): Promise<DictionaryEntry 
   if (body?.ok !== true || !Array.isArray(body.results) || body.results.length !== 1) throw new Error('词典服务返回异常，请稍后重试。');
   const entry = body.results[0] as DictionaryEntry | null;
   if (!entry) return null;
-  if (!normalizeSelectedWord(entry.lemma || word) || !Array.isArray(entry.basicMeaningsZh)
+  if (!normalizeLearningWordId(entry.lemma || word) || !Array.isArray(entry.basicMeaningsZh)
     || entry.basicMeaningsZh.some(meaning => typeof meaning !== 'string')
     || !Array.isArray(entry.definitionsEn) || entry.definitionsEn.some(sense => !sense || typeof sense.definition !== 'string')
     || typeof entry.definitionEn !== 'string'
@@ -124,10 +124,11 @@ async function loadEntry(origin: string, word: string): Promise<DictionaryEntry 
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ words: [word] }),
       signal: AbortSignal.timeout(8_000), redirect: 'error', credentials: 'omit' });
     const identities = await dictionaryJson(identityResponse);
-    if (identities?.ok !== true || !Array.isArray(identities.lemmas) || identities.lemmas.length !== 1 || !normalizeSelectedWord(identities.lemmas[0])) {
+    if (identities?.ok !== true || !Array.isArray(identities.lemmas) || identities.lemmas.length !== 1 || !normalizeLearningWordId(identities.lemmas[0])) {
       throw new Error('学习标识暂不可用，请稍后重试。');
     }
-    entry.learningTermRef = { language: 'en', kind: 'word', stableId: identities.lemmas[0] };
+    const stableId = normalizeLearningWordId(identities.lemmas[0])!;
+    entry.learningTermRef = { language: 'en', kind: stableId.includes(' ') ? 'phrase' : 'word', stableId };
   }
   const actualKey = entry.dictionaryRef?.catalogVersion ? keyFor(entry.dictionaryRef.catalogVersion) : key;
   if (entry.dictionaryRef?.catalogVersion) await catalogFor(origin).observeVersion(entry.dictionaryRef.catalogVersion, catalog?.catalogVersion);
@@ -153,8 +154,8 @@ async function queryWord(message: any, sender: ExtensionSender) {
   const entry = await fetchEntry(config.origin, word);
   if (!entry) return { ok: true, entry: null };
   const identity = entry.learningTermRef;
-  if (identity?.language !== 'en' || !normalizeSelectedWord(identity.stableId)) throw new Error('学习标识暂不可用，请稍后重试。');
-  lookup.lemma = normalizeSelectedWord(identity.stableId)!;
+  if (identity?.language !== 'en' || !normalizeLearningWordId(identity.stableId)) throw new Error('学习标识暂不可用，请稍后重试。');
+  lookup.lemma = normalizeLearningWordId(identity.stableId)!;
   const key = prefix(config.origin) + lookup.id;
   await serialize(async () => {
     const prior = (await chrome.storage.local.get(key))[key] as PendingLookup | undefined;

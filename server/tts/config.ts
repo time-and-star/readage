@@ -29,7 +29,11 @@ export function getTtsConfiguration(env: NodeJS.ProcessEnv = process.env): TtsCo
   const provider = env.TTS_PROVIDER?.trim().toLowerCase() === 'openai-compatible'
     ? 'openai-compatible'
     : 'browser';
-  const endpoint = speechEndpoint(env.TTS_BASE_URL);
+  let endpoint = speechEndpoint(env.TTS_BASE_URL);
+  if (env.READGE_OFFLINE === '1' && endpoint) {
+    const local = new URL(endpoint);
+    if (local.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(local.hostname)) endpoint = undefined;
+  }
   const apiKey = env.TTS_API_KEY?.trim() || undefined;
   const validKey = !apiKey || !/[\r\n]/.test(apiKey);
   return {
@@ -39,6 +43,8 @@ export function getTtsConfiguration(env: NodeJS.ProcessEnv = process.env): TtsCo
     model: env.TTS_MODEL?.trim() || 'kokoro',
     voice: env.TTS_VOICE?.trim() || 'af_heart',
     voiceEnGb: env.TTS_VOICE_EN_GB?.trim() || undefined,
+    voiceFrFr: env.TTS_VOICE_FR_FR?.trim() || undefined,
+    voiceJaJp: env.TTS_VOICE_JA_JP?.trim() || undefined,
     apiKey,
     audioFormat: env.TTS_AUDIO_FORMAT?.trim().toLowerCase() === 'wav' ? 'wav' : 'mp3',
     maxTextLength: maxTextLength(env.TTS_MAX_TEXT_LENGTH),
@@ -55,10 +61,14 @@ export function validateTtsRequest(value: unknown, maxTextLength = TTS_MAX_TEXT_
   if (typeof body.text !== 'string' || body.text.length > Math.min(maxTextLength, TTS_MAX_TEXT_LENGTH) || !body.text.trim()) {
     throw new TtsError('TTS_INVALID_REQUEST');
   }
-  const lang = body.lang ?? 'en-US';
+  const lang = body.lang === 'ja' ? 'ja-JP' : body.lang ?? 'en-US';
   const rate = body.rate ?? 1;
-  if ((lang !== 'en-US' && lang !== 'en-GB') || typeof rate !== 'number' || !Number.isFinite(rate) || rate < 0.5 || rate > 2) {
+  if (!['en-US', 'en-GB', 'fr-FR', 'ja-JP'].includes(lang as string) || typeof rate !== 'number' || !Number.isFinite(rate) || rate < 0.5 || rate > 2) {
     throw new TtsError('TTS_INVALID_REQUEST');
   }
-  return { text: body.text.trim(), lang, rate };
+  return { text: body.text.trim(), lang: lang as TtsRequest['lang'], rate };
+}
+
+export function getTtsLanguages(config: TtsConfiguration): string[] {
+  return ['en-US', 'en-GB', ...(config.voiceFrFr ? ['fr-FR'] : []), ...(config.voiceJaJp ? ['ja-JP'] : [])];
 }

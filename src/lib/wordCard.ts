@@ -1,10 +1,12 @@
 import type { GrammarExplanation } from '../types';
 import { postTutor, TutorApiError } from './tutorClient';
 import { lookupDictionaryWord, toDictionaryWordCard } from './dictionaryClient';
+import { withCurrentDictionaryNames } from './dictionaryDisplay';
 import { isEnglishWord, normalizeEnglishLookupText } from '../../packages/dictionary/languages/englishSurface';
 import { dictionaryCatalogCache } from './dictionaryCatalog';
 import { DICTIONARY_CACHE_VERSION, dictionaryCacheKey } from '../../packages/dictionary/cache';
 import { AI_EXPLANATIONS_ENABLED } from './readingFeatures';
+import { IS_ANDROID } from './platform/runtime';
 
 export interface WordCardRequest {
   selectedText: string;
@@ -46,22 +48,28 @@ export async function fetchWordCard(
   request: WordCardRequest,
   options: FetchWordCardOptions = {},
 ): Promise<GrammarExplanation> {
+  // Context belongs to this reading occurrence, never to the cached dictionary entry.
+  const withReadingContext = (card: GrammarExplanation): GrammarExplanation => ({ ...card,
+    readingOriginalSentence: request.contextSentence?.trim() || undefined,
+    readingOriginalWord: request.selectedText,
+  });
   const singleWord = isEnglishWord(request.selectedText);
   if (options.signal?.aborted) throw new Error('Lookup cancelled');
   if (request.selectedText.trim()) {
     const catalog = await dictionaryCatalogCache.get(options.signal);
-    const cacheKeyFor = (version: string) => `english-ai:v6:word-card:${dictionaryCacheKey('en', version, request.selectedText.toLowerCase())}`;
+    const cacheKeyFor = (version: string) => `english-ai:v7:word-card:${dictionaryCacheKey('en', version, request.selectedText.toLowerCase())}`;
     const cacheKey = catalog ? cacheKeyFor(catalog.catalogVersion) : undefined;
     try {
       const cached = typeof localStorage === 'undefined' || !cacheKey || options.forceRefresh ? null : localStorage.getItem(cacheKey);
       if (cached) {
         const card = JSON.parse(cached) as GrammarExplanation;
-        if (card.source === 'dictionary' && card.definition && card.wordOrPhrase && !card.dictionarySourceIssues?.length) return card;
+        if (card.source === 'dictionary' && card.definition && card.wordOrPhrase && !card.dictionarySourceIssues?.length) return withReadingContext(withCurrentDictionaryNames(card));
       }
     } catch { /* A cache failure must not prevent a dictionary request. */ }
+    // Native index preparation and queued on-device reads can exceed the HTTP deadline.
     const signal = options.signal
-      ? AbortSignal.any([options.signal, AbortSignal.timeout(8_000)])
-      : AbortSignal.timeout(8_000);
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(IS_ANDROID ? 45_000 : 8_000)])
+      : AbortSignal.timeout(IS_ANDROID ? 45_000 : 8_000);
     try {
       const entry = await lookupDictionaryWord(request.selectedText, { signal });
       if (entry) {
@@ -70,7 +78,7 @@ export async function fetchWordCard(
         const actualKey = entry.dictionaryRef?.catalogVersion ? cacheKeyFor(entry.dictionaryRef.catalogVersion) : cacheKey;
         try {
           if (typeof localStorage !== 'undefined' && actualKey && !entry.dictionarySourceIssues?.length) {
-            const keys = Object.keys(localStorage).filter(key => key.startsWith('english-ai:v6:word-card:') && key.includes(DICTIONARY_CACHE_VERSION));
+            const keys = Object.keys(localStorage).filter(key => key.startsWith('english-ai:v7:word-card:') && key.includes(DICTIONARY_CACHE_VERSION));
             if (!keys.includes(actualKey) && keys.length >= 500) {
               for (const key of keys.slice(0, keys.length - 499)) localStorage.removeItem(key);
             }
@@ -78,10 +86,13 @@ export async function fetchWordCard(
           }
         }
         catch { /* Optional cache; learning persistence is handled separately. */ }
-        return card;
+        return withReadingContext(card);
       }
     } catch (error) {
       if (options.signal?.aborted) throw new Error('Lookup cancelled');
+      if (IS_ANDROID) throw new Error(error instanceof Error && error.name === 'TimeoutError'
+        ? '手机本机词典查询超时，请重试。已缓存的单词仍可查询。'
+        : '手机本机词典暂时无法读取，请重试或检查词典设置。已缓存的单词仍可查询。');
       throw new Error('词典暂时无法连接，请启动本地服务后重试。已缓存的单词仍可查询。');
     }
   }

@@ -1,152 +1,174 @@
-# English AI · Active Reading MVP
+<p align="center">
+  <img src="docs/images/readage-cover-gpt.png" alt="ReadAge：在阅读中积累，让记忆持续发生。GPT Image 优化的品牌概念封面，支持浏览器、Windows 和 Android。" width="100%" />
+</p>
 
-以**文章**为核心实体的英语学习最小可行产品。依据《英语教学 AI 产品文档》v0.2，复用本仓库暖纸色前端，串联 **P1 获取 → P2 学习 → P3 学习概览与阅读记录** 闭环。
+# ReadAge
 
-详细设计见 **[DESIGN.md](./DESIGN.md)**。
+**围绕文章展开的本地阅读与语言学习应用。** 把文章库、上下文查词、选句翻译、朗读和间隔复习连接起来，让一次阅读留下可以继续使用的学习记录。
 
-单词、复习和文章朗读共用可切换的语音模块：默认使用设备英语声音，也可接入本机 Kokoro 或其他兼容语音服务。阅读页可选择英音/美音、语速和停止播放，配置见 **[朗读与 TTS 接入](docs/tts.md)**。
+[下载安装包](https://github.com/time-and-star/readage/releases/latest) · [快速开始](#快速开始) · [功能与学习流程](#功能与学习流程) · [三端架构](#三端架构) · [开发文档](#开发文档) · [Apache 2.0](LICENSE)
 
-选中正文里的句子，点击 **翻译**，可用本机腾讯 Hy-MT2 模型得到中文译文。当前电脑已安装并启用按需模式，不自动预翻译全文；启动器会自动加载模型，无需翻译 API Key。安装、启动及使用说明见 **[本机句子翻译](docs/local-translation.md)**。
+ReadAge 以英语学习为主，也提供法语、日语阅读及对应词典和语音接入。应用采用暖纸色阅读界面和橙色启动画面；浏览器、Windows 与 Android 共用界面和学习规则，并通过各自的平台实现处理文件、存储和本机模型。
 
-## 功能范围（MVP）
+## 功能与学习流程
 
-| 页面 | 能力 |
-|---|---|
-| P1 Home | 一键推荐 / 文章库 / 粘贴文章 / 自动续读 |
-| P2 Reading | 本地词卡、按需句子翻译、朗读、连续阅读与难度反馈；解释与讨论暂时关闭 |
-| 词卡学习内页 | 英文词卡翻面、自评回忆、到期优先、间隔复习、本轮错词重练 |
-| P3 My Learning | 进度统计、阅读记录、文章生词、书籍章节进度、推荐阅读与词卡学习入口 |
+![ReadAge 的学习循环：收集文章、沉浸阅读、主动回忆、再次遇见。](docs/images/learning-loop.svg)
 
-阅读历史统一保留在学习概览的阅读记录中。旧 `/history` 链接会转到 `/learning/articles`。
+| 你想做什么 | ReadAge 如何帮助你 |
+| --- | --- |
+| 把材料放在一起 | 粘贴文章，导入 EPUB、PDF、DOCX 等文档，按书籍章节、期刊目录或个人文章整理材料；保留图片、附件和阅读断点。 |
+| 读懂眼前这段话 | 点词查看释义、词形和来源；选中句子后按需翻译；使用朗读和随音频移动的词框辅助阅读。翻译与本机朗读需要对应资源。 |
+| 把遇到的词带进复习 | 阅读查词和主动词表导入共用词卡队列；先复习到期词，再按每天设置安排新词。可暂停、恢复或移出词卡，保留历史。 |
+| 确认自己能否回忆 | 先回忆，再翻面和自评；FSRS 根据正式回忆记录安排后续复习，忘记的词在本轮再次出现。 |
+| 接着上次读下去 | 每篇文章独立保存进度；外刊按本期顺序、书籍按章节或页序继续；推荐阅读使用单独入口，不打断文章库的阅读顺序。 |
+| 保存自己的积累 | 本地档案保存文章、学习记录与偏好；支持完整 ZIP 备份及兼容 JSON 恢复，恢复前保留原档案副本。 |
 
-本地词汇记忆：成功查词形成曝光＋查询证据，阅读曝光使用可见性和停留时间约束；主应用按每日证据更新记忆估计和复习安排。未查询不等于已掌握；文字讨论不直接给词汇加分；英语测试功能已移除。
+### 阅读界面
 
-阅读有两个入口：**Library** 按期刊目录选文章，正文末尾的“下一篇（本期）”继续本期顺序，末篇明确结束；导入的文件按章节或页序继续。**推荐阅读** 有独立入口，点击“开始推荐阅读”后进入推荐流，也可从入口继续尚未结束的推荐阅读。Library 和历史记录中的文章不会自动启动推荐流。
+下图来自当前源码的真实阅读组件，使用隔离的示例文章生成。它展示阅读排版与窄屏适配，不代表 Windows 安装版或 Android 真机验收已经完成。
 
-每篇文章分别保存阅读断点；达到前台停留要求的段落可跨次累计完读，正文变化会重置旧段落进度。返回 Library 保留目录、筛选和列表位置。文件导入先准备再确认，支持取消、超时重试、分批继续和指定章节起点；同一文件的章节使用稳定标识，重复导入保留原学习记录。
+<p align="center">
+  <img src="docs/images/reader-desktop.png" alt="ReadAge 桌面阅读界面：暖纸色正文和顶部阅读操作。文章为隔离测试示例。" width="100%" />
+</p>
 
-**词卡学习**位于数据页内，与“推荐阅读”并排，点击进入 `/learning/flashcards` 内页，返回时回到数据页；旧 `/flashcards` 链接仍兼容。阅读中查过的词和主动导入词表的词一起进入队列，先复习全部到期词，再学习新词。右上角“学习设置”可修改每天的新词数量（默认 10，可自定义、选择不限或设为 0 仅复习），到期复习不占新词名额；修改后立即更新当前计划，并保留已保存的答案和本轮巩固卡。支持 TXT、CSV、TSV、JSON 文件或粘贴词表，导入前归并词形并预览新增、已有、重复和无效项；已有词的记忆不会重置，导入本身不计作查词或学习成功。单次支持 10000 项、2 MiB 文本，词卡设置和登记词表随本地学习数据备份保留。在正面先回忆并选择熟悉程度，词卡带动画翻开核心释义，更多内容从“查看详解”展开，再点卡片进入下一张；也可直接点击卡片查看释义。共享 FSRS 记忆库自动调整下一次复习时间，忘记的词隔几张后再练。
+<p align="center">
+  <img src="docs/images/reader-mobile.png" alt="ReadAge 窄屏阅读界面：标题、正文和阅读操作在手机尺寸中排列。此图由隔离浏览器生成。" width="330" />
+</p>
 
-学习设置中的“词表管理”可搜索、批量暂停、恢复或移出单词。暂停和移出仅停止词卡安排，保留历史记录；恢复或重新导入可以重新加入学习。
+### 查词、词卡与记忆
 
-点击页面底部的“记忆曲线”，可查看已有正式回忆记录的 FSRS 预测，切换 1 / 7 / 30 天、当前词 / 我的词库并探索时间点。它是默认模型估计，没有记录时明确提示；0 天的 100% 是模型起点，不是实测成绩。
+**ReadAge 自编词典是项目的核心内容之一。** 当前发布快照包含 **17,974 个词条、30,538 个义项和 35,138 条义项例句**；完整内容经本地词典适配器进入阅读查词、搜索、词卡详解与导出。
 
-数据页的“已学习”统计已有正式回忆记录的词，“待复习”仅统计其中已到期且未暂停或移出的词；“待学新词”显示完整待学词库，每日数量只影响当天安排。读取失败显示重试入口。“推荐阅读”与“词卡学习”提供两种学习入口；文章只覆盖词库的一部分，读完不会将全部待复习词标为已复习。
+除了中英释义，词条还保留原有的词源与构词、形近易混词、近反义词辨析、常见错误、语境与长难句、即时检测和参考来源等模块。词卡详解优先展开自编内容；普通查询继续尊重用户设置的词典顺序。各词典的释义和来源分别呈现，不混成一个没有出处的结果。
 
-## 本地运行
+本轮对 `promote`、`compulsory` 的文字修订、全库结构核对与尚待编辑的样例，见 [自编词典检查记录](docs/authored-dictionary-review-2026-10-16.md)。统计与全库结构通过不等于所有释义和例句已经逐条完成语义终审。
 
-浏览器插件现已支持 Chrome / Edge 的网页选词查词和本地熟练度同步，安装与使用见 [浏览器插件说明](extension/README.md)。
+- **在上下文中查词。** 词卡保留原句、来源和展开内容，支持多个本地词典；法语和日语使用各自的语言标识与词形处理，避免写入错误的英语学习证据。
+- **自己决定复习范围。** 词表可通过文件或粘贴导入，先预览新增、已有、重复与无效项。再次导入不会重置已有记忆；导入动作本身也不算学习成功。
+- **把阅读曝光和回忆分开。** 看到一个词、查过一个词、成功回忆一个词分别记录。未查询不等于已掌握，读完文章也不会把整个词库标为已复习。
+- **看懂模型给出的安排。** 记忆曲线展示 FSRS 的预测与已有回忆记录，支持不同时间范围；预测值属于模型估计，不是实测成绩。
 
-**前置：** Node.js ≥ 20
+### 本机翻译与朗读
+
+选句翻译可接入本机 **Hy-MT2**，朗读可使用本机 **Kokoro**。英语提供英音 / 美音选择，并有法语和日语语音接入。音色、语速、停止和播放位置由共用界面控制；Android 使用原生推理与音频队列。
+
+本机模型和音色属于独立资源，源码克隆不包含全部运行资源。Windows 完整安装包与 Android 完整 APK 按各端构建清单装入离线资源；实际声音来源、速度和听感需要在交付设备上分别验证。
+
+配置与资源说明：[本机翻译](docs/local-translation.md) · [朗读与 TTS](docs/tts.md) · [法语词典](docs/dictionary-french.md) · [日语词典](docs/dictionary-japanese.md)
+
+## 下载与平台
+
+前往 [GitHub Releases](https://github.com/time-and-star/readage/releases) 下载对应版本，以每次 Release 的资产清单、校验和及验收记录为准。
+
+| 平台 | 使用方式 | 需要了解的条件 |
+| --- | --- | --- |
+| Windows x64 | 安装 `ReadAge-<版本>-windows-x64-setup.exe` | 完整离线包提供词典、模型及运行组件；本机翻译运行器要求 CPU 支持 AVX2，无需另装 Node 或 Python。 |
+| Android 12+ | 安装 Release 中的 `.apk` | 当前工程包含 arm64-v8a / x86_64，离线资源使包体积较大；当前分发包使用既有调试签名，升级须保持签名一致。 |
+| 本地浏览器 | 从源码启动本机服务 | 需要 Node.js 22.13 或更新版本；浏览器访问本机地址，文件和模型由本机服务处理。 |
+| Chrome / Edge 插件 | 按 [插件说明](extension/README.md) 加载 | 在网页选词查词，并连接正在运行的本机 ReadAge。 |
+
+安装、源码和设备状态分开记录。**下载到新包不表示现有设备已经更新；构建成功也不表示真机上的所有功能已通过。** 当前平台差异、暂缓能力和逐项结果见 [跨端交付说明](docs/platform-parity.md) 与 [用户功能验收](docs/user-feature-acceptance.md)。
+
+## 快速开始
+
+### 1. 安装并启动本地浏览器版
 
 ```bash
+git clone https://github.com/time-and-star/readage.git
+cd readage
 npm install
-```
-
-在 `.env` 中配置 AI 服务（可选；没有有效凭证时基础词典仍可使用，AI 功能明确显示不可用）：
-
-```
-GEMINI_API_KEY=your_key_here
-
-# 外刊同步（hehonghui/awesome-english-ebooks）
-# GITHUB_TOKEN=ghp_xxx          # 可选，提高 GitHub API 限额
-# MAGAZINE_MAX_ISSUES_PER_SOURCE=4
-# MAGAZINE_SYNC_CRON=0 12 * * 5 # 默认每周五 12:00
-# MAGAZINE_SYNC_ON_BOOT=true    # 默认启动后全源同步；设 false 可关闭
-
-# Step Plan（文字 tutor + 实时语音）
-# STEP_API_KEY=your_step_key
-# STEP_BASE_URL=https://api.stepfun.com/step_plan/v1
-# STEP_CHAT_MODEL=step-3.7-flash
-# DEEPSEEK_API_KEY=your_deepseek_key
-# DEEPSEEK_BASE_URL=https://api.deepseek.com
-# DEEPSEEK_TRANSLATE_MODEL=deepseek-v4-flash   # article enrichment; thinking disabled
-# DEEPSEEK_ARTICLE_MAX_IN_FLIGHT=50              # translation + CEFR rating, max 2500
-# STEP_REALTIME_MODEL=stepaudio-2.5-realtime
-# STEP_REALTIME_URL=wss://api.stepfun.com/step_plan/v1/realtime
-# LLM_PROVIDER=step
-# READING_VERIFICATION_PROVIDER=deepseek # optional: step / deepseek / gemini; defaults to LLM_PROVIDER
-```
-
-```bash
 npm run start:local
 ```
 
-打开 http://localhost:3000。Windows 也可双击 `start-local.cmd`。保持服务进程运行；首次安装插件可打开 `/extension-setup.html`，下载 ZIP 并按页面指引加载。
+打开 **http://localhost:3000**。Windows 也可双击项目中的 `start-local.cmd`。使用期间保持本机服务运行。
 
-`npm start` 是生产模式，仍要求配置生产访问凭证；个人本机使用请选 `npm run start:local`。AI 供应商密钥无效或订阅到期时，请在本机更新 `.env` 并重启，不要把密钥发到聊天中。
+源码仓库不包含个人学习档案、外刊原文件，以及体积较大的第三方词典和模型。完整离线能力需要按对应文档准备资源；缺少资源时，以界面中的明确提示为准。
 
-阅读完成并保存曝光记录后，通过 `/api/tutor` 的 `after_reading` 将完整文章及最多 120 个相关词的掌握摘要交给教学 agent。agent 先决定是否出题、核对哪个词、目的和难度，再调用三选一出题能力。题目仍采用「英文＋中文」选项，展示为可选卡片，不自动展开。刚学或刚查的词可作当次理解练习，答案只保存为练习记录，不增加长期记忆证据；延迟验证仍需距离最近学习至少 24 小时。返回决策和题目在服务端、客户端分别校验；服务不可用时回退固定题库，agent 主动决定跳过时不会强行补题。答过的句子保存在本地用于去重。密钥保留在服务端，完整文章最长 120,000 字符；超过限额时不会截取部分文章冒充完整分析。
+### 2. 按需要启用服务
 
-## 学习数据：浏览器本地（多访客）
-
-**默认模型：** 每位访客的学习进度只保存在**自己的浏览器**（`localStorage` + Memory V2 `IndexedDB`），服务器不存用户档案、不要求登录。
-
-| 存在本机 | 在服务器 |
-|---|---|
-| 文章历史、会话与讨论 | 杂志正文库、词典数据 |
-| 词汇记忆 / FSRS 复习 | AI 代理（翻译、讨论、推荐） |
-| 阅读偏好、薄弱点、连续天数 | 进程与环境变量（API Key） |
-
-在 **数据 → 数据与备份** 可导出或导入 JSON。导出会先等待待保存记录；记忆库读取失败会停止导出，恢复失败会回滚。备份包含浏览器中的记录，PDF 原文件和插图需要单独迁移或重新导入。
-
-换浏览器、清站点数据、无痕模式会丢失进度（除非先导出）。
-
-## 部署给他人访问
+`.env.example` 列出可用配置。复制为本机的 `.env.local` 后，只填写需要使用的项目：
 
 ```bash
-# 1) 环境变量（示例）
-# HOST=0.0.0.0
-# PORT=3000
-# APP_API_TOKEN=<长随机串>          # 生产/公网必填：保护 /api/tutor 与杂志同步
-# VITE_APP_API_TOKEN=<同上>        # 构建前端时写入，请求时带上；勿提交仓库
-# STEP_API_KEY / DEEPSEEK_API_KEY 等 LLM 密钥
-# MAGAZINE_SYNC_ON_BOOT=false      # 公网建议关闭启动全量同步，改手动
-
-# 2) 拷贝或同步 data/magazines/（体积较大，未进 git）
-# 3) 构建并启动
-npm run build
-npm start
+cp .env.example .env.local
 ```
 
-- 反代 HTTPS（Nginx/Caddy）到 `HOST:PORT`。
-- `VITE_*` 在 **build 时** 生效；改 token 需重新 `npm run build`。
-- 共享 `APP_API_TOKEN` 适合小范围试用；token 会出现在前端产物中，请配合限流/防火墙，勿当作真正的用户鉴权。
-- 外刊内容仅供学习，请支持正版订阅。
+- 本机句子翻译与朗读按 [翻译配置](docs/local-translation.md)、[语音配置](docs/tts.md) 准备资源。
+- 在线 AI 接口是可选接入，使用有效凭据并服从当前界面的功能开关；当前界面中的解释与讨论保持关闭。
+- Windows / Android 的离线发行配置关闭在线 AI。Windows 可由用户主动更新已配置的外刊；Android 当前不开放联网更新入口。已有材料可继续离线阅读。
 
-### 外刊杂志（Library → 外刊杂志）
+供应商密钥仅保存在本机环境或服务端配置中。公网部署与个人本机启动采用不同的数据和访问策略，见 [浏览器运行与部署](docs/web-deployment.md)。
 
-从 [awesome-english-ebooks](https://github.com/hehonghui/awesome-english-ebooks) **定期/手动导入并解析**经济学人、纽约客、大西洋月刊、Wired；同时从 [News in Levels](https://www.newsinlevels.com/) 导入 A2 Level 1 与 B1 Level 2 分级新闻：
+### 3. 开始第一轮阅读
 
-1. 打开 **文章库 → 外刊杂志**
-2. 点击 **同步外刊**（或等待定时任务）
-3. 先选 **期号**，再选 **文章**，进入 P2 点词学习
+1. 在文章库导入自己的材料，或粘贴一篇文章。
+2. 进入正文，点词查义、选句翻译，按需要开启朗读。
+3. 返回学习概览，查看记录，进入词卡学习或继续阅读。
+4. 定期从“数据与备份”导出档案。
 
-| API | 说明 |
-|---|---|
-| `GET /api/magazines/sources` | 杂志源 |
-| `GET /api/magazines/issues` | 期号列表 |
-| `GET /api/magazines/issues/:id` | 期内文章列表 |
-| `GET /api/magazines/articles/:id` | 单篇全文 |
-| `POST /api/magazines/sync` | 手动同步 |
-| `GET /api/magazines/sync/status` | 同步状态 |
+## 三端架构
 
-解析结果缓存在本地 `data/magazines/`（已 gitignore），**不**再分发 epub/pdf 原文件。内容仅供个人学习，请支持正版订阅。
+![ReadAge 三端架构：共用界面与学习规则，通过 Node 或原生插件接入本地能力。](docs/images/platforms.svg)
 
-## 脚本
+| 层次 | 主要实现 |
+| --- | --- |
+| 界面与学习流程 | React 19、TypeScript、Vite、Tailwind CSS；阅读、词卡、推荐与记忆模型位于 `src/`。 |
+| 浏览器 / Windows 本机服务 | Express、Node SQLite、文档解析、词典、翻译和朗读服务；Windows 通过 Electron 提供独立应用窗口。 |
+| Android | Capacitor、Java 原生插件与 JNI；分别实现本地数据库、文档、词典、外刊、翻译和语音。 |
+| 学习安排 | 共用 FSRS 记忆与复习逻辑，数据协议由平台适配器对接各自存储。 |
 
-| 命令 | 说明 |
-|---|---|
-| `npm run start:local` | 固定本机地址的 Express + Vite，关闭启动全库同步 |
-| `npm run dev` | Express + Vite 开发服务器 |
-| `npm run build:extension` | 生成 extension/dist 和网页可下载的插件 ZIP |
-| `npm run build` | 构建前端与 server |
-| `npm run start` | 生产启动 |
-| `npm run lint` | `tsc --noEmit` |
-| `npm test` | 单元测试（含 epub 解析 fixture） |
+应用标识和既有数据目录保留兼容值。产品展示名称统一为 **ReadAge**，代码或路径中的 `readge` 不应通过批量重命名改变既有档案位置。
 
-## 技术栈
+### 学习数据与备份
 
-- React 19 + TypeScript + Vite + Tailwind CSS 4
-- Express API（Gemini：查词 / 翻译 / 推荐 / 聊天；外刊同步解析）
-- 数据：学习状态 localStorage；外刊正文服务端落盘
+| 环境 | 档案保存位置与行为 |
+| --- | --- |
+| 电脑本机浏览器 | 本机模式使用 `local-data/library/learning.sqlite`；首次迁移保留浏览器原记录和快照，不同来源档案分别保留。 |
+| Windows 应用 | 用户目录 `%APPDATA%\readge\workspace` 中的 SQLite 与附件目录；升级不主动清空个人档案。 |
+| Android 应用 | 应用私有 SQLite 与文件目录，通过原生适配器读写。 |
+| 公网访客 | 默认关闭电脑档案接口，每位访客使用自己的浏览器存储；清站点数据或换浏览器前应先备份。 |
+
+三端各有自己的档案。当前迁移包属于手动恢复或替换，**不提供自动云同步或双向学习进度合并**。完整 ZIP 备份携带记录与引用的 PDF / 图片，恢复前核验完整性并保留原档案副本；词典和模型单独管理。
+
+## 开发与验证
+
+```bash
+npm run lint
+npm run check:extension
+npm run check:dictionary
+npm test
+npm run desktop:test
+npm run platforms:check
+```
+
+Android 另有数据库、文件、文档、词典、外刊、语音及选句回调的 Java 主机测试。隔离浏览器与主机测试覆盖其声明的范围，不替代正式模型听感、安装状态或真机行为验收。
+
+| 构建目标 | 命令 | 输出 |
+| --- | --- | --- |
+| 网页生产版 | `npm run build` | `dist/` |
+| Windows 安装包 | `npm run desktop:package` | `build/desktop/` |
+| Android APK | `npm run android:apk` | `android/app/build/outputs/apk/debug/` |
+| 浏览器插件 | `npm run build:extension` | `extension/dist/` 与可下载 ZIP |
+
+Windows 与网页构建共用 `dist/`，完整交付先打 Windows 包，再构建网页。Android 需要从共用源码构建、同步 Capacitor 资源并生成 APK。发布时使用 `npm run platforms:check -- --strict` 核对快照、同步记录和包哈希。
+
+项目默认先完成源码与相关验证，待用户检测或明确要求发布后集中编译；协作规则见 [AGENTS.md](AGENTS.md)。
+
+## 开发文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [产品与技术设计](DESIGN.md) | 页面组织、阅读与学习流程 |
+| [跨端修改与交付](docs/platform-parity.md) | 三端对应关系、构建快照和交付状态 |
+| [用户功能逐项验收](docs/user-feature-acceptance.md) | 入口、操作、可观察结果和实际验收范围 |
+| [Windows 应用](desktop/README.md) | 离线资源、档案迁移、安装与运行 |
+| [Windows / Android 本地实现](docs/desktop-android-local.md) | 平台适配、原生能力与真实差异 |
+| [Android 验收记录](docs/android-acceptance.md) | 原生功能与设备验证范围 |
+| [词典接口与来源](docs/dictionary-interface-v1.md) | 多源查询、契约和词典服务 |
+| [翻译](docs/local-translation.md) / [朗读](docs/tts.md) | 本机模型、语音与故障排查 |
+| [浏览器插件](extension/README.md) | 安装、选词查词与本地服务连接 |
+
+## 许可证与第三方资源
+
+ReadAge 自有源码采用 **[Apache License 2.0](LICENSE)**，项目归属说明见 [NOTICE](NOTICE)。
+
+第三方库、词典、模型、音色和外刊内容保留各自原有许可与版权声明；本仓库的许可证不替代这些资源的授权。发行包保留所需的第三方许可、通知和随包源码。已有声明见 [ECDICT 与词典通知](vendor/nextword-local-dictionary/THIRD_PARTY_NOTICES.md)、[WordNet 许可](vendor/wordnet/LICENSE.txt) 及 Android / Windows 的资源清单。请只导入或分发你有权使用的文章和文档。

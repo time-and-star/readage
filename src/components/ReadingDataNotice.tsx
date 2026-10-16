@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useSyncExternalStore } from 'react';
+import { getLocalDatabaseSnapshot, subscribeLocalDatabase } from '../lib/localDatabase';
 import { ChevronDown, HardDrive, Server, ShieldCheck } from 'lucide-react';
+import { IS_ANDROID, IS_OFFLINE_APP } from '../lib/platform/runtime';
 
 type ReadingDataRow = {
   label: string;
@@ -36,6 +38,7 @@ const READING_DATA_ROWS: readonly ReadingDataRow[] = [
 ];
 
 export function ReadingDataNotice({ compact = false }: { compact?: boolean } = {}) {
+  const localDatabase = useSyncExternalStore(subscribeLocalDatabase, getLocalDatabaseSnapshot, () => null);
   return (
     <details className={compact ? 'group border-t border-[#E3DDD1] pt-4' : 'group rounded-2xl border border-[#DED6C9] bg-[#FAF8F3] p-4 sm:p-5'}>
       <summary className={`flex cursor-pointer list-none gap-3 rounded-sm outline-none marker:hidden [&::-webkit-details-marker]:hidden focus-visible:ring-2 focus-visible:ring-[#A94E2B] focus-visible:ring-offset-2 ${compact ? 'items-center' : 'items-start'}`}>
@@ -50,7 +53,7 @@ export function ReadingDataNotice({ compact = false }: { compact?: boolean } = {
           </span>
           {!compact && (
             <span className="mt-1 block text-sm leading-relaxed text-[#6B645B]">
-              了解哪些信息留在本机，以及主动使用 AI 时哪些内容会发送。
+              {IS_OFFLINE_APP ? '了解阅读和学习记录怎样保存在这台设备上。' : '了解哪些信息留在本机，以及主动使用 AI 时哪些内容会发送。'}
             </span>
           )}
         </div>
@@ -93,7 +96,7 @@ export function ReadingDataNotice({ compact = false }: { compact?: boolean } = {
             </div>
             <div className="text-xs font-medium leading-relaxed text-[#8F3F22] sm:max-w-44 sm:text-right">
               <span className="font-semibold text-[#6B7C8F] sm:hidden">去向：</span>
-              {row.destination}
+              {IS_OFFLINE_APP ? '这台设备的本机学习档案' : localDatabase && row.destination === '本机浏览器' ? '这台电脑的学习档案' : row.destination}
             </div>
           </div>
           ))}
@@ -102,14 +105,14 @@ export function ReadingDataNotice({ compact = false }: { compact?: boolean } = {
       <div className="mt-4 space-y-2 text-xs leading-relaxed text-[#4A5568]">
         <p>
           <strong className="text-[#4A4038]">主动调用 AI：</strong>
-          需要服务端处理的查词、翻译、分级、改写或讨论，会发送本次主动提交的文本和必要上下文；不使用这些功能时，不会为了统计阅读而上传整篇文章。
+          {IS_OFFLINE_APP ? '当前安装版未启用联网 AI。词典、内置朗读和本机翻译在这台设备上处理，不会把正文发送给 AI 服务。外刊更新仅在你点击更新后连接对应来源。' : '需要服务端处理的查词、翻译、分级、改写或讨论，会发送本次主动提交的文本和必要上下文；不使用这些功能时，不会为了统计阅读而上传整篇文章。'}
         </p>
         <p>
           <strong className="text-[#4A4038]">推荐诊断：</strong>
-          在开发环境或启用推荐诊断的站点，可能会发送 CEFR 档位、复习词、文章标识、候选匹配分数和时间，用于检查推荐质量；不包含整篇文章或讨论全文。
+          {IS_OFFLINE_APP ? '安装版推荐使用本机学习记录与已导入文章。' : '在开发环境或启用推荐诊断的站点，可能会发送 CEFR 档位、复习词、文章标识、候选匹配分数和时间，用于检查推荐质量；不包含整篇文章或讨论全文。'}
         </p>
         <p>
-          学习档案默认保存在当前浏览器，不会自动上传为云端档案。清除站点数据会删除本机记录；你可以通过备份功能导出本机记录。
+          {IS_ANDROID ? '学习档案保存在这台手机的应用目录，不会自动上传。卸载应用或清除应用数据会删除本机记录，请先导出备份。' : localDatabase ? '学习档案统一保存在这台电脑，不会自动上传为云端档案。清除站点数据不会删除学习记录；你可以导出完整备份，在另一台电脑本地恢复。' : '学习档案默认保存在当前浏览器，不会自动上传为云端档案。清除站点数据会删除本机记录；你可以通过备份功能导出本机记录。'}
         </p>
       </div>
       </div>

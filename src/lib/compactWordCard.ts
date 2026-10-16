@@ -1,4 +1,5 @@
 import type { GrammarExplanation } from '../types';
+import { toDictionarySourceWordCard } from './dictionaryClient';
 
 export interface CompactWordCard {
   word: string;
@@ -70,8 +71,21 @@ function selectSense(senses: CompactSense[]): CompactSense | undefined {
     ?? senses.find(sense => sense.meaningZh || sense.definitionEn);
 }
 
-/** Select one paired sense for the reading popup without changing the full card. */
+/** Prefer the authored core meaning, otherwise select one paired dictionary sense. */
 export function getCompactWordCard(result: GrammarExplanation, selectedText?: string): CompactWordCard {
+  const authoredSource = result.dictionarySources?.find(source => source.readageContent);
+  if (authoredSource) {
+    const preview = getCompactWordCard(toDictionarySourceWordCard(authoredSource), selectedText);
+    const coreMeaning = authoredSource.readageContent?.coreMeaning;
+    const primaryWord = text(result.dictionaryRecord?.lemma) || text(result.wordOrPhrase);
+    return {
+      ...preview,
+      phonetic: preview.phonetic || (preview.word.toLowerCase() === primaryWord.toLowerCase()
+        ? text(result.phonetic) || text(result.dictionaryRecord?.phonetic) || undefined : undefined),
+      meaningZh: text(coreMeaning?.zh) || preview.meaningZh,
+      definitionEn: text(coreMeaning?.en) || preview.definitionEn,
+    };
+  }
   const record = result.dictionaryRecord;
   const word = text(record?.lemma) || text(result.wordOrPhrase) || text(selectedText);
   const query = text(selectedText) || text(record?.query);

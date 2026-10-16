@@ -263,7 +263,7 @@ export async function stepGenerateJson<T>(
           {
             role: 'system',
             content:
-              'You are the English AI active-reading tutor backend. Always respond with a single valid JSON object only, no markdown fences.',
+              'You are the ReadAge active-reading tutor backend. Always respond with a single valid JSON object only, no markdown fences.',
           },
           { role: 'user', content: prompt },
         ],

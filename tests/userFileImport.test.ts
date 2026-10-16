@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import JSZip from 'jszip';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import {
   parseUserImportFile,
   parseUserImportPageQuery,
@@ -147,4 +149,18 @@ describe('user file import', () => {
       signal: controller.signal, saveImage: async () => assert.fail('Cancelled imports must not save assets.'),
     }), /cancelled import/);
   });
+});
+
+
+it('HTML semantic articles publish embedded raster images and retain captions after furniture cleaning', async () => {
+  const root=await fs.mkdtemp(path.resolve('tmp/html-import-parity-'));
+  const pixel=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=','base64');
+  const html='<html><body><nav>Navigation</nav><article><h1>Harbor</h1><figure><img src="data:image/png;base64,'+pixel.toString('base64')+'" alt="Harbor image"><figcaption>Photo: Harbor boats</figcaption></figure><p>Brief lesson.</p><p>Read: Related story</p></article><article><h1>Second</h1><p>A second short lesson.</p><img src="https://example.invalid/no-request.png"></article></body></html>';
+  const result=await parseUserImportFile(Buffer.from(html),'book.html',{dataRoot:root});
+  assert.deepEqual(result.articles.map(a=>a.title),['Harbor','Second']);
+  const article=result.articles[0], image=article.media![0];
+  assert.equal(image.caption,'Photo: Harbor boats');assert.equal(image.afterParagraphIndex,0);
+  assert.deepEqual(await fs.readFile(path.join(root,'assets',image.src.split('/').at(-1)!)),pixel);
+  assert.equal(result.articles[1].media?.length??0,0);
+  assert.equal(result.articles.some(a=>a.paragraphs.some(p=>p.includes('Read:'))),false);
 });

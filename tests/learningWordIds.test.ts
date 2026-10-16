@@ -19,16 +19,32 @@ test('a later displayed card cannot replace an already confirmed learning mappin
   assert.deepEqual(await resolver.resolve(['running']), ['run']);
 });
 
-test('passive IDs match real successful dictionary lookups, preserving phrase units', async () => {
+test('nonblocking identity reads expose only settled mappings and respect eviction and clearing', async () => {
+  let finish!: (value: string[]) => void;
+  const resolver = new LearningWordIdResolver(() => new Promise(resolve => { finish = resolve; }), 2);
+  const pending = resolver.resolve(['running']);
+  assert.equal(resolver.getResolved('running'), undefined);
+  resolver.prime('running', 'running');
+  assert.equal(resolver.getResolved('running'), undefined);
+  finish(['run']); await pending;
+  assert.equal(resolver.getResolved('RUNNING'), 'run');
+  resolver.prime('book', 'book'); await Promise.resolve();
+  assert.equal(resolver.getResolved('running'), undefined);
+  assert.equal(resolver.getResolved('book'), 'book');
+  resolver.clear(); assert.equal(resolver.getResolved('book'), undefined);
+});
+
+test('passive IDs match dictionary learning identities independently of the displayed headword, preserving phrase units', async () => {
   const surfaces = ['running', 'books', 'studies', 'went', 'saw', 'over time', 'unknownzzzz'];
   const entries = await lookupDictionaryWords(surfaces);
   const ids = await resolveDictionaryLearningWordIds(surfaces);
   assert.deepEqual(ids.slice(0, 3), ['run', 'book', 'study']);
   for (let index = 0; index < 5; index += 1) {
     assert.ok(entries[index]);
-    assert.equal(ids[index], canonicalLearningWordId(surfaces[index], entries[index]!.lemma));
+    assert.equal(ids[index], entries[index]!.learningTermRef?.stableId);
   }
   assert.deepEqual(ids.slice(5), ['over time', 'unknownzzzz']);
+  assert.deepEqual(ids.slice(3, 5), ['went', 'saw'], 'the full ReadAge source cannot rewrite established irregular-form learning IDs');
   assert.equal(canonicalLearningWordId('over time', 'time'), 'over time');
 });
 

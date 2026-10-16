@@ -1,6 +1,6 @@
 import React from 'react';
 
-const readAgeLogoUrl = new URL('../../Logo.png', import.meta.url).href;
+const readAgeLogoUrl = new URL('../../assets/brand/readge-icon-256.png', import.meta.url).href;
 
 type ReadAgeLogoProps = {
   className?: string;

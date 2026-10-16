@@ -127,8 +127,8 @@ describe('magazine remote request boundaries', () => {
     }) as typeof fetch;
 
     await assert.rejects(
-      downloadFile('https://raw.githubusercontent.com/owner/repo/ref/file.epub'),
-      /host/i
+      downloadFile('https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/file.epub'),
+      /host|来源/i
     );
     assert.equal(calls, 1);
   });
@@ -147,7 +147,7 @@ describe('magazine remote request boundaries', () => {
     }) as typeof fetch;
 
     await listRepoContents('01_economist');
-    await downloadFile('https://raw.githubusercontent.com/owner/repo/ref/file.epub');
+    await downloadFile('https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/file.epub');
     assert.equal(signals.length, 2);
     assert.ok(signals.every((signal) => signal instanceof AbortSignal));
   });
@@ -160,13 +160,13 @@ describe('magazine remote request boundaries', () => {
       headers: { 'content-length': '9' },
     })) as typeof fetch;
     await assert.rejects(
-      downloadFile('https://raw.githubusercontent.com/owner/repo/ref/file.epub'),
+      downloadFile('https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/file.epub'),
       /too large/i
     );
 
     globalThis.fetch = (async () => new Response('123456789', { status: 200 })) as typeof fetch;
     await assert.rejects(
-      downloadFile('https://raw.githubusercontent.com/owner/repo/ref/file.epub'),
+      downloadFile('https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/file.epub'),
       /too large/i
     );
   });

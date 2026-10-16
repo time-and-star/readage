@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="630" viewBox="0 0 1440 630" role="img" aria-labelledby="title desc">
+  <title id="title">ReadAge 三端架构与档案保存</title><desc id="desc">浏览器、Windows Electron 和 Android Capacitor 共用阅读界面及学习规则，分别通过 Node 或原生插件保存本地档案、解析文件和调用模型。三端档案独立，通过备份包手动迁移。</desc>
+  <rect width="1440" height="630" rx="24" fill="#f5f1e7"/>
+  <g font-family="Arial,'Microsoft YaHei',sans-serif" fill="#2b2723">
+    <text x="48" y="61" font-size="29" font-weight="700">同一个阅读产品，适配三种运行环境。</text>
+    <rect x="48" y="96" width="1344" height="100" rx="15" fill="#292620"/>
+    <text x="720" y="137" text-anchor="middle" font-size="24" font-weight="700" fill="#fff9ef">共用 React 界面 · 阅读流程 · 词卡复习 · 学习数据协议</text>
+    <text x="720" y="170" text-anchor="middle" font-size="17" fill="#c7bca9">src/ + packages/dictionary/ + src/lib/platform/</text>
+    <g transform="translate(48 244)">
+      <rect width="424" height="270" rx="16" fill="#fffdf8"/>
+      <rect x="25" y="26" width="42" height="31" rx="4" fill="none" stroke="#c45229" stroke-width="3"/><path d="M25 37h42" stroke="#c45229" stroke-width="2"/>
+      <text x="84" y="52" font-size="27" font-weight="700">本地浏览器</text>
+      <text x="25" y="104" font-size="19">Vite + Express / Node</text><text x="25" y="143" font-size="18">电脑本机：SQLite 档案</text><text x="25" y="180" font-size="18">公网访客：浏览器独立存储</text><text x="25" y="226" font-size="16" fill="#857768">词典、文档与模型经本机服务接入</text>
+    </g>
+    <g transform="translate(508 244)">
+      <rect width="424" height="270" rx="16" fill="#fffdf8"/>
+      <rect x="25" y="25" width="43" height="30" rx="3" fill="none" stroke="#c45229" stroke-width="3"/><path d="M46 55v9m-12 0h24" stroke="#c45229" stroke-width="3"/>
+      <text x="84" y="52" font-size="27" font-weight="700">Windows</text>
+      <text x="25" y="104" font-size="19">Electron + 本机 Node 服务</text><text x="25" y="143" font-size="18">独立 SQLite 与附件目录</text><text x="25" y="180" font-size="18">随包提供离线词典与模型</text><text x="25" y="226" font-size="16" fill="#857768">已有档案迁移、校验与恢复备份</text>
+    </g>
+    <g transform="translate(968 244)">
+      <rect width="424" height="270" rx="16" fill="#fffdf8"/>
+      <rect x="32" y="20" width="25" height="43" rx="5" fill="none" stroke="#c45229" stroke-width="3"/><path d="M40 56h9" stroke="#c45229" stroke-width="2"/>
+      <text x="84" y="52" font-size="27" font-weight="700">Android</text>
+      <text x="25" y="104" font-size="19">Capacitor + Java / JNI</text><text x="25" y="143" font-size="18">原生 SQLite、文件与文档解析</text><text x="25" y="180" font-size="18">本机翻译、语音与离线词典</text><text x="25" y="226" font-size="16" fill="#857768">触屏、窄屏与 WebView 分别适配</text>
+    </g>
+    <text x="720" y="569" text-anchor="middle" font-size="20" font-weight="700">档案独立保存，通过备份包手动迁移。</text>
+    <text x="720" y="601" text-anchor="middle" font-size="16" fill="#847667">备份恢复保留原档案副本；当前不提供自动云同步或双向进度合并。</text>
+  </g>
+  <path d="M260 196v36m460-36v36m460-36v36" stroke="#ad9a82" stroke-width="2"/>
+</svg>

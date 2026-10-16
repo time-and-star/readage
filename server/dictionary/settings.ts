@@ -201,6 +201,18 @@ export class DictionarySettingsManager {
     return operation;
   }
 
+  /** A pack replaces an existing source without changing the user's enabled list, order or default. */
+  replaceSource(id: string, register: () => () => void, commit: () => Promise<void>): Promise<void> {
+    const operation = this.queued.then(async () => {
+      if (!this.installedIds.includes(id)) throw new DictionarySettingsError(400, 'INVALID_SETTINGS', 'Dictionary source is not installed.');
+      this.updateInProgress = true; let rollback: (() => void) | undefined;
+      try { rollback = register(); const apply = this.options.prepareApply(this.current); await commit(); apply(); }
+      catch (error) { rollback?.(); throw error; }
+      finally { this.updateInProgress = false; }
+    });
+    this.queued = operation.catch(() => {}); return operation;
+  }
+
   private async persist(settings: DictionarySourceSettings, target: string): Promise<void> {
     const directory = path.dirname(target);
     const temporary = path.join(directory, `.${path.basename(target)}.${randomUUID()}.tmp`);

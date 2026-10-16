@@ -1,5 +1,5 @@
 import express from 'express';
-import { getTtsConfiguration, validateTtsRequest } from './config';
+import { getTtsConfiguration, getTtsLanguages, validateTtsRequest } from './config';
 import { TtsService } from './service';
 import { TtsError } from './types';
 
@@ -30,6 +30,7 @@ export function createTtsRouter(
       ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.endpoint!).hostname);
     res.setHeader('Cache-Control', 'no-store');
     res.json({ ok: true, provider: config.provider, configured: config.configured, maxTextLength: config.maxTextLength,
+      ...(config.voiceFrFr || config.voiceJaJp ? { languages: config.configured ? getTtsLanguages(config) : [] } : {}),
       ...(preload ? { preload: true } : {}) });
   });
 

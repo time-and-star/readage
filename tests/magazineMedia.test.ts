@@ -135,6 +135,9 @@ describe('cached magazine media upgrade', () => {
       await fs.mkdir(path.join(dir, 'blobs'), { recursive: true });
       await fs.writeFile(path.join(dir, 'index.json'), JSON.stringify({ issues: [issue], sources: [], lastSyncAt: null }));
       await fs.writeFile(path.join(dir, 'blobs', `${issue.remoteSha}.epub`), buffer);
+      const deferred = await hydrateMagazineMedia(article, dir, { restoreMissing: false });
+      assert.equal(deferred, article, 'opening text leaves missing images pending for the reader to request');
+      assert.equal((await fs.readdir(dir)).includes('media_by_issue'), false, 'opening does not parse the old EPUB');
       const restored = await hydrateMagazineMedia(article, dir);
       assert.equal(restored.media?.length, 1);
       assert.deepEqual(restored.content, article.content);
@@ -144,6 +147,8 @@ describe('cached magazine media upgrade', () => {
       assert.equal(article.media, undefined, 'input article remains untouched');
       assert.equal((await fs.readdir(path.join(dir, 'media_by_issue'))).length, 1);
       assert.equal((await fs.readdir(dir)).includes('articles_by_id'), false);
+      assert.deepEqual((await hydrateMagazineMedia(article, dir, { restoreMissing: false })).media,
+        JSON.parse(JSON.stringify(restored.media)), 'later openings immediately reuse restored illustrations');
       await fs.rm(path.join(dir, 'blobs', `${issue.remoteSha}.epub`));
       assert.deepEqual((await hydrateMagazineMedia(article, dir)).media, JSON.parse(JSON.stringify(restored.media)), 'cached manifest requires no blob or download');
     } finally {

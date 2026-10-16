@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Article, ArticleMedia } from '../types';
 import { fetchMagazineArticleById } from './magazineLemmaIndex';
 import { alignArticleMedia } from './articleMedia';
@@ -9,9 +9,9 @@ const mediaCache = new Map<string, MediaSource>();
 /** Old saved articles can acquire illustrations without replacing their text or translations. */
 export function useArticleMedia(articles: Article[]): Record<string, ArticleMedia[]> {
   const [loaded, setLoaded] = useState<Record<string, MediaSource>>({});
-  const missingIds = JSON.stringify(Array.from(new Set(articles
+  const missingIds = useMemo(() => JSON.stringify(Array.from(new Set(articles
     .filter(article => article.source === 'magazine' && article.media === undefined)
-    .map(article => article.id))).sort());
+    .map(article => article.id))).sort()), [articles]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -37,8 +37,8 @@ export function useArticleMedia(articles: Article[]): Record<string, ArticleMedi
     };
   }, [missingIds]);
 
-  return Object.fromEntries(articles.map(article => {
+  return useMemo(() => Object.fromEntries(articles.map(article => {
     const source = loaded[article.id] ?? mediaCache.get(article.id);
     return [article.id, article.media ?? (source ? alignArticleMedia(source, article.content) : [])];
-  }));
+  })), [articles, loaded]);
 }

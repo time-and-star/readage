@@ -1,4 +1,6 @@
-import type { MagazineIssue, MagazineSyncResult, MagazineSyncStatus } from '../../src/types';
+import type { MagazineIssue, MagazineSourceMeta, MagazineSyncResult, MagazineSyncStatus } from '../../src/types';
+import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import {
   getMaxIssuesPerSource,
   getSourceById,
@@ -7,12 +9,16 @@ import {
 } from './config';
 import { discoverIssues, downloadFile } from './github';
 import { discoverNewsInLevelsIssues, parseNewsInLevelsArticle } from './newsInLevels';
+import { discoverFullTextIssues, materializeFullTextArticle, parseFullTextArticle, type FullTextFeedEntry } from './fullTextFeeds';
+import { resolveArticleImage, imageExtension } from './assets';
 import { articlesToStubs, buildIssueMeta, chaptersToArticles } from './normalize';
 import { parseEpubBuffer } from './parseEpub';
 import { parsePdfBuffer } from './parsePdf';
 import {
   blobExists,
   loadIndex,
+  loadArticle,
+  loadIssuePayload,
   loadSyncState,
   readBlob,
   rebuildIndexFromIssues,
@@ -38,6 +44,31 @@ export function getSyncStatus(): MagazineSyncStatus {
 export interface SyncOptions {
   sources?: string[];
   maxIssuesPerSource?: number;
+}
+
+/** Matching feed fingerprints alone cannot prove that the offline files still exist. */
+async function completeFullTextCache(issue: MagazineIssue, entry: FullTextFeedEntry, source: MagazineSourceMeta): Promise<boolean> {
+  try {
+    if (!(await blobExists(entry.sha, 'html')) || (await readBlob(entry.sha, 'html')).toString('utf8') !== entry.html) return false;
+    const payload = await loadIssuePayload(source.id, issue.issueLabel);
+    if (!payload || payload.articles.length !== 1) return false;
+    const expectedId = `mag:${source.id}:${issue.issueLabel}:article-1`;
+    if (payload.articles[0].id !== expectedId) return false;
+    const article = await loadArticle(expectedId);
+    const parsed = parseFullTextArticle(entry, source);
+    if (!article || article.title !== entry.title || article.date !== entry.publishedAt.slice(0, 10)
+      || JSON.stringify(article.content) !== JSON.stringify(parsed.paragraphs) || article.media?.length !== parsed.images.length) return false;
+    for (let index = 0; index < parsed.images.length; index++) {
+      const media = article.media![index], reference = parsed.images[index];
+      const name = media.src.match(/^\/api\/magazines\/assets\/([a-f0-9]{64}\.(?:jpg|png|gif|webp))$/)?.[1];
+      if (!name || media.caption !== reference.caption || media.alt !== reference.alt || media.afterParagraphIndex !== reference.afterParagraphIndex) return false;
+      const file = await resolveArticleImage(name);
+      if (!file) return false;
+      const bytes = await fs.readFile(file);
+      if (createHash('sha256').update(bytes).digest('hex') !== name.slice(0, 64) || imageExtension(bytes) !== name.split('.').pop()) return false;
+    }
+    return true;
+  } catch { return false; }
 }
 
 export async function runMagazineSync(options: SyncOptions = {}): Promise<MagazineSyncResult> {
@@ -89,6 +120,8 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
       try {
         candidates = source.provider === 'news_in_levels'
           ? await discoverNewsInLevelsIssues(source, maxIssues)
+          : source.provider === 'rss_fulltext'
+            ? await discoverFullTextIssues(source, maxIssues)
           : source.repoDir
             ? await discoverIssues(source.repoDir, maxIssues)
             : (() => {
@@ -108,7 +141,9 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
         const sha = candidate.preferredFile.sha;
         progress = `processing ${issueId}`;
 
-        if (syncState.importedShas[issueId] === sha && issueMap.get(issueId)?.status === 'ready') {
+        const cachedIssue = issueMap.get(issueId);
+        if (syncState.importedShas[issueId] === sha && cachedIssue?.status === 'ready'
+          && (!candidate.feedEntry || await completeFullTextCache(cachedIssue, candidate.feedEntry, source))) {
           result.skippedIssues += 1;
           result.perSource[sourceId].skipped += 1;
           continue;
@@ -120,6 +155,7 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
           if (candidate.format === 'html') {
             if (!candidate.content) throw new Error('Web source returned an empty HTML page');
             buffer = Buffer.from(candidate.content, 'utf8');
+            if (candidate.feedEntry) await writeBlob(sha, ext, buffer);
           } else if (await blobExists(sha, ext)) {
             buffer = await readBlob(sha, ext);
           } else {
@@ -132,7 +168,9 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
           }
 
           progress = `parsing ${issueId}`;
-          let chapters = candidate.format === 'html'
+          const chapters = candidate.feedEntry
+            ? [await materializeFullTextArticle(candidate.feedEntry, source)]
+            : candidate.format === 'html'
             ? (() => {
                 const parsed = parseNewsInLevelsArticle(buffer.toString('utf8'));
                 return [{
@@ -150,12 +188,8 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
             throw new Error('No articles extracted from file');
           }
 
-          // Cap very large issues for MVP usability
-          if (chapters.length > 80) {
-            chapters = chapters.slice(0, 80);
-          }
-
           const articles = chaptersToArticles(chapters, source, candidate.issueLabel);
+          if (candidate.feedEntry) articles.forEach(article => { article.date = candidate.feedEntry!.publishedAt.slice(0, 10); });
           const issue = buildIssueMeta({
             source,
             issueLabel: candidate.issueLabel,
@@ -164,6 +198,8 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
             remoteSha: sha,
             articleCount: articles.length,
             status: status as MagazineIssue['status'],
+            title: candidate.feedEntry?.title,
+            publishedAt: candidate.feedEntry?.publishedAt,
           });
 
           await saveIssuePayload(
@@ -192,7 +228,8 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
             status: 'failed',
             errorMessage: message,
           });
-          issueMap.set(failedIssue.id, failedIssue);
+          // A temporary feed/image failure must not hide the last readable cache.
+          if (!issueMap.has(failedIssue.id)) issueMap.set(failedIssue.id, failedIssue);
         }
       }
     }

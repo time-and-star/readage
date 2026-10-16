@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import type { ArticleMedia } from '../types';
 import { getApiAuthHeaders } from '../lib/apiAuth';
+import { IS_ANDROID, IS_OFFLINE_APP } from '../lib/platform/runtime';
+import { nativeAssetUrl } from '../lib/platform/nativeFiles';
 
 const ArticleImage: React.FC<{ src: string; alt: string }> = ({ src, alt }) => {
-  const privateImage = src.startsWith('/api/import/images/');
+  const privateImage = !IS_ANDROID && src.startsWith('/api/import/images/');
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -27,7 +29,8 @@ const ArticleImage: React.FC<{ src: string; alt: string }> = ({ src, alt }) => {
     return () => { current = false; controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [src, privateImage]);
   if (privateImage && !url) return <span className="font-sans text-xs text-[#85786B]">{failed ? '插图暂时不可用，可查看原页。' : '正在加载插图…'}</span>;
-  return <img src={privateImage ? url! : src} alt={alt} loading="lazy" decoding="async" />;
+  if (IS_OFFLINE_APP && /^(?:https?:)?\/\//i.test(src)) return <span className="font-sans text-xs text-[#85786B]">此插图尚未保存到本机。</span>;
+  return <img src={privateImage ? url! : IS_ANDROID ? nativeAssetUrl(src) : src} alt={alt} loading="lazy" decoding="async" />;
 };
 
 export const ArticleMediaFigures: React.FC<{

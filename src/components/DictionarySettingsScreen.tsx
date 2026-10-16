@@ -16,11 +16,15 @@ import {
   type DictionarySettingsSnapshot,
 } from '../lib/dictionarySettingsClient';
 import './dictionarySettings.css';
+import { IS_ANDROID } from '../lib/platform/runtime';
+import { nativeFiles, pickNativeFile, importNativeDictionary, type NativePickedFile } from '../lib/platform/nativeFiles';
 
 interface DictionarySettingsScreenProps {
   onBack: () => void;
   navigation?: React.ReactNode;
   initialSnapshot?: DictionarySettingsSnapshot;
+  onTryFrench?: () => void;
+  onTryJapanese?: () => void;
 }
 
 interface SortableDictionaryCardProps {
@@ -112,6 +116,8 @@ export const DictionarySettingsScreen: React.FC<DictionarySettingsScreenProps> =
   onBack,
   navigation,
   initialSnapshot,
+  onTryFrench,
+  onTryJapanese,
 }) => {
   const [snapshot, setSnapshot] = useState<DictionarySettingsSnapshot | null>(initialSnapshot ?? null);
   const [draft, setDraft] = useState<DictionarySettings | null>(initialSnapshot?.settings ?? null);
@@ -132,7 +138,12 @@ export const DictionarySettingsScreen: React.FC<DictionarySettingsScreenProps> =
   const [orderNotice, setOrderNotice] = useState('');
   const fileInput = useRef<HTMLInputElement | null>(null);
   const importRequest = useRef<AbortController | null>(null);
-  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importFile, setImportFile] = useState<Pick<File, 'name' | 'size'> | null>(null);
+  const nativePicked = useRef<NativePickedFile | null>(null);
+  useEffect(() => () => {
+    importRequest.current?.abort();
+    if (!importRequest.current && nativePicked.current) void nativeFiles.releaseFile({ handle: nativePicked.current.handle }).catch(() => {});
+  }, []);
   const [importLanguage, setImportLanguage] = useState('en');
   const [importName, setImportName] = useState('');
   const [importing, setImporting] = useState(false);
@@ -225,6 +236,20 @@ export const DictionarySettingsScreen: React.FC<DictionarySettingsScreenProps> =
     }
   };
 
+  const chooseNativeFile = async () => {
+    if (busy) return;
+    setImporting(true); setImportError(null); setImportMessage(null);
+    try {
+      const file = await pickNativeFile('dictionary');
+      if (!file) return;
+      try { validateDictionaryImportFile({ name: file.name, size: file.bytes }); }
+      catch (error) { await nativeFiles.releaseFile({ handle: file.handle }).catch(() => {}); throw error; }
+      if (nativePicked.current) await nativeFiles.releaseFile({ handle: nativePicked.current.handle }).catch(() => {});
+      nativePicked.current = file; setImportFile({ name: file.name, size: file.bytes }); setImportName('');
+    } catch (error) { setImportError(errorMessage(error)); }
+    finally { setImporting(false); }
+  };
+
   const handleImport = async () => {
     if (!importFile || !snapshot || !draft || busy) return;
     const controller = new AbortController();
@@ -234,13 +259,14 @@ export const DictionarySettingsScreen: React.FC<DictionarySettingsScreenProps> =
     setImportMessage(null);
     endDrag();
     try {
-      const imported = await dictionarySettingsClient.importFile(importFile, {
-        language: importLanguage, name: importName, signal: controller.signal,
-      });
+      const options = { language: importLanguage, name: importName, signal: controller.signal };
+      const imported = IS_ANDROID && nativePicked.current ? await importNativeDictionary(nativePicked.current, options)
+        : await dictionarySettingsClient.importFile(importFile as File, options);
       if (controller.signal.aborted) return;
       installSnapshot({ settings: imported.settings, catalog: imported.catalog,
         ...(snapshot.warning && imported.settings.revision === snapshot.settings.revision ? { warning: snapshot.warning } : {}) });
       setImportFile(null);
+      if (nativePicked.current) { void nativeFiles.releaseFile({ handle: nativePicked.current.handle }).catch(() => {}); nativePicked.current = null; }
       let cacheUpdated = true;
       try { await applyDictionaryCatalog(imported.catalog); }
       catch { cacheUpdated = false; }
@@ -249,6 +275,7 @@ export const DictionarySettingsScreen: React.FC<DictionarySettingsScreenProps> =
     } catch (error) {
       if (!controller.signal.aborted) setImportError(errorMessage(error));
     } finally {
+      if (controller.signal.aborted && nativePicked.current) { void nativeFiles.releaseFile({ handle: nativePicked.current.handle }).catch(() => {}); nativePicked.current = null; }
       if (importRequest.current === controller) importRequest.current = null;
       if (!controller.signal.aborted) setImporting(false);
     }
@@ -261,14 +288,14 @@ export const DictionarySettingsScreen: React.FC<DictionarySettingsScreenProps> =
         <div className="dictionary-settings__heading">
           <div>
             <h1>词典</h1>
-            <p>拖动排序，查词依次展示。</p>
+            <p>默认词典优先展示，其他词典按拖动顺序展示。</p>
           </div>
           {saveState === 'saving' && <span role="status" className="dictionary-settings__saving">
             <RefreshCw aria-hidden="true" /><span className="dictionary-settings__sr-only">正在保存词典设置…</span>
           </span>}
           <button type="button" className="dictionary-settings__import-button" disabled={busy || Boolean(draggingId) || !snapshot}
-            onClick={() => fileInput.current?.click()}><Plus aria-hidden="true" />导入词典</button>
-          <input ref={fileInput} type="file" accept=".mdx" className="dictionary-settings__file-input" aria-label="选择 MDX 词典文件"
+            onClick={() => IS_ANDROID ? void chooseNativeFile() : fileInput.current?.click()}><Plus aria-hidden="true" />导入词典</button>
+          <input ref={fileInput} type="file" accept=".mdx,.nwdict,.pack,.zip" className="dictionary-settings__file-input" aria-label="选择词典文件"
             disabled={busy || !snapshot} onChange={event => { chooseFile(event.target.files?.[0]); event.target.value = ''; }} />
         </div>
 
@@ -290,16 +317,16 @@ export const DictionarySettingsScreen: React.FC<DictionarySettingsScreenProps> =
         </div>}
         {saveWarning && <p role="status" className="dictionary-settings__notice dictionary-settings__notice--warning">{saveWarning}</p>}
         {importMessage && <p role="status" className="dictionary-settings__import-success"><Check aria-hidden="true" />{importMessage}</p>}
-        {(importFile || importError) && <section className="dictionary-settings__import-panel" aria-label="导入词典文件"
+        <section className="dictionary-settings__import-panel" aria-label="导入词典文件"
           onDragOver={event => { if (!busy && event.dataTransfer.types.includes('Files')) event.preventDefault(); }}
           onDrop={event => { if (event.dataTransfer.files.length && !busy) { event.preventDefault(); chooseFile(event.dataTransfer.files[0]); } }}>
           {importFile && <>
             <div className="dictionary-settings__import-file">
               <span>{importFile.name}</span>
               <small>{(importFile.size / (1024 * 1024)).toLocaleString('zh-CN', { maximumFractionDigits: 1 })} MB</small>
-              {!importing && <button type="button" disabled={busy} onClick={() => fileInput.current?.click()}>更换文件</button>}
+              {!importing && <button type="button" disabled={busy} onClick={() => IS_ANDROID ? void chooseNativeFile() : fileInput.current?.click()}>更换文件</button>}
             </div>
-            <details className="dictionary-settings__import-options">
+            {/\.mdx$/i.test(importFile.name) && <details className="dictionary-settings__import-options">
               <summary>语言与名称</summary>
               <div>
                 <label>词条语言<input type="text" value={importLanguage} placeholder="en" maxLength={80} disabled={busy}
@@ -307,18 +334,21 @@ export const DictionarySettingsScreen: React.FC<DictionarySettingsScreenProps> =
                 <label>词典名称<input type="text" value={importName} placeholder="使用文件内的名称" maxLength={128} disabled={busy}
                   onChange={event => setImportName(event.target.value)} /></label>
               </div>
-            </details>
-            <p className="dictionary-settings__import-hint">最大 256 MB。支持 MDX 文字词条；部分压缩或加密文件、MDD 图片与音频暂不支持。</p>
+            </details>}
+            <p className="dictionary-settings__import-hint">{/\.mdx$/i.test(importFile.name)
+              ? 'MDX 最大 256 MB，支持文字词条；LZO 压缩、密码加密、独立 MDD 图片与音频暂不支持。'
+              : '离线词典包最大 512 MB，支持 ECDICT .pack / .nwdict 和自编词典 .zip。'}</p>
           </>}
+          {!importFile && !importError && <p className="dictionary-settings__import-hint">{IS_ANDROID ? '点击导入按钮选择 MDX 或离线词典包。' : '将 MDX 或离线词典包拖到这里，或点击导入按钮选择文件。'}</p>}
           {importError && <p role="alert" className="dictionary-settings__save-error">{importError}</p>}
           {importing ? <div role="status" className="dictionary-settings__import-progress">
             <span>正在导入词典…</span><progress aria-label="正在导入词典" />
           </div> : <div className="dictionary-settings__import-actions">
             <button type="button" className="dictionary-settings__secondary" disabled={busy}
-              onClick={() => { setImportFile(null); setImportError(null); }}>取消</button>
+              onClick={() => { if (nativePicked.current) { void nativeFiles.releaseFile({ handle: nativePicked.current.handle }).catch(() => {}); nativePicked.current = null; } setImportFile(null); setImportError(null); }}>取消</button>
             {importFile && <button type="button" className="dictionary-settings__save" disabled={busy} onClick={() => void handleImport()}>导入</button>}
           </div>}
-        </section>}
+        </section>
 
         {snapshot && draft && <>
           <fieldset className="dictionary-settings__sources" disabled={busy}>
@@ -374,6 +404,10 @@ export const DictionarySettingsScreen: React.FC<DictionarySettingsScreenProps> =
                     {source.entryCount !== undefined && <span>已收录 {source.entryCount.toLocaleString('zh-CN')} 个词条。 </span>}
                     {source.description}
                   </p>}
+                  {onTryFrench && source.languages.includes('fr') && <button type="button" className="dictionary-settings__trial-button"
+                    onClick={onTryFrench}>法语试读 ↗</button>}
+                  {onTryJapanese && source.languages.some(language => language.split('-')[0] === 'ja') && <button type="button" className="dictionary-settings__trial-button"
+                    onClick={onTryJapanese}>日语试读 ↗</button>}
                   <details className="dictionary-settings__metadata" open={expandedSources.has(source.id)}>
                     <summary onClick={event => {
                       // Change size during React's commit so every sortable card measures the same layout.

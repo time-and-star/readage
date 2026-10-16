@@ -19,6 +19,7 @@ import { mergeRawEvents } from '../src/lib/memoryV2/rawEventPersistence';
 import { replayWordJournal, type WordJournal } from '../src/lib/browserExtension/replay';
 import { hasFormalRecallEvidence } from '../src/lib/memoryV2/rmeV4Bridge';
 import { createEmptyRmeProfile } from '../src/lib/memoryV4';
+import { repairPassiveReadingRecall } from '../src/lib/memoryV2/passiveRecallRepair';
 
 const MIGRATION_META_KEY = 'localStorageMigratedV1';
 const MEMORY_PREFIX = 'english-ai:v2:memory';
@@ -657,6 +658,83 @@ describe('Memory V2 localStorage to IndexedDB migration', () => {
     assert.deepEqual(replayed.state.fsrsReviews.filter(review => review.source === 'flashcard').map(review => review.review.slice(0, 10)),
       ['2026-07-23', '2026-07-26']);
     assert.equal(replayed.state.lastReview, '2026-07-26T12:00:00.000Z');
+  });
+
+  it('repairs automatic reading Good after its evidence is imported and keeps genuine ratings and journal replay', async () => {
+    const source = installSource();
+    const target = new MigrationTargetFake();
+    const event = exposure('occ-1');
+    const day = { ...aggregateDailyEvidence([aggregateArticleEvidence([event])!])!,
+      finalizedAt: '2026-07-25T00:00:00.000Z' };
+    const passive = reviewState('hello', [['2026-07-24', 3]]);
+    delete passive.fsrsReviews[0].source;
+    delete passive.fsrsReviews[0].verificationAttemptIds;
+    const stale = submitFsrsReview(passive, 1, new Date('2026-07-26T12:00:00.000Z'));
+    const genuine = stale.fsrsReviews.at(-1)!;
+    genuine.source = 'flashcard';
+    genuine.verificationAttemptIds = ['card:real'];
+    genuine.originalFlashcardRating = 3;
+    genuine.flashcardRevisions = [{ correctionId: 'fix:real', revision: 1, previousRating: 3,
+      rating: 1, correctedAt: '2026-07-26T12:01:00.000Z' }];
+    writeState(source, stale);
+    source.setItem(`${MEMORY_PREFIX}:daily:u1:hello:2026-07-24`, JSON.stringify(day));
+    const journal: WordJournal = { version: 1, userId: 'u1', wordId: 'hello', baselineState: passive,
+      baselineDaily: [], baselineRaw: [], events: [] };
+    source.setItem(`${MEMORY_PREFIX}:meta:extension-journal:["u1","hello"]`, JSON.stringify(journal));
+
+    assert.equal((await migrateLocalStorageToIndexedDb(target)).completed, true);
+    const repaired = (await target.getMemoryState('u1', 'hello'))!;
+    const expected = reviewState('hello', [['2026-07-26', 1]]);
+    assert.deepEqual(repaired.fsrsCard, expected.fsrsCard);
+    assert.equal(repaired.fsrsReviews.length, 1);
+    assert.deepEqual(repaired.fsrsReviews[0].verificationAttemptIds, ['card:real']);
+    assert.deepEqual(repaired.fsrsReviews[0].flashcardRevisions, genuine.flashcardRevisions);
+    assert.deepEqual(repaired.passiveReadingReviews, passive.fsrsReviews);
+    assert.deepEqual(await target.getDailyEvidence('u1', 'hello', day.localDate), day);
+    const recovered = (await target.getMeta<WordJournal>('extension-journal:["u1","hello"]'))!;
+    const replayed = replayWordJournal(recovered, 'UTC', new Date('2026-07-27T00:00:00.000Z'));
+    assert.deepEqual(replayed.state.fsrsCard, expected.fsrsCard);
+    assert.equal(replayed.state.passiveReadingReviews?.length, 1);
+    assert.equal((await migrateLocalStorageToIndexedDb(target)).importedKeys, 0);
+    assert.deepEqual(await target.getMemoryState('u1', 'hello'), repaired);
+  });
+
+  it('uses the retained exclusion audit to prevent a stale source from restoring automatic Good without day evidence', async () => {
+    const source = installSource();
+    const target = new MigrationTargetFake();
+    const event = exposure('occ-1');
+    const day = aggregateDailyEvidence([aggregateArticleEvidence([event])!])!;
+    const stale = reviewState('hello', [['2026-07-24', 3], ['2026-07-26', 3]]);
+    delete stale.fsrsReviews[0].source;
+    delete stale.fsrsReviews[0].verificationAttemptIds;
+    const repaired = repairPassiveReadingRecall(stale, [day], 'UTC', new Date('2026-07-27T00:00:00.000Z'));
+    await target.saveMemoryState(repaired);
+    writeState(source, stale);
+    assert.equal((await migrateLocalStorageToIndexedDb(target)).completed, true);
+    const merged = (await target.getMemoryState('u1', 'hello'))!;
+    assert.deepEqual(merged.fsrsCard, repaired.fsrsCard);
+    assert.deepEqual(merged.fsrsReviews, repaired.fsrsReviews);
+    assert.deepEqual(merged.passiveReadingReviews, repaired.passiveReadingReviews);
+    assert.equal(hasFormalRecallEvidence(merged), true);
+    assert.equal((await target.getWordDailyEvidence('u1', 'hello')).length, 0);
+  });
+
+  it('repairs a migrated passive-only card using recovered raw exposure evidence', async () => {
+    const source = installSource();
+    const target = new MigrationTargetFake();
+    const passive = reviewState('hello', [['2026-07-24', 3]]);
+    delete passive.fsrsReviews[0].source;
+    delete passive.fsrsReviews[0].verificationAttemptIds;
+    writeState(source, passive);
+    source.setItem(`${MEMORY_PREFIX}:raw:u1:hello:2026-07-24`, JSON.stringify([exposure('occ-1')]));
+    assert.equal((await migrateLocalStorageToIndexedDb(target)).completed, true);
+    const repaired = (await target.getMemoryState('u1', 'hello'))!;
+    assert.equal(repaired.fsrsReviews.length, 0);
+    assert.equal(repaired.fsrsCard.reps, 0);
+    assert.equal(repaired.lastReview, null);
+    assert.equal(hasFormalRecallEvidence(repaired), false);
+    assert.deepEqual(repaired.passiveReadingReviews, passive.fsrsReviews);
+    assert.equal((await target.getRawEventsByDate('u1', 'hello', '2026-07-24')).length, 1);
   });
 
   it('merges a newer measured exposure snapshot without duplicating its original encounter on retry', async () => {

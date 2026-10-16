@@ -53,7 +53,7 @@ app.use(express.static(path.join(root, 'dist')));
 app.get('*', (_req, res) => res.sendFile(path.join(root, 'dist/index.html')));
 const article = express();
 article.get('*', (_req, res) => res.send(`<!doctype html><html><body style="padding:70px;background:#eee;font:26px Georgia">
-  <h1>Reading outside ReadAge</h1><p id="word">Running</p>
+  <h1>Reading outside readge</h1><p id="word">Running</p>
   <p>Every encounter can become part of your learning.</p><input id="editable" value="Running">
   <p id="corner" style="position:fixed;right:12px;bottom:12px;margin:0">Take</p>
   <style>button{background:red!important}section{padding:80px!important}</style>

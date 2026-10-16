@@ -2,6 +2,7 @@ import type { DictionaryRecord, DictionarySourceView, DictionarySourceIssue, Dic
 import { LearningWordIdResolver } from './learningWordIds';
 import { isDictionaryExampleVisible } from '../../packages/dictionary/compat/englishPresentation';
 import type { DictionaryDisplayRef, LearningTermRef } from '../../packages/dictionary/contracts';
+import { withCurrentDictionaryNames } from './dictionaryDisplay';
 export { createDictionaryClient } from '../../packages/dictionary/client';
 
 export interface DictionaryDefinition {
@@ -71,7 +72,7 @@ export function toDictionaryWordCard(entry: DictionaryEntry): GrammarExplanation
     sense.examples.filter(isDictionaryExampleVisible).map((example) => example.en),
   )) ?? [];
   const groups = entry.partOfSpeechGroups?.length ? entry.partOfSpeechGroups : undefined;
-  return {
+  return withCurrentDictionaryNames({
     learningTermRef: entry.learningTermRef,
     dictionaryRef: entry.dictionaryRef,
     dictionarySources: entry.dictionarySources,
@@ -93,7 +94,7 @@ export function toDictionaryWordCard(entry: DictionaryEntry): GrammarExplanation
     exchanges: entry.wordForms,
     collocations: entry.collocations?.map((item) => ({ en: item.en, zh: item.zh ?? '' })),
     relatedWords: entry.wordFamily ?? entry.relatedWords,
-  };
+  });
 }
 
 const DICTIONARY_LOOKUP_BATCH_SIZE = 50;

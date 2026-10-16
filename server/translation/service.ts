@@ -23,7 +23,7 @@ export class LocalTranslationError extends Error {
 }
 
 export interface LocalTranslationConfiguration { endpoint: string; timeoutMs: number }
-export interface LocalTranslationRequest { text: string; targetLanguage: 'Chinese' | 'English' }
+export interface LocalTranslationRequest { text: string; targetLanguage: 'Chinese' | 'English'; sourceLanguage?: string }
 
 /** This adapter is deliberately restricted to the on-device translation service. */
 export function getLocalTranslationConfiguration(env: NodeJS.ProcessEnv = process.env): LocalTranslationConfiguration | null {
@@ -49,7 +49,13 @@ export function validateLocalTranslationRequest(body: unknown): LocalTranslation
   const targetLanguage = target === 'Chinese' || target === '中文' ? 'Chinese'
     : target === 'English' || target === '英语' ? 'English' : null;
   if (!targetLanguage) throw new LocalTranslationError('INVALID_TRANSLATION_REQUEST');
-  return { text, targetLanguage };
+  let sourceLanguage: string | undefined;
+  if (input.sourceLanguage !== undefined) {
+    if (typeof input.sourceLanguage !== 'string' || input.sourceLanguage.length > 35) throw new LocalTranslationError('INVALID_TRANSLATION_REQUEST');
+    try { sourceLanguage = Intl.getCanonicalLocales(input.sourceLanguage)[0]; } catch { throw new LocalTranslationError('INVALID_TRANSLATION_REQUEST'); }
+    if (!sourceLanguage) throw new LocalTranslationError('INVALID_TRANSLATION_REQUEST');
+  }
+  return { text, targetLanguage, ...(sourceLanguage ? { sourceLanguage } : {}) };
 }
 
 interface WaitingRequest { grant: () => void; abort: () => void }
@@ -98,11 +104,12 @@ export class LocalTranslationService {
       acquired = true;
       controller.signal.throwIfAborted();
       const language = request.targetLanguage === 'English' ? '英语' : '中文';
+      const sourceName = request.sourceLanguage ? new Intl.DisplayNames(['zh'], { type: 'language' }).of(request.sourceLanguage) : undefined;
       const response = await this.fetcher(config.endpoint, {
         method: 'POST', redirect: 'error', signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [{ role: 'user', content: `将以下文本翻译为${language}，注意只需要输出翻译后的结果，不要额外解释：\n\n${request.text}` }],
+          messages: [{ role: 'user', content: `将以下${sourceName || ''}文本翻译为${language}，注意只需要输出翻译后的结果，不要额外解释：\n\n${request.text}` }],
           stream: false, cache_prompt: false, max_tokens: 768,
           temperature: 0.7, top_p: 0.6, top_k: 20, repeat_penalty: 1.05, seed: 42,
         }),

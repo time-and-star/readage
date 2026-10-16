@@ -5,6 +5,11 @@ export interface SpokenWord {
 }
 
 export function speechWords(text: string): SpokenWord[] {
+  if (/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(text) && typeof Intl.Segmenter === 'function') {
+    return Array.from(new Intl.Segmenter('ja', { granularity: 'word' }).segment(text))
+      .filter(part => part.isWordLike)
+      .map(part => ({ text: part.segment, start: part.index, end: part.index + part.segment.length }));
+  }
   return Array.from(text.matchAll(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu), match => ({
     text: match[0], start: match.index!, end: match.index! + match[0].length,
   }));
@@ -26,10 +31,11 @@ export function estimateWordTimeline(text: string, duration: number): { start: n
   const words = speechWords(text);
   if (!words.length || !Number.isFinite(duration) || duration <= 0) return [];
   const weights = words.map((word, index) => {
-    const syllables = word.text.toLowerCase().match(/[aeiouy]+/g)?.length || 1;
+    const syllables = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(word.text)
+      ? Array.from(word.text).length * 0.6 : word.text.toLowerCase().match(/[aeiouy]+/g)?.length || 1;
     const gap = text.slice(word.end, words[index + 1]?.start ?? text.length);
     return Math.max(1, syllables) + Math.min(word.text.length, 12) * 0.08
-      + (/[.!?]/.test(gap) ? 1.4 : /[,;:]/.test(gap) ? 0.6 : 0);
+      + (/[.!?。！？]/.test(gap) ? 1.4 : /[,;:、，；：]/.test(gap) ? 0.6 : 0);
   });
   const total = weights.reduce((sum, weight) => sum + weight, 0);
   let elapsed = 0;

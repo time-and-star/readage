@@ -1,5 +1,5 @@
 import type { MemoryStorage } from '../memoryV2/storage';
-import type { RawWordEvent } from '../memoryV2/types';
+import type { RawWordEvent, WordMemoryState } from '../memoryV2/types';
 import { getLocalDateInTimeZone } from '../memoryV2/dateUtils';
 import { parseLookupBatch } from './protocol';
 import { eventKey, replayWordJournal, type TimedWordEvent, type WordJournal } from './replay';
@@ -9,6 +9,15 @@ import { readVerificationHistory } from '../memoryV2/verificationMemory';
 
 const journalKey = (userId: string, wordId: string) => `extension-journal:${JSON.stringify([userId, wordId])}`;
 const indexKey = (userId: string) => `extension-journal-index:${userId}`;
+
+function mergePassiveReviewAudit(...groups: Array<WordMemoryState['fsrsReviews'] | undefined>): WordMemoryState['fsrsReviews'] {
+  const reviews = new Map<string, WordMemoryState['fsrsReviews'][number]>();
+  for (const group of groups) for (const review of group ?? []) {
+    const key = JSON.stringify([review.source ?? 'legacy', review.review, review.rating, review.localDate ?? null]);
+    reviews.set(key, review);
+  }
+  return [...reviews.values()].sort((left, right) => left.review.localeCompare(right.review)).map(review => structuredClone(review));
+}
 
 /** Derive activity from the acknowledged journal, including previously synced queries. */
 export async function readExternalLearningActivity(storage: MemoryStorage, userId: string): Promise<LearningEvent[]> {
@@ -29,7 +38,16 @@ export async function readExternalLearningActivity(storage: MemoryStorage, userI
 /** Write-ahead journal: a crash at any derived write is repaired by replay. */
 export async function persistJournal(storage: MemoryStorage, journal: WordJournal, timezone: string, now: Date) {
   const verifications = (await readVerificationHistory(storage, journal.userId)).filter(attempt => attempt.wordId === journal.wordId);
-  const result = replayWordJournal(journal, timezone, now, verifications);
+  const currentState = await storage.getMemoryState(journal.userId, journal.wordId);
+  const passiveReadingReviews = mergePassiveReviewAudit(journal.baselineState?.passiveReadingReviews,
+    currentState?.passiveReadingReviews);
+  // The original baseline remains immutable. A persisted repair audit is
+  // authoritative even if this older journal no longer has its daily evidence.
+  const replayJournal = passiveReadingReviews.length && journal.baselineState
+    ? { ...journal, baselineState: { ...journal.baselineState, passiveReadingReviews } } : journal;
+  const result = replayWordJournal(replayJournal, timezone, now, verifications);
+  if (passiveReadingReviews.length) result.state.passiveReadingReviews = mergePassiveReviewAudit(passiveReadingReviews,
+    result.state.passiveReadingReviews);
   for (const evidence of result.daily) {
     for (const article of evidence.articleEvidence) await storage.saveArticleEvidence(article);
     await storage.saveDailyEvidence(evidence);

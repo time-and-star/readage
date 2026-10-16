@@ -15,8 +15,9 @@ button:disabled { opacity: .4; cursor: default; }
 button[aria-busy="true"] { cursor: progress; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .app-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 13px; border-bottom: 1px solid var(--ink); }
+.brand { display: inline-flex; align-items: center; gap: 8px; }
+.brand-icon { display: block; width: 32px; height: 32px; object-fit: contain; }
 .brand-name { font: 500 26px/1 Georgia, "Times New Roman", serif; letter-spacing: -.9px; }
-.brand-period { color: var(--accent); }
 .switch-control { display: flex; position: relative; cursor: pointer; }
 .switch-control input { position: absolute; width: 30px; height: 18px; margin: 0; opacity: 0; cursor: inherit; }
 .switch-track { width: 30px; height: 18px; border-radius: 20px; background: #d4d5ce; pointer-events: none; transition: background .16s; }

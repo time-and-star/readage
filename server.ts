@@ -1,3 +1,6 @@
+import { createLocalDataRouter } from './server/localDatabase/routes';
+import { createOfflineFetch, createOfflineApiBoundary } from './server/offline';
+import { configureMagazineNetwork } from './server/magazines/network';
 import express from 'express';
 import http from 'http';
 import fs from 'fs';
@@ -62,7 +65,19 @@ import {
 
 dotenv.config();
 
+const offline = process.env.READGE_OFFLINE === '1';
+const manualMagazineSync = process.env.READGE_MAGAZINE_MANUAL_SYNC === '1';
+configureMagazineNetwork(globalThis.fetch.bind(globalThis), { offline, manualSyncEnabled: manualMagazineSync });
+if (offline) globalThis.fetch = createOfflineFetch(globalThis.fetch.bind(globalThis));
+
 const app = express();
+if (offline) {
+  app.use((_req, res, next) => {
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'self'");
+    next();
+  });
+  app.use(createOfflineApiBoundary({ manualMagazineSync }));
+}
 const localTranslationStartup = createLocalTranslationStartup();
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST?.trim() || '127.0.0.1';
@@ -98,6 +113,9 @@ const requireSensitiveApiAccess: express.RequestHandler = (req, res, next) => {
   }
   return next();
 };
+
+const localData = createLocalDataRouter({ host: HOST, filename: process.env.LOCAL_DATABASE_PATH?.trim() || undefined });
+app.use('/api/local-data', localData.router);
 
 /** Large tutor/import payloads are capped before expensive processing. */
 app.use(express.json({ limit: '2mb' }));
@@ -1292,6 +1310,7 @@ async function setupServer() {
     process.removeListener('message', onLocalShutdown);
     process.removeListener('SIGINT', stopLocalTranslation);
     process.removeListener('SIGTERM', stopLocalTranslation);
+    localData.close();
     void localTranslationStartup.stop();
   });
 
@@ -1319,7 +1338,7 @@ async function setupServer() {
       return vite.middlewares(req, res, next);
     });
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(process.env.READGE_APP_ROOT || process.cwd(), 'dist');
     const particlesPath = path.join(distPath, 'lab', 'particles');
     // Particle lab (vocab proficiency + recommendation pipeline visualizer)
     app.use(
@@ -1344,9 +1363,11 @@ async function setupServer() {
     });
   }
 
-  attachStepRealtimeProxy(httpServer);
+  if (!offline) attachStepRealtimeProxy(httpServer);
 
   httpServer.listen(PORT, HOST, () => {
+    const address = httpServer.address();
+    if (address && typeof address === 'object') process.send?.({ type: 'readge:ready', port: address.port });
     // Every app entry starts the configured model; a launcher-owned service is reused.
     // Wait until the app port is bound so a failed duplicate launch cannot own a model.
     void localTranslationStartup.start().catch(error => {
@@ -1357,7 +1378,7 @@ async function setupServer() {
     console.log(`Magazine lemma index: http://localhost:${PORT}/api/magazines/lemma-index`);
     console.log(`Step Realtime WS: ws://localhost:${PORT}/api/realtime/step`);
     // Scheduler also prewarms the full-catalog lemma index for Recommend for Me.
-    void startMagazineScheduler().catch((err) => {
+    if (!offline) void startMagazineScheduler().catch((err) => {
       console.error('[magazines] failed to start scheduler', err);
     });
   });

@@ -1,13 +1,13 @@
 {
-  "format": "readage-authored-pack.v1",
   "name": "ReadAge 自编词典",
+  "format": "readage-authored-pack.v1",
   "entryCount": 17974,
   "senseCount": 30538,
   "pendingCount": 0,
   "encoding": "gzip-blocks",
-  "dataBytes": 47668188,
-  "dataSha256": "7016bd21f0a6fd23f29fe3ea75506b0084ac4fa64c37eb85b5d40bb9029ea79e",
-  "indexSha256": "98ed2e360df93f429294cc086230aca3a1929c5d8c9d56d9e14f434ee0540175",
+  "dataBytes": 47668171,
+  "dataSha256": "0bf09d42332055eb84b5d4a1e580973312b94d0ec81dfa668b789755ce4de859",
+  "indexSha256": "2236a15986178f32ea55cb7097b55eb0c469ad41b8cd2bf5340a9a94723ba9c4",
   "sourceHash": "0ae65833b3033cfecddd19eddd1e1f431b89359d0f4aa3d478915cad69de8567",
   "scripts": [
     "assets/js/core/util.js",
@@ -525,5 +525,6 @@
     "assets/js/data/relations.js",
     "assets/js/data/registry.js"
   ],
-  "source": "ReadAge 项目自编词条，按 index.html 的当前数据脚本完整装配。"
+  "source": "ReadAge 项目自编词条，按 index.html 的当前数据脚本完整装配。",
+  "contentCorrectionsVersion": "2026-10-09.1"
 }

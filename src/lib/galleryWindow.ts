@@ -27,10 +27,12 @@ export function appendGalleryWindow(
   maxItems = 48,
   keepBehind = 12,
 ): { items: GalleryWindowItem[]; removed: number; nextSequence: number } {
-  const seen = new Set(current.map(item => item.image.src));
+  const identity = (item: MagazineGalleryItem) => `${item.image.src}:${item.streamRound ?? ''}`;
+  const seen = new Set(current.map(identity));
   const unique = incoming.filter(item => {
-    if (seen.has(item.image.src)) return false;
-    seen.add(item.image.src);
+    const key = identity(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 

@@ -13,10 +13,12 @@ import {
   scheduleReviewArticles,
   scoreArticlesForReview,
   diversifyRecommendations,
+  getArticleWordCount,
+  isRecommendationArticleWithinBounds,
 } from './memoryV2/recommendation';
 import { memoryV2 } from './memoryV2/hooks';
-import { extractLearningUnits } from './readingExposure';
-import { getArticleLearningTerms } from './readingLearningTerms';
+import { extractRecommendationLemmas } from './recommendationLearningUnits';
+import { DEFAULT_ARTICLE_TARGET_WORD_COUNT, DEFAULT_ARTICLE_TARGET_POOL_SIZE } from './recommendationPolicy';
 import { toLemma } from './proficiency';
 import { resolveLearningWordIds } from './dictionaryClient';
 import { getCanonicalWordProficiencyMap } from './learningWordProficiency';
@@ -35,24 +37,10 @@ import {
 /**
  * 从文章中提取所有 lemmas
  */
-function extractLemmasFromArticle(article: Article): string[] {
-  const allLemmas = new Set<string>();
-  const terms = getArticleLearningTerms(article);
-
-  for (const paragraph of article.content) {
-    for (const unit of extractLearningUnits(paragraph, terms)) allLemmas.add(unit.wordId);
-  }
-
-  return Array.from(allLemmas);
-}
-
-/**
- * 将文章库转换为候选文章列表
- */
 async function convertToArticleCandidates(articles: Article[]): Promise<ArticleCandidate[]> {
   const candidates = articles.map(article => ({
     article,
-    lemmas: extractLemmasFromArticle(article),
+    lemmas: extractRecommendationLemmas(article),
   }));
   const surfaces = [...new Set(candidates.flatMap((candidate) => candidate.lemmas))];
   const canonicalIds = await resolveRecommendationWordIds(surfaces);
@@ -73,6 +61,24 @@ async function canonicalProficiencyMap(words: readonly WordProficiencyView[]): P
   catch { return new Map(words.map((word) => [toLemma(word.wordId), word])); }
 }
 
+function pendingLearningTargets(proficiencyMap: ReadonlyMap<string, WordProficiencyView>): Set<string> {
+  const now = Date.now();
+  return new Set([...proficiencyMap].filter(([, proficiency]) =>
+    proficiency.isFlashcardEligible !== false && (
+      proficiency.level <= 2
+      || (!proficiency.isIntroduced && Date.parse(proficiency.nextReview) <= now)
+    )
+  ).map(([wordId]) => toLemma(wordId)).filter(Boolean));
+}
+
+function countPendingLearningHits(lemmas: readonly string[], targets: ReadonlySet<string>): number {
+  let hits = 0;
+  for (const lemma of new Set(lemmas.map(toLemma))) {
+    if (targets.has(lemma)) hits += 1;
+  }
+  return hits;
+}
+
 function applyOpportunityRanking(
   recommendations: RecommendationScore[],
   candidates: ArticleCandidate[],
@@ -80,10 +86,15 @@ function applyOpportunityRanking(
   v5Profile?: V5RecommendationProfile,
 ): RecommendationScore[] {
   const opportunityByWord = new Map<string, number>();
+  const learningTargets = pendingLearningTargets(proficiencyMap);
   for (const [wordId, proficiency] of proficiencyMap) {
     const opportunity = proficiency.opportunityScore;
-    if (typeof opportunity === 'number' && Number.isFinite(opportunity) && opportunity > 0) {
-      opportunityByWord.set(toLemma(wordId), opportunity);
+    const needsLearning = learningTargets.has(toLemma(wordId));
+    if (typeof opportunity === 'number' && Number.isFinite(opportunity)) {
+      if (opportunity > 0) opportunityByWord.set(toLemma(wordId), opportunity);
+    } else if (needsLearning) {
+      // Older memory snapshots have no V4 opportunity score yet.
+      opportunityByWord.set(toLemma(wordId), 40);
     }
   }
   const candidateById = new Map(candidates.map((candidate) => [candidate.article.id, candidate]));
@@ -103,6 +114,7 @@ function applyOpportunityRanking(
         ...recommendation,
         score: scored.articleScore,
         opportunityCoverage: scored.opportunityCoverage,
+        learningTargetCount: countPendingLearningHits(candidate.lemmas, learningTargets),
         reason: scored.opportunityCoverage > 0
           ? `${recommendation.reason || '推荐'} · ${scored.coveredWords.length} 个高机会词`
           : recommendation.reason,
@@ -122,10 +134,29 @@ function applyOpportunityRanking(
       level: candidate?.article.levelRating?.level
         || candidate?.article.level
         || candidate?.article.rewriteTargetLevel,
-      estimatedWordCount: candidate?.article.estimatedWordCount,
+      estimatedWordCount: candidate ? getArticleWordCount(candidate.article) ?? undefined : undefined,
     };
   });
   return rerankRecommendationScoresV5(ranked, v5Candidates, v5Profile);
+}
+
+/** Prefer a useful amount of distinct pending words without emptying sparse libraries. */
+function prioritizeLearningCoverage(
+  recommendations: RecommendationScore[],
+  minimum: number,
+): RecommendationScore[] {
+  if (!Number.isFinite(minimum) || minimum <= 0) return recommendations;
+  const bestCoverage = recommendations.reduce(
+    (best, row) => Math.max(best, row.learningTargetCount ?? 0), 0,
+  );
+  const threshold = Math.min(Math.ceil(minimum), bestCoverage);
+  if (threshold === 0) return recommendations;
+  return recommendations.filter((row) => (row.learningTargetCount ?? 0) >= threshold);
+}
+
+function compareReviewCoverage(left: RecommendationScore, right: RecommendationScore): number {
+  return (right.reviewWordsCount ?? 0) - (left.reviewWordsCount ?? 0)
+    || right.score - left.score;
 }
 
 /**
@@ -148,6 +179,8 @@ export interface MemoryV2RecommendationOptions {
   preferredTopics?: string[];
   /** 最小学习区单词数 */
   minLearningZoneWords?: number;
+  /** Desired distinct pending-word coverage per article; defaults to 15. */
+  targetLearningWords?: number;
   /** 最大未知单词占比 */
   maxUnknownWordsRatio?: number;
   /** 最近阅读的文章 ID（用于多样性推荐） */
@@ -180,6 +213,7 @@ export class MemoryV2RecommendationAdapter {
   private strategy: RecommendationStrategy;
   private engineOptions: RecommendationParams;
   private v5Profile?: V5RecommendationProfile;
+  private targetLearningWords: number;
 
   constructor(options: MemoryV2RecommendationOptions = {}) {
     const {
@@ -192,6 +226,9 @@ export class MemoryV2RecommendationAdapter {
 
     this.strategy = strategy;
     this.v5Profile = options.v5Profile;
+    this.targetLearningWords = options.targetLearningWords
+      ?? options.minLearningZoneWords
+      ?? DEFAULT_ARTICLE_TARGET_WORD_COUNT;
     const weights = this.getStrategyWeights(strategy);
     this.engineOptions = {
       userLevel,
@@ -305,9 +342,23 @@ export class MemoryV2RecommendationAdapter {
     const allProficiency = await system.getAllWordProficiency(userId);
     const proficiencyMap = await canonicalProficiencyMap(allProficiency);
 
-    const filtered = applyHardFilters
+    let filtered = applyHardFilters
       ? engine.filterCandidates(articleCandidates, proficiencyMap)
       : articleCandidates.filter((candidate) => candidate.lemmas.length > 0);
+
+    // A sparse memory log cannot establish that every unrecorded word is unknown.
+    // If that filter removed all target-bearing articles, retain readable matches
+    // and let the engine's difficulty penalty handle the uncertain vocabulary.
+    if (applyHardFilters && (options.strategy ?? this.strategy) !== 'consolidate') {
+      const targets = pendingLearningTargets(proficiencyMap);
+      if (targets.size > 0 && !filtered.some((candidate) => countPendingLearningHits(candidate.lemmas, targets) > 0)) {
+        const readableMatches = articleCandidates.filter((candidate) =>
+          countPendingLearningHits(candidate.lemmas, targets) > 0
+          && isRecommendationArticleWithinBounds(candidate.article, engine.getCefrProfile())
+        );
+        if (readableMatches.length > 0) filtered = readableMatches;
+      }
+    }
 
     let recommendations = engine.recommend(
       filtered,
@@ -333,6 +384,13 @@ export class MemoryV2RecommendationAdapter {
       );
     }
 
+    const strategy = options.strategy ?? this.strategy;
+    if (strategy !== 'consolidate') {
+      recommendations = prioritizeLearningCoverage(
+        recommendations,
+        options.targetLearningWords ?? options.minLearningZoneWords ?? this.targetLearningWords,
+      );
+    }
     return recommendations.slice(0, limit);
   }
 
@@ -363,7 +421,7 @@ export class MemoryV2RecommendationAdapter {
   ): Promise<RecommendationScore[]>;
   async recommendForReview(
     candidates: Article[],
-    targetWordsOrCount: readonly string[] | number = 10,
+    targetWordsOrCount: readonly string[] | number = DEFAULT_ARTICLE_TARGET_POOL_SIZE,
     limit: number = 5
   ): Promise<RecommendationScore[]> {
     const userId = memoryV2.getUserId();
@@ -380,7 +438,7 @@ export class MemoryV2RecommendationAdapter {
       ? targetWordsOrCount
       : explicitTargetWords.length > 0
         ? explicitTargetWords.length
-        : 10;
+        : DEFAULT_ARTICLE_TARGET_POOL_SIZE;
 
     const allProficiency = await system.getAllWordProficiency(userId);
     const proficiencyMap = await canonicalProficiencyMap(allProficiency);
@@ -483,14 +541,14 @@ export class MemoryV2RecommendationAdapter {
       targetIds,
       proficiencyMap,
       this.createEngine({ allowedBands: effectiveBands, cefrHardFilter: false }),
-      limit
+      Math.max(reviewArticles.length, limit)
     );
     return applyOpportunityRanking(
       ranked,
       articleCandidates,
       proficiencyMap,
       this.v5Profile,
-    ).slice(0, limit);
+    ).sort(compareReviewCoverage).slice(0, limit);
   }
 
   /**
@@ -518,6 +576,8 @@ export class MemoryV2RecommendationAdapter {
       this.engineOptions.minCandidatesAfterCefrFilter = options.minCandidatesAfterCefrFilter;
     }
     if (options.v5Profile !== undefined) this.v5Profile = options.v5Profile;
+    if (options.targetLearningWords !== undefined) this.targetLearningWords = options.targetLearningWords;
+    else if (options.minLearningZoneWords !== undefined) this.targetLearningWords = options.minLearningZoneWords;
   }
 }
 
@@ -564,7 +624,6 @@ export async function rankMagazineLemmaCandidates(
     // Full-catalog C1 text: hard unknown-ratio filters collapse the pool to ~0.
     applyHardFilters: rest.applyHardFilters ?? false,
     maxUnknownWordsRatio: rest.maxUnknownWordsRatio ?? 0.95,
-    minLearningZoneWords: rest.minLearningZoneWords ?? 1,
   });
 
   if (reviewWords.length > 0) {
@@ -587,8 +646,9 @@ export async function rankMagazineLemmaCandidates(
     const ranked = await adapter.recommendCandidates(pool, {
       ...rest,
       strategy: 'review-first',
-      // Rank a wider head so target-hit boost can surface the best coverage.
-      limit: Math.max(limit * 3, 48),
+      // Compare every eligible article before trimming by requested-word coverage.
+      limit: pool.length,
+      minLearningZoneWords: 0,
       recentArticleIds: recentIds,
       applyHardFilters: false,
     });
@@ -601,14 +661,14 @@ export async function rankMagazineLemmaCandidates(
         return {
           ...score,
           dueWordsCount: Math.max(score.dueWordsCount, hits),
-          score: score.score + hits * 40,
+          reviewWordsCount: hits,
           reason:
             hits > 0
               ? `${score.reason || '全库推荐'} · 命中 ${hits} 个复习词`
               : score.reason,
         };
       })
-      .sort((a, b) => b.score - a.score);
+      .sort(compareReviewCoverage);
 
     return boosted.slice(0, limit);
   }

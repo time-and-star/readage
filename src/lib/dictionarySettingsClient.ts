@@ -16,6 +16,7 @@ export interface DictionarySettingsSnapshot {
 }
 
 export const MAX_DICTIONARY_IMPORT_BYTES = 256 * 1024 * 1024;
+export const MAX_DICTIONARY_PACK_BYTES = 512 * 1024 * 1024;
 export interface DictionaryImportSnapshot extends Omit<DictionarySettingsSnapshot, 'warning'> {
   imported: { dictionaryId: string; name: string; entryCount: number };
   importWarning?: string;
@@ -23,9 +24,10 @@ export interface DictionaryImportSnapshot extends Omit<DictionarySettingsSnapsho
 export interface DictionaryImportOptions { language?: string; name?: string; signal?: AbortSignal }
 
 export function validateDictionaryImportFile(file: Pick<File, 'name' | 'size'>): void {
-  if (!/\.mdx$/i.test(file.name)) throw new DictionarySettingsError('请选择 MDX 词典文件（.mdx）。', 400, 'INVALID_IMPORT_FORMAT');
+  if (!/\.(?:mdx|nwdict|pack|zip)$/i.test(file.name)) throw new DictionarySettingsError('请选择 MDX 或离线词典包（.mdx、.nwdict、.pack、.zip）。', 400, 'INVALID_IMPORT_FORMAT');
   if (!file.size) throw new DictionarySettingsError('词典文件为空，请重新选择。', 400, 'EMPTY_IMPORT');
-  if (file.size > MAX_DICTIONARY_IMPORT_BYTES) throw new DictionarySettingsError('词典文件超过 256 MB，请选择较小的文件。', 413, 'IMPORT_TOO_LARGE');
+  const max = /\.mdx$/i.test(file.name) ? MAX_DICTIONARY_IMPORT_BYTES : MAX_DICTIONARY_PACK_BYTES;
+  if (file.size > max) throw new DictionarySettingsError(`词典文件超过 ${max / 1024 / 1024} MB，请选择较小的文件。`, 413, 'IMPORT_TOO_LARGE');
 }
 
 export type DictionarySettingsUpdate = Pick<DictionarySettings, 'enabledSources' | 'sourceOrder' | 'defaultSource'> & {
@@ -70,7 +72,7 @@ export function createDictionarySettingsClient(options: { baseUrl?: string; fetc
       const error = (body as { error?: { message?: string; code?: string } })?.error;
       const message = response.status === 409 ? importing ? error?.message ?? '词典已存在或设置发生变化，请重新加载后再试。' : '设置已在其他窗口修改，请重新加载后再保存。'
         : response.status === 401 || response.status === 403 ? '当前无法修改词典设置，请检查访问权限。'
-          : response.status === 413 ? '词典文件超过 256 MB，请选择较小的文件。'
+          : response.status === 413 ? error?.message ?? 'MDX 最大支持 256 MB，离线词典包最大支持 512 MB。'
           : error?.message ?? `词典设置请求失败（${response.status}）。`;
       throw new DictionarySettingsError(message, response.status, error?.code);
     }

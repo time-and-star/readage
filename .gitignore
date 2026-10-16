@@ -1,7 +1,24 @@
 node_modules/
 build/
 dist/
+dist-android/
+release-desktop/
+android/.gradle/
+android/app/.cxx/
+android/local.properties
+android/**/build/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/src/main/assets/readage-dictionaries/
+android/app/src/main/assets/readage-runtime/
+android/app/src/main/assets/readage-runtime.stage/
+android/app/src/androidTest/assets/readage-benchmark/
+android/capacitor-cordova-android-plugins/
 coverage/
+# Generated verification reports, APK copies and emulator images are not UI source.
+# Keep build-time automatic CSS discovery out of these large/binary artifacts.
+output/
 .DS_Store
 *.log
 .env*
@@ -11,6 +28,8 @@ local-data/
 tmp/
 tmp-*.out
 tmp-*.err
+/tmp-*.jpg
+/tmp-*.png
 *.pid
 *.wav
 # Local packaging / export archives (too large for git)
@@ -32,3 +51,4 @@ data/dictionary/imported/
 .deploy_token.txt
 
 public/readage-extension.zip
+public/readge-extension.zip

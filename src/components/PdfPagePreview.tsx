@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import type { ArticleSourceDocument } from '../types';
 import { getApiAuthHeaders } from '../lib/apiAuth';
+import { Capacitor } from '@capacitor/core';
+import { IS_ANDROID } from '../lib/platform/runtime';
+import { nativeFiles } from '../lib/platform/nativeFiles';
 
 export const PdfPagePreview: React.FC<{ source: ArticleSourceDocument; scanned?: boolean; autoOpen?: boolean }> = ({ source, scanned = false, autoOpen = scanned }) => {
   const [open, setOpen] = useState(autoOpen);
@@ -28,6 +31,11 @@ export const PdfPagePreview: React.FC<{ source: ArticleSourceDocument; scanned?:
     setLoading(true);
     const load = async () => {
       if (!/^\/api\/import\/documents\/[a-f\d]{64}\.pdf$/.test(source.src)) throw new Error('原文件地址不可用，请重新导入 PDF。');
+      if (IS_ANDROID) {
+        const rendered = await nativeFiles.renderPdfPage({ url: source.src, page });
+        if (current) setImageUrl(Capacitor.convertFileSrc(rendered.path));
+        return;
+      }
       const response = await fetch(`${source.src}/pages/${page}`, { headers: getApiAuthHeaders(), signal: controller.signal });
       if (!response.ok) {
         const result = await response.json().catch(() => null);

@@ -21,12 +21,12 @@ export interface V5ScoreWeights {
 }
 
 export const DEFAULT_V5_SCORE_WEIGHTS: V5ScoreWeights = {
-  opportunity: 0.28,
-  interest: 0.24,
-  difficulty: 0.15,
-  goal: 0.18,
-  novelty: 0.08,
-  length: 0.07,
+  opportunity: 0.50,
+  interest: 0.18,
+  difficulty: 0.12,
+  goal: 0.10,
+  novelty: 0.05,
+  length: 0.05,
 };
 
 export interface V5RecommendationProfile {
@@ -110,6 +110,12 @@ export function buildDefaultV5Profile(
 const clamp01 = (value: number): number =>
   Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
 
+/** A few high-priority words must not saturate a sum of per-word opportunities. */
+function opportunityFit(coverage: number): number {
+  const safeCoverage = Number.isFinite(coverage) ? Math.max(0, coverage) : 0;
+  return safeCoverage / (safeCoverage + 400);
+}
+
 function normalized(value: string | undefined): string {
   return value?.trim().toLowerCase() || '';
 }
@@ -187,7 +193,7 @@ export function scoreArticleV5(
   const weights = resolveWeights(profile);
   const difficulty = difficultyFit(candidate.level, profile.userLevel);
   const features: V5FeatureBreakdown = {
-    opportunity: clamp01(candidate.opportunityCoverage / 100),
+    opportunity: opportunityFit(candidate.opportunityCoverage),
     interest: profile.preferredTopics?.length
       ? topicMatches(candidate.topic, profile.preferredTopics) ? 1 : 0.45
       : 0.5,

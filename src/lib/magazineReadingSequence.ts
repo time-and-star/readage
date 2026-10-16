@@ -1,8 +1,9 @@
-import type { Article, MagazineArticleStub } from '../types';
+import type { Article, MagazineArticleStub, MagazineSourceKind } from '../types';
 
 export interface MagazineReadingContinuation {
   articleId: string;
   issueTitle: string;
+  sourceKind?: MagazineSourceKind;
   position: number;
   total: number;
   nextArticle: Article | null;
@@ -21,7 +22,7 @@ export async function loadMagazineReadingContinuation(
 ): Promise<MagazineReadingContinuation> {
   const { signal, fetchImpl = fetch } = options;
   const issueId = article.magazineIssueId;
-  if (!issueId) throw new Error('缺少本期目录，请返回 Library 选择文章。');
+  if (!issueId) throw new Error('缺少阅读目录，请返回 Library 选择文章。');
   signal?.throwIfAborted();
   const issueResponse = await fetchImpl(`/api/magazines/issues/${encodeURIComponent(issueId)}`, { signal });
   const payload = await issueResponse.json();
@@ -29,12 +30,13 @@ export async function loadMagazineReadingContinuation(
   if (!issueResponse.ok || !payload.ok || payload.issue?.id !== issueId
     || !Array.isArray(payload.articles)
     || !payload.articles.every((item: MagazineArticleStub) => item && typeof item.id === 'string')) {
-    throw new Error('本期目录暂时无法加载，请重试。');
+    throw new Error('阅读目录暂时无法加载，请重试。');
   }
   const { position, total, next } = getMagazineArticlePosition(article.id, payload.articles);
   const continuation: MagazineReadingContinuation = {
     articleId: article.id,
     issueTitle: typeof payload.issue.title === 'string' ? payload.issue.title : issueId,
+    sourceKind: payload.issue.sourceKind,
     position,
     total,
     nextArticle: null,

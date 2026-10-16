@@ -19,13 +19,14 @@ export class NativeReviewedAdapter implements DictionaryAdapter {
     let contentVersion = 'native-reviewed:unavailable';
     let legacyContentVersion = 'dictionary-content.v1';
     try {
-      const manifestBytes = fs.readFileSync(options.manifestPath ?? path.resolve('data/dictionary/revisions/manifest.json'));
+      const resourceRoot = process.env.READGE_APP_ROOT || process.cwd();
+      const manifestBytes = fs.readFileSync(options.manifestPath ?? path.resolve(resourceRoot, 'data/dictionary/revisions/manifest.json'));
       const manifest = JSON.parse(manifestBytes.toString('utf8'));
       if (manifest.format !== 'dictionary-revisions.v1' || typeof manifest.revisionFile !== 'string'
         || manifest.schemaVersion !== undefined && manifest.schemaVersion !== 'dictionary.v2') throw new Error('Invalid reviewed manifest.');
       legacyContentVersion = typeof manifest.contentVersion === 'string' ? manifest.contentVersion : legacyContentVersion;
       // Only the manifest's published sample is loaded; batches under review are never scanned.
-      const bytes = fs.readFileSync(options.revisionFile ?? path.resolve(manifest.revisionFile));
+      const bytes = fs.readFileSync(options.revisionFile ?? path.resolve(options.manifestPath ? process.cwd() : resourceRoot, manifest.revisionFile));
       contentVersion = `${legacyContentVersion}:${createHash('sha256').update(manifestBytes).update(bytes).digest('hex')}`;
       for (const line of bytes.toString('utf8').split(/\r?\n/)) {
         if (!line.trim()) continue;

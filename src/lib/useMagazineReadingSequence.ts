@@ -24,7 +24,7 @@ export function useMagazineReadingSequence(article: Article | null, enabled: boo
         if (!controller.signal.aborted) setState({ articleId, status: 'ready', continuation });
       })
       .catch(() => {
-        if (!controller.signal.aborted) setState({ articleId, status: 'error', message: '本期目录或下一篇暂时无法加载，可以重试。' });
+        if (!controller.signal.aborted) setState({ articleId, status: 'error', message: '阅读目录或下一篇暂时无法加载，可以重试。' });
       });
     return () => controller.abort();
   }, [articleId, issueId, retry]);

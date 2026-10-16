@@ -15,6 +15,7 @@ import {
   MEMORY_IDB_VERSION,
 } from '../src/lib/localDataBackup';
 import { updatePersistentValue } from '../src/lib/storage';
+import { initializeWordMemory, submitFsrsReview } from '../src/lib/memoryV2/fsrsIntegration';
 
 const globalDescriptors = new Map(['window', 'navigator', 'indexedDB'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
 afterEach(() => {
@@ -24,6 +25,11 @@ afterEach(() => {
   }
 });
 const storeNames = ['rawEvents', 'articleEvidence', 'dailyEvidence', 'memoryState', 'finalizationTasks', 'meta'];
+function memoryRow(wordId = 'run', userId = 'u') {
+  const state = initializeWordMemory(userId, wordId);
+  state.nextReview = state.fsrsCard.due = '2026-09-01T12:00:00.000Z';
+  return { key: `${userId}|${wordId}`, state };
+}
 class FakeIndexedDb {
   stores: Record<string, unknown[]> = Object.fromEntries(storeNames.map(name => [name, []]));
   failOpen = false;
@@ -238,14 +244,14 @@ test('an explicitly active localStorage backend does not mistake unavailable Ind
 
 test('complete IndexedDB memory and metadata round-trip without retaining target records', async () => {
   const source = new FakeIndexedDb();
-  source.stores.memoryState = [{ key: 'known', value: { wordId: 'run' } }];
-  source.stores.meta = [{ key: 'preferences', value: { dailyNewWordLimit: 0 } }];
+  source.stores.memoryState = [memoryRow()];
+  source.stores.meta = [{ key: 'preferences', value: { dailyNewWordLimit: 0 } }, { key: 'nullable', value: null }];
   const storage = installBrowser(undefined, source);
   storage.setItem('english-ai:v2:articles', 'source');
   const backup = await exportLocalDataBackup({ memoryStorage: 'indexedDB' });
   assert.equal(backup.memoryStorage, 'indexedDB');
   const target = new FakeIndexedDb();
-  target.stores.memoryState = [{ key: 'unrelated', value: { wordId: 'other' } }];
+  target.stores.memoryState = [memoryRow('other')];
   installBrowser(storage, target);
   storage.setItem('english-ai:v2:articles', 'target');
   await importLocalDataBackup(backup);
@@ -255,7 +261,7 @@ test('complete IndexedDB memory and metadata round-trip without retaining target
 
 test('a legacy backup without memory cannot overwrite an existing target memory library', async () => {
   const factory = new FakeIndexedDb();
-  factory.stores.memoryState = [{ key: 'known', value: { wordId: 'run' } }];
+  factory.stores.memoryState = [memoryRow()];
   const before = structuredClone(factory.stores);
   const storage = installBrowser(undefined, factory);
   storage.setItem('english-ai:v2:articles', 'target');
@@ -279,7 +285,7 @@ test('legacy history can restore to an otherwise empty target with only storage 
 
 test('localStorage memory restoration clears target IndexedDB so startup cannot mix the two libraries', async () => {
   const factory = new FakeIndexedDb();
-  factory.stores.memoryState = [{ key: 'target', value: { wordId: 'other' } }];
+  factory.stores.memoryState = [memoryRow('other')];
   const storage = installBrowser(undefined, factory);
   await importLocalDataBackup({ format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION,
     memoryStorage: 'localStorage', localStorage: { 'english-ai:v2:memory:state:user:run': '{"wordId":"run"}' }, indexedDb: null });
@@ -289,12 +295,12 @@ test('localStorage memory restoration clears target IndexedDB so startup cannot 
 
 test('restoration write failures roll back both memory and browser history', async () => {
   const factory = new FakeIndexedDb();
-  factory.stores.memoryState = [{ key: 'target', value: { wordId: 'other' } }];
+  factory.stores.memoryState = [memoryRow('other')];
   const before = structuredClone(factory.stores);
   const storage = installBrowser(undefined, factory);
   storage.setItem('english-ai:v2:articles', 'target');
   const stores = Object.fromEntries(storeNames.map(name => [name, [] as unknown[]]));
-  stores.memoryState = [{ key: 'source', value: { wordId: 'run' } }];
+  stores.memoryState = [memoryRow()];
   factory.failNextWrite = true;
   await assert.rejects(importLocalDataBackup({ format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION,
     memoryStorage: 'indexedDB', localStorage: { 'english-ai:v2:articles': 'source' },
@@ -305,7 +311,7 @@ test('restoration write failures roll back both memory and browser history', asy
 
 test('a history write failure after memory replacement restores both original libraries', async () => {
   const factory = new FakeIndexedDb();
-  factory.stores.memoryState = [{ key: 'target', value: { wordId: 'other' } }];
+  factory.stores.memoryState = [memoryRow('other')];
   const before = structuredClone(factory.stores);
   const storage = installBrowser(undefined, factory);
   storage.setItem('english-ai:v2:articles', 'target');
@@ -336,4 +342,54 @@ test('missing stores and invalid memory rows are rejected before any destructive
   const stores = Object.fromEntries(storeNames.map(name => [name, [] as unknown[]]));
   stores.memoryState = [{ value: {} }];
   assert.throws(() => validateLocalDataBackup({ ...backup, indexedDb: { ...backup.indexedDb, stores } }), /无效或重复/);
+});
+
+test('invalid memory wrappers, identities and unreadable FSRS records stop before browser replacement', async () => {
+  const reviewed = submitFsrsReview(memoryRow().state, 3, new Date('2026-09-02T12:00:00.000Z'));
+  const state = (changes: Record<string, unknown>) => ({ key: 'u|run', state: { ...structuredClone(reviewed), ...changes } });
+  const mutations: Array<[string, unknown]> = [
+    ['memoryState', { key: 'u|run' }], ['memoryState', { key: 'u|run', state: null }],
+    ['memoryState', { key: 'u|run', state: [] }], ['memoryState', state({ wordId: 'another' })],
+    ['memoryState', state({ fsrsCard: {} })], ['memoryState', state({ fsrsCard: { ...reviewed.fsrsCard, state: 99 } })],
+    ['memoryState', state({ fsrsReviews: [null] })], ['memoryState', state({ fsrsReviews: [3] })],
+    ['memoryState', state({ fsrsReviews: [{ ...reviewed.fsrsReviews[0], rating: 0 }] })],
+    ['memoryState', state({ nextReview: '2026-02-31T00:00:00Z' })],
+    ['memoryState', state({ rme: { exposureHistory: [null] } })],
+    ['rawEvents', { key: 'u|run|2026-09-02', events: null }],
+    ['rawEvents', { key: 'u|run|2026-09-02', events: [null] }],
+    ['articleEvidence', { key: 'u|run|a|2026-09-02', evidence: [] }],
+    ['dailyEvidence', { key: 'u|run|2026-09-02', evidence: null }],
+    ['finalizationTasks', { key: 'u|2026-09-02', task: null }], ['meta', { key: 'missing-value' }],
+  ];
+  const factory = new FakeIndexedDb();
+  factory.stores.memoryState = [memoryRow('existing')];
+  const previous = structuredClone(factory.stores);
+  const storage = installBrowser(undefined, factory);
+  storage.setItem('english-ai:v2:articles', 'existing history');
+  for (const [table, row] of mutations) {
+    const stores = Object.fromEntries(storeNames.map(name => [name, [] as unknown[]]));
+    stores[table] = [row];
+    await assert.rejects(importLocalDataBackup({ format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION,
+      memoryStorage: 'indexedDB', localStorage: { 'english-ai:v2:articles': 'replacement' },
+      indexedDb: { name: MEMORY_IDB_NAME, version: MEMORY_IDB_VERSION, stores } }), /记录无效/);
+    assert.deepEqual(factory.stores, previous);
+    assert.equal(storage.getItem('english-ai:v2:articles'), 'existing history');
+  }
+  assert.equal(factory.opened, 0, 'invalid payloads fail before touching the target memory database');
+});
+
+test('historical optional FSRS fields and null RME remain readable and round-trip unchanged', async () => {
+  const source = new FakeIndexedDb();
+  const row = memoryRow();
+  const state = submitFsrsReview(row.state, 3, new Date('2026-09-02T09:00:00+08:00'));
+  delete (state.fsrsCard as Partial<typeof state.fsrsCard>).learningSteps;
+  state.fsrsReviews.forEach(review => { delete (review as Partial<typeof review>).learningSteps; });
+  source.stores.memoryState = [{ ...row, state: { ...state, rme: null, futureField: { preserved: true } } }];
+  source.stores.meta = [{ key: 'nullable', value: null }, { key: 'generic', value: ['old', 1] }];
+  const storage = installBrowser(undefined, source);
+  const backup = await exportLocalDataBackup({ memoryStorage: 'indexedDB' });
+  const target = new FakeIndexedDb(); installBrowser(storage, target);
+  await importLocalDataBackup(backup);
+  assert.deepEqual(target.stores, source.stores);
+  assert.ok(submitFsrsReview(state, 3, new Date('2026-09-03T12:00:00Z')).fsrsReviews.length > state.fsrsReviews.length);
 });

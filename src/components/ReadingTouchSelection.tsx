@@ -332,7 +332,8 @@ export function ReadingTouchSelection(props: ReadingTouchSelectionProps) {
       finishDrag();
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.defaultPrevented || (!managedRange && !currentRange())) return;
+      event.preventDefault();
       cancelPending();
       canceledPress = null;
       activeTouch = null;

@@ -8,11 +8,11 @@ import fs from 'fs/promises';
 import path from 'path';
 import { createHash } from 'crypto';
 import type { Article } from '../../src/types';
-import { extractLearningUnits } from '../../src/lib/readingExposure';
-import { getArticleLearningTerms } from '../../src/lib/readingLearningTerms';
+import { extractRecommendationLemmas } from '../../src/lib/recommendationLearningUnits';
 import { getDataRoot, loadArticle, loadIndex, readJsonFile, writeFileAtomic } from './store';
 import { getDictionaryContentVersion } from '../dictionary/service';
 import { resolveDictionaryLearningWordIds } from '../dictionary/learningWordIds';
+import { isNonStoryArticleTitle } from '../../src/lib/articleEligibility';
 
 export interface MagazineLemmaIndexArticle {
   id: string;
@@ -37,21 +37,12 @@ export interface MagazineLemmaIndex {
 }
 
 // Bump when lemma extraction changes so persisted indexes are rebuilt.
-const INDEX_VERSION = 4 as const;
+const INDEX_VERSION = 6 as const;
 let memoryCache: MagazineLemmaIndex | null = null;
 let buildInflight: Promise<MagazineLemmaIndex> | null = null;
 
 function lemmaIndexPath(): string {
   return path.join(getDataRoot(), 'lemma-index.json');
-}
-
-function extractLemmasFromArticle(article: Article): string[] {
-  const all = new Set<string>();
-  const terms = getArticleLearningTerms(article);
-  for (const paragraph of article.content) {
-    for (const unit of extractLearningUnits(paragraph, terms)) all.add(unit.wordId);
-  }
-  return Array.from(all);
 }
 
 async function computeCatalogFingerprint(): Promise<string> {
@@ -113,6 +104,7 @@ async function loadAllArticles(): Promise<Article[]> {
     for (const article of loaded) {
       if (
         article?.id
+        && !isNonStoryArticleTitle(article.title)
         && Array.isArray(article.content)
         && article.content.length > 0
       ) {
@@ -135,7 +127,7 @@ export async function buildMagazineLemmaIndex(): Promise<MagazineLemmaIndex> {
   }> = [];
 
   for (const article of articles) {
-    const lemmas = extractLemmasFromArticle(article);
+    const lemmas = extractRecommendationLemmas(article);
     for (const lemma of lemmas) vocabSet.add(lemma);
     perArticleLemmas.push({ article, lemmas });
   }

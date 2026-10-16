@@ -54,10 +54,15 @@ export function buildVocabularyExportRows(
   });
 }
 
-export function downloadVocabularyCsv(
+export async function downloadVocabularyCsv(
   csv: string,
-  filename = `english-ai-vocabulary-${new Date().toISOString().slice(0, 10)}.csv`,
-): void {
+  filename = `ReadAge-vocabulary-${new Date().toISOString().slice(0, 10)}.csv`,
+): Promise<boolean> {
+  const { IS_ANDROID } = await import('./platform/runtime');
+  if (IS_ANDROID) {
+    const { nativeFiles } = await import('./platform/nativeFiles');
+    return (await nativeFiles.saveText({ text: csv, filename, mimeType: 'text/csv' })).saved === true;
+  }
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -67,6 +72,7 @@ export function downloadVocabularyCsv(
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+  return true;
 }
 
 export function formatVocabularyProficiency(

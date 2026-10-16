@@ -94,7 +94,7 @@ export function toEnglishDictionaryEntry(result: LookupResult): EnglishDictionar
     entry.dictionaryId === 'ecdict' ? 'ECDICT 内置词典' : entry.provenance.find(item => item.label)?.label ?? entry.dictionaryId;
   const dictionarySources: DictionarySourceView[] = converted.map(({ entry, record }) => {
     const ref = reference(entry);
-    return { record: record!, ...(entry.extensions?.[READAGE_AUTHORED_EXTENSION]
+    return { record: record!, provenance: [...entry.provenance, ...(result.sources.find(source => source.dictionaryId === entry.dictionaryId)?.provenance ?? [])], ...(entry.extensions?.[READAGE_AUTHORED_EXTENSION]
       ? { readageContent: entry.extensions[READAGE_AUTHORED_EXTENSION] as ReadAgeWord } : {}), ...(entry.content.kind === 'original' ? { originalContent: {
       mediaType: entry.content.mediaType, content: entry.content.content, plainText: record!.definitionEn,
     } } : {}), dictionaryRef: { protocolVersion: DICTIONARY_PROTOCOL_VERSION, catalogVersion: result.catalogVersion,

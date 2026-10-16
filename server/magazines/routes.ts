@@ -9,6 +9,7 @@ import {
 } from './store';
 import { loadMagazineLemmaIndex } from './lemmaIndex';
 import { getSyncStatus, runMagazineSync, type SyncOptions } from './sync';
+import { runWithManualMagazineNetwork } from './network';
 import { hydrateMagazineMedia } from './mediaUpgrade';
 import { resolveArticleImage } from './assets';
 import { loadMagazineGalleryPage, loadMagazineGalleryStream, parseGalleryStreamCursor } from './gallery';
@@ -204,6 +205,7 @@ export function createMagazineRouter(): Router {
           displayName: s.displayName,
           levelHint: s.levelHint,
           topic: s.topic,
+          sourceKind: s.sourceKind,
           issueCount: 0,
         })),
       });
@@ -268,7 +270,8 @@ export function createMagazineRouter(): Router {
           error: { code: 'NOT_FOUND', message: `Article not found: ${articleId}` },
         });
       }
-      res.json({ ok: true, article: await hydrateMagazineMedia(article) });
+      res.json({ ok: true, article: await hydrateMagazineMedia(article, undefined,
+        { restoreMissing: req.query.media !== 'defer' }) });
     } catch (err) {
       res.status(500).json(publicFailure('ARTICLE_FAILED', err, '文章暂时不可用，请稍后重试。'));
     }
@@ -338,7 +341,7 @@ export function createMagazineRouter(): Router {
       }
 
       // Fire and continue — client polls /sync/status
-      void runMagazineSync({ sources, maxIssuesPerSource })
+      void runWithManualMagazineNetwork(() => runMagazineSync({ sources, maxIssuesPerSource }))
         .then((result) => {
           console.log('[magazines] sync finished', result);
         })

@@ -6,6 +6,7 @@ import { initializeWordMemory, submitFsrsReview } from './fsrsIntegration';
 import { applyReviewOutcome } from '../memoryV4';
 import { hasFormalRecallEvidence, projectRmeProfile, rmeProfileForState } from './rmeV4Bridge';
 import { readFlashcardStudyPreferences } from '../flashcardPreferences';
+import { repairPassiveReadingRecall } from './passiveRecallRepair';
 
 const journalKey = (userId: string) => `reading-verification:${userId}`;
 const outcomes = new Set(['recognized', 'incorrect', 'uncertain', 'guessed', 'skipped']);
@@ -45,8 +46,14 @@ export async function saveVerificationAttempt(storage: MemoryStorage, userId: st
   const attempts = await readVerificationHistory(storage, userId);
   const index = attempts.findIndex(attempt => attempt.attemptId === input.attemptId);
   if (index < 0 && input.purpose === 'flashcard_review') {
-    const state = await storage.getMemoryState(userId, input.wordId);
-    if (!state) throw new Error('这张词卡的学习记录不存在，请刷新后重试。');
+    const storedState = await storage.getMemoryState(userId, input.wordId);
+    if (!storedState) throw new Error('这张词卡的学习记录不存在，请刷新后重试。');
+    const days = storage.getWordDailyEvidence ? await storage.getWordDailyEvidence(userId, input.wordId)
+      : (await Promise.all([...new Set(storedState.fsrsReviews.filter(review => review.localDate || Number.isFinite(Date.parse(review.review)))
+        .map(review => review.localDate
+        ?? getLocalDateInTimeZone(new Date(review.review), timezone)))]
+        .map(date => storage.getDailyEvidence(userId, input.wordId, date)))).filter((day): day is DailyWordEvidence => Boolean(day));
+    const state = repairPassiveReadingRecall(storedState, days, timezone, now);
     const hasRecall = hasFormalRecallEvidence(state);
     if (hasRecall && Date.parse(state.nextReview) > now.getTime()) {
       throw new Error('这个词已保存复习结果，下一次复习尚未到期，请刷新词卡。');
@@ -134,6 +141,7 @@ const planFor = (review: Review): ReviewPlan => ({ at: review.review, rating: re
 export function replayVerificationEvidence(state: WordMemoryState | null,
   attempts: readonly ReadingVerificationEvidence[], timezone: string,
   lookupDays: readonly DailyWordEvidence[] = [], now = new Date()): WordMemoryState | null {
+  if (state) state = repairPassiveReadingRecall(state, lookupDays, timezone, now);
   const wordAttempts = attempts.filter(attempt => !state || attempt.wordId === state.wordId);
   if (wordAttempts.length && wordAttempts.every(attempt => attempt.purpose === 'immediate_practice')) return state;
   const relevant = attempts.filter(attempt => (!state || attempt.wordId === state.wordId)

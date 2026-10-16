@@ -17,6 +17,61 @@ function article(id: string, status: Article['status'] = 'Not Started'): Article
 }
 
 describe('resolveRecommendationArticle chain', () => {
+  it('uses the entire article target pool even when the best overlap is beyond diagnostic limits', async () => {
+    const targets = Array.from({ length: 60 }, (_, index) => `target${index}`);
+    const resolved = await resolveRecommendationArticle(
+      { topic: '', reviewWords: targets, excludeArticleIds: [] },
+      {
+        library: [], history: [], useFullCatalog: true,
+        loadLemmaIndex: async () => ({
+          version: 5, fingerprint: 'wide-target-pool', builtAt: new Date().toISOString(),
+          articleCount: 2, vocab: targets,
+          articles: [
+            { id: 'early-one', title: 'Early', level: 'B1', wordCount: 200, lemmaIndices: [0] },
+            { id: 'late-fifteen', title: 'Broad', level: 'B1', wordCount: 200,
+              lemmaIndices: Array.from({ length: 15 }, (_, index) => index + 45) },
+          ],
+        }),
+        rankCatalog: async (candidates, options) => {
+          assert.deepEqual(options.reviewWords, targets);
+          const targetSet = new Set(options.reviewWords);
+          return candidates.map((candidate) => {
+            const hits = candidate.lemmas.filter((word) => targetSet.has(word)).length;
+            return {
+              articleId: candidate.article.id, score: hits, reviewWordsCount: hits,
+              dueWordsCount: hits, learningZoneCount: hits, consolidationZoneCount: 0,
+              unknownWordsCount: 0, averageMemoryScore: 0, reason: '',
+            };
+          }).sort((a, b) => b.score - a.score);
+        },
+        loadArticleById: async (id) => article(id, 'In Progress'),
+        localProvider: async () => assert.fail('catalog should find the broader match'),
+        libraryFallback: () => assert.fail('catalog should find the broader match'),
+        aiPost: async () => assert.fail('catalog should find the broader match'),
+      },
+    );
+    assert.equal(resolved?.article.id, 'late-fifteen');
+    assert.equal(resolved?.source, 'full_catalog');
+  });
+
+  it('uses fifteen concrete generation targets from a wider article search pool', async () => {
+    const targets = Array.from({ length: 60 }, (_, index) => `target${index}`);
+    const selected = targets.slice(0, 15);
+    const resolved = await resolveRecommendationArticle(
+      { topic: '', reviewWords: targets, excludeArticleIds: [] },
+      {
+        library: [], history: [], useFullCatalog: false,
+        localProvider: async () => null, libraryFallback: () => null,
+        aiPost: async (request) => {
+          assert.deepEqual(request.reviewWords, selected);
+          return { result: { title: 'Generated', description: 'Broad review',
+            paragraphs: [selected.join(' ')], keyWords: [] } } as never;
+        },
+      },
+    );
+    assert.deepEqual(resolved?.article.embeddedReviewWords, selected);
+  });
+
   it('returns Memory V2 local hits without calling AI or library fallback', async () => {
     let aiCalls = 0;
     let libraryCalls = 0;

@@ -20,6 +20,10 @@ export class OpenAiCompatibleTtsProvider implements TtsProvider {
     maxAudioBytes: number,
   ): Promise<TtsAudio> {
     if (!configuration.endpoint) throw new TtsError('TTS_NOT_CONFIGURED');
+    const voice = request.lang === 'ja-JP' ? configuration.voiceJaJp
+      : request.lang === 'fr-FR' ? configuration.voiceFrFr
+      : request.lang === 'en-GB' ? configuration.voiceEnGb || configuration.voice : configuration.voice;
+    if (!voice) throw new TtsError('TTS_NOT_CONFIGURED');
     const isWav = configuration.audioFormat === 'wav';
     const outputContentType = isWav ? 'audio/wav' : 'audio/mpeg';
     const acceptedContentTypes = isWav
@@ -38,7 +42,7 @@ export class OpenAiCompatibleTtsProvider implements TtsProvider {
       body: JSON.stringify({
         model: configuration.model,
         input: request.text,
-        voice: request.lang === 'en-GB' ? configuration.voiceEnGb || configuration.voice : configuration.voice,
+        voice,
         response_format: configuration.audioFormat,
         speed: request.rate,
       }),

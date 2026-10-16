@@ -38,6 +38,12 @@ const hasRecall = hasFormalRecallEvidence;
 const hasLookup = (state: WordMemoryState) => Number.isFinite(Date.parse(state.lastAssistedAt ?? ''))
   || state.fsrsReviews.some(review => review.source === 'reading_lookup');
 
+/** Excluded lookups may not yet have a state; their saved aliases still need canonical identities. */
+export function getFlashcardIdentityWordIds(states: readonly WordMemoryState[], preferences: FlashcardStudyPreferences): string[] {
+  return [...new Set([...states.map(state => state.wordId), ...preferences.importedWordIds,
+    ...preferences.pausedWordIds ?? [], ...preferences.excludedWordIds ?? []])];
+}
+
 /** The manager shows enrolled/queried/recalled words, rather than every incidental reading exposure. */
 export function getManagedFlashcardWordIds(states: readonly WordMemoryState[], preferences: FlashcardStudyPreferences,
   canonicalWordIds: ReadonlyMap<string, string>): string[] {

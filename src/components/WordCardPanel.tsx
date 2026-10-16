@@ -2,24 +2,33 @@ import React, { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, BookOpen, Copy, Globe, Sparkles, Volume2, X } from 'lucide-react';
 import type { GrammarExplanation } from '../types';
+import type { LookupResult } from '../../packages/dictionary/contracts';
+import { NeutralDictionarySections } from './NeutralDictionarySections';
 import { DictionarySenseGroups } from './DictionarySenseGroups';
 import { DictionarySourceSections } from './DictionarySourceSections';
 import { ReadAgeEntrySections } from './ReadAgeEntrySections';
 import { toDictionarySourceWordCard } from '../lib/dictionaryClient';
+import { dictionaryDisplayName } from '../lib/dictionaryDisplay';
 import { DictionarySourceIssues } from './DictionarySourceIssues';
 import { WordCardInteractions } from './WordCardInteractions';
 import { WordCardText } from './WordCardText';
 import { isTopWordCard } from '../lib/wordCardInteractions';
 import { WordMemoryDetailsPanel } from './WordMemoryDetailsPanel';
+import { WordCardOriginalSentence } from './WordCardOriginalSentence';
+import { DictionarySourceProvenance } from './DictionarySourceProvenance';
+import { WordCardRelatedButton } from './WordCardRelatedButton';
+import { LookupFlashcardControl } from './LookupFlashcardControl';
 
 export interface WordCardPanelProps {
   open: boolean;
   loading: boolean;
   result: GrammarExplanation | null;
+  neutralResult?: LookupResult | null;
   /** Selected lookup text (for translate/copy actions while loading or after). */
   selectedText?: string;
   onClose: () => void;
   onSpeak: (text: string) => void;
+  onStopSpeech?: () => void;
   onLookupRelated: (word: string) => void;
   onTranslate?: () => void;
   onCopy?: () => void;
@@ -39,9 +48,11 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
   open,
   loading,
   result: lookupResult,
+  neutralResult,
   selectedText,
   onClose,
   onSpeak,
+  onStopSpeech,
   onLookupRelated,
   onTranslate,
   onCopy,
@@ -62,7 +73,8 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
   }, [open]);
   if (!open) return null;
 
-  const authoredSource = lookupResult?.dictionarySources?.find(source => source.readageContent);
+  const primarySource = !neutralResult ? lookupResult?.dictionarySources?.[0] : undefined;
+  const authoredSource = primarySource?.readageContent ? primarySource : undefined;
   const authoredCard = authoredSource ? toDictionarySourceWordCard(authoredSource) : undefined;
   const result = authoredCard && lookupResult ? {
     ...lookupResult, ...authoredCard,
@@ -73,7 +85,8 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
     phonetic: authoredCard.phonetic || (authoredCard.wordOrPhrase === lookupResult.wordOrPhrase ? lookupResult.phonetic : undefined),
   } : lookupResult;
   const otherSources = result?.dictionarySources?.filter(source => source !== authoredSource) ?? [];
-  const title = result?.wordOrPhrase || selectedText || 'Word card';
+  const neutralEntry = neutralResult?.sources.flatMap(source => source.matches)[0]?.entry;
+  const title = neutralEntry?.headword || result?.wordOrPhrase || selectedText || 'Word card';
 
   return createPortal(
     <div
@@ -90,7 +103,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
     >
       <div className="word-card-dialog" ref={dialogRef} onKeyDown={event => {
         if (!isTopWordCard(dialogRef.current?.parentElement ?? null)) return;
-        if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); }
         if (event.key !== 'Tab') return;
         const buttons = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], summary, [tabindex="0"]') ?? [])]
           .filter(element => element.getClientRects().length > 0 && (!element.closest('details:not([open])') || element.tagName === 'SUMMARY'));
@@ -126,49 +139,74 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
             <p className="word-card-state__copy">{error}</p>
             {onRetrySources && <button type="button" className="word-card-action" onClick={onRetrySources}>重试词典</button>}
           </div>
+        ) : neutralResult ? (
+          <div className="word-card-body">
+            <header className="word-card-hero">
+              <div className="word-card-hero__title">
+                <h3 className="word-card-hero__word" lang={neutralResult.request.language}>{title}</h3>
+                <button type="button" onClick={() => onSpeak(title)} className="word-card-speak" aria-label="Speak word" title="Speak word">
+                  <Volume2 className="h-5 w-5" aria-hidden="true" />
+                </button>
+              </div>
+              <div className="word-card-meta">
+                  {neutralEntry?.readings.map((reading, index) => <span key={index} className="word-card-meta__phonetic" lang={reading.language}>{reading.text}</span>)}
+                  <span className="word-card-chip word-card-chip--source">{neutralResult.sources.filter(source => source.matches.length).length} 本词典</span>
+              </div>
+            </header>
+            {(onTranslate || onCopy) && <div className="word-card-actions" aria-label="词卡操作">
+              {onTranslate && <button type="button" onClick={onTranslate} className="word-card-action"><Globe className="h-4 w-4" aria-hidden="true" />翻译</button>}
+              {onCopy && <button type="button" onClick={onCopy} className="word-card-action"><Copy className="h-4 w-4" aria-hidden="true" />复制</button>}
+            </div>}
+            <WordCardInteractions key={selectedText || title} scopeId={scopeId} ancestorCardIds={ancestorCardIds}
+              language={neutralResult.request.language} word={title} onSpeak={onSpeak} onStopSpeech={onStopSpeech}>
+              <NeutralDictionarySections result={neutralResult} onLookupRelated={onLookupRelated} onRetry={onRetrySources} />
+            </WordCardInteractions>
+          </div>
         ) : result ? (
           <div className="word-card-body">
             <WordCardInteractions key={selectedText || result.wordOrPhrase} scopeId={scopeId} ancestorCardIds={ancestorCardIds}
-              word={result.wordOrPhrase} onSpeak={onSpeak}>
+              word={result.wordOrPhrase} onSpeak={onSpeak} onStopSpeech={onStopSpeech}>
             <header className="word-card-hero">
-              <div className="min-w-0">
+              <div className="word-card-hero__title">
                 <h3 className="word-card-hero__word">{result.wordOrPhrase}</h3>
-                <div className="word-card-meta">
+                <button
+                  type="button"
+                  onClick={() => onSpeak(result.wordOrPhrase)}
+                  className="word-card-speak"
+                  aria-label="Speak word"
+                  title="Speak word"
+                >
+                  <Volume2 className="h-5 w-5" aria-hidden="true" />
+                </button>
+              </div>
+              <div className="word-card-meta">
                   {result.phonetic && <span className="word-card-meta__phonetic">{result.phonetic}</span>}
                   {result.type && <span className="word-card-chip word-card-chip--accent">{result.type}</span>}
                   {result.cefrLevel && <span className="word-card-chip">{result.cefrLevel}</span>}
                   {result.tags?.map((tag) => <span key={tag} className="word-card-chip">{tag}</span>)}
                   {result.source && (
                     <span className="word-card-chip word-card-chip--source">
-                      {authoredSource ? authoredSource.dictionaryRef.dictionaryName || 'ReadAge 自编词典' : result.source === 'dictionary' ? result.dictionarySources?.length
-                        ? `${result.dictionarySources.length} 本词典` : result.dictionaryRef?.dictionaryName || 'Local dictionary' : 'AI explanation'}
+                      {authoredSource ? dictionaryDisplayName(authoredSource.dictionaryRef) || 'ReadAge 自编词典' : result.source === 'dictionary' ? result.dictionarySources?.length
+                        ? `${result.dictionarySources.length} 本词典` : dictionaryDisplayName(result.dictionaryRef) || 'Local dictionary' : 'AI explanation'}
                     </span>
                   )}
-                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => onSpeak(result.wordOrPhrase)}
-                className="word-card-speak"
-                aria-label="Speak word"
-                title="Speak word"
-              >
-                <Volume2 className="h-5 w-5" />
-              </button>
             </header>
 
+            <LookupFlashcardControl key={selectedText || result.wordOrPhrase} selectedText={selectedText || result.wordOrPhrase} learningTermRef={result.learningTermRef} />
+
             {(onTranslate || onCopy) && (
-              <div className="word-card-actions" aria-label="Word actions">
+              <div className="word-card-actions" aria-label="词卡操作">
                 {onTranslate && (
                   <button type="button" onClick={onTranslate} className="word-card-action">
-                    <Globe className="h-4 w-4" />
-                    Translate
+                    <Globe className="h-4 w-4" aria-hidden="true" />
+                    翻译
                   </button>
                 )}
                 {onCopy && (
                   <button type="button" onClick={onCopy} className="word-card-action">
-                    <Copy className="h-4 w-4" />
-                    Copy
+                    <Copy className="h-4 w-4" aria-hidden="true" />
+                    复制
                   </button>
                 )}
               </div>
@@ -191,6 +229,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
             <DictionarySourceIssues issues={result.dictionarySourceIssues} misses={result.dictionarySourceMisses} onRetry={onRetrySources} />
             {authoredSource?.readageContent ? <>
               <ReadAgeEntrySections word={authoredSource.readageContent} onLookupRelated={onLookupRelated} />
+              <DictionarySourceProvenance items={authoredSource.provenance ?? authoredSource.record.edit.source} />
               {otherSources.length > 0 && <details className="word-card-alternate-sources">
                 <summary>其他词典 · {otherSources.length} 本</summary>
                 <DictionarySourceSections sources={otherSources} onLookupRelated={onLookupRelated} initiallyExpanded={false} />
@@ -226,7 +265,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
             {result.readingOriginalSentence && (
               <section className="word-card-section word-card-original-sentence">
                 <span className="word-card-section__eyebrow">阅读原句</span>
-                <p className="word-card-copy"><WordCardText text={result.readingOriginalSentence} /></p>
+                <p className="word-card-copy"><WordCardOriginalSentence text={result.readingOriginalSentence} word={result.readingOriginalWord || selectedText} /></p>
                 <button type="button" className="word-card-action" aria-label="朗读阅读原句" onClick={() => onSpeak(result.readingOriginalSentence!)}>
                   <Volume2 className="h-4 w-4" aria-hidden="true" />朗读原句
                 </button>
@@ -273,9 +312,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
                 <span className="word-card-section__eyebrow">Related words</span>
                 <div className="word-card-chip-list">
                   {result.relatedWords.map((related) => (
-                    <button key={related} type="button" onClick={() => onLookupRelated(related)} className="word-card-chip word-card-chip--link">
-                      {related}
-                    </button>
+                    <WordCardRelatedButton key={related} word={related} onLookup={onLookupRelated} className="word-card-chip word-card-chip--link" />
                   ))}
                 </div>
               </section>
@@ -299,7 +336,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
               <p>{recordStatus}</p>
               {onRetryRecord && <button type="button" className="word-card-action" onClick={onRetryRecord}>重试保存</button>}
             </div>}
-            <WordMemoryDetailsPanel key={result.wordOrPhrase} wordId={result.learningTermRef?.stableId || result.wordOrPhrase} />
+            <WordMemoryDetailsPanel key={`memory:${result.wordOrPhrase}`} wordId={result.learningTermRef?.stableId || result.wordOrPhrase} />
           </div>
         ) : (
           <div className="word-card-state">

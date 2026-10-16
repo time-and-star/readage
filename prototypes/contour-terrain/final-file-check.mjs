@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import path from 'node:path';
+import os from 'node:os';
+const root=fileURLToPath(new URL('./',import.meta.url));
+const file=path.join(root,'terrain.html');
+const runtime=process.env.PLAYWRIGHT_MODULE_PATH||path.join(os.homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs');
+const {chromium}=await import(pathToFileURL(runtime).href);
+const browser=await chromium.launch({headless:true});
+const context=await browser.newContext({viewport:{width:1440,height:1000},offline:true});
+const page=await context.newPage(),errors=[];
+page.on('pageerror',e=>errors.push(e.message));
+try {
+  await page.goto(pathToFileURL(file).href);
+  await page.waitForFunction(()=>window.terrainPrototype?.getState().width>1);
+  assert.match(await page.locator('#scene-hint').innerText(),/滚轮缩放/);
+  const before=await page.evaluate(()=>window.terrainPrototype.getState().heights);
+  await page.locator('.brand').click();
+  assert(page.url().includes('terrain.html'));
+  await page.locator('[data-tool="raise"]').click();
+  const p=await page.evaluate(()=>window.terrainPrototype.project(17,19));
+  const b=await page.locator('#terrain').boundingBox();
+  await page.mouse.move(b.x+p.x,b.y+p.y);await page.mouse.down();await page.waitForTimeout(250);await page.mouse.up();
+  const edited=await page.evaluate(()=>window.terrainPrototype.getState().heights);
+  assert(edited.reduce((a,b)=>a+b)>before.reduce((a,b)=>a+b));
+  await page.locator('#undo').click();await page.locator('[data-tool="inspect"]').click();
+  await page.waitForTimeout(100);
+  assert.deepEqual(await page.evaluate(()=>window.terrainPrototype.getState().heights),before);
+  assert.deepEqual(errors,[]);
+  await page.screenshot({path:path.join(root,'verification/final-standalone.png'),fullPage:true});
+  const content=await readFile(file);
+  const report={date:'2026-10-14',file,sha256:createHash('sha256').update(content).digest('hex'),bytes:content.length,offline:true,passed:['离线加载','桌面操作提示','品牌链接留在原型','抬高','撤销','无页面异常'],errors};
+  await writeFile(path.join(root,'verification/final-file-check.json'),JSON.stringify(report,null,2));
+  console.log(JSON.stringify(report,null,2));
+}finally{await browser.close();}

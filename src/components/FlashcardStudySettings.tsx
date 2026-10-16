@@ -127,6 +127,11 @@ export function FlashcardStudySettings({
       'button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href],summary,[tabindex]',
     )].filter(element => element.tabIndex >= 0 && !element.matches(':disabled') && element.getClientRects().length > 0);
     const trapFocus = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (!busyRef.current) closeRef.current();
+        return;
+      }
       if (event.key !== 'Tab') return;
       const items = focusableElements();
       const first = items[0];
@@ -273,10 +278,10 @@ export function FlashcardStudySettings({
     setImportError(null);
     setImportMessage(null);
     try {
-      await onImportWords([...preview.words]);
+      const result = await onImportWords([...preview.words]);
       if (!isCurrentOperation(token)) return;
       setImported(true);
-      setImportMessage(`${preview.words.length} 个单词已加入学习。`);
+      setImportMessage(`新增 ${result.addedCount} 个单词，已有 ${result.existingCount} 个单词；本次 ${result.enrolledCount} 个单词加入学习。已有单词保留学习进度。`);
       setView('done');
     } catch (cause) {
       if (isCurrentOperation(token)) setImportError(errorMessage(cause, '导入失败，请重试。'));

@@ -109,6 +109,8 @@ test('financial and advice remain separate dictionary lookups in the same senten
       const card = await fetchWordCard(request, { articleId: 'a1' });
       assert.equal(card.wordOrPhrase, word);
       assert.equal(card.source, 'dictionary');
+      assert.equal(card.readingOriginalSentence, sentence);
+      assert.equal(card.readingOriginalWord, word);
     }
     assert.deepEqual(queries, ['financial', 'advice']);
   } finally {
@@ -193,7 +195,17 @@ test('a cached definition remains available when the dictionary is offline; canc
     const request = createWordCardRequest('running')!;
     const result = await fetchWordCard(request);
     globalThis.fetch = withCatalog((async () => { throw new Error('offline'); }) as typeof fetch);
-    assert.deepEqual(await fetchWordCard(request), JSON.parse(JSON.stringify(result)));
+    assert.deepEqual(await fetchWordCard(request), { ...JSON.parse(JSON.stringify(result)), readingOriginalSentence: undefined });
+    const legacyCard = { ...result, dictionaryRef: { dictionaryId: 'native-reviewed', dictionaryName: 'readge 自编词典' },
+      dictionarySourceMisses: [{ dictionaryId: 'native-reviewed', dictionaryName: 'readge 自编词典' },
+        { dictionaryId: 'custom', dictionaryName: 'ReadAge 学习词典' }] };
+    const cacheKey = 'english-ai:v7:word-card:' + dictionaryCacheKey('en', catalog.catalogVersion, 'running');
+    const storedCard = JSON.stringify(legacyCard);
+    values.set(cacheKey, storedCard);
+    const displayed = await fetchWordCard(request);
+    assert.equal(displayed.dictionaryRef?.dictionaryName, 'ReadAge 自编词典');
+    assert.deepEqual(displayed.dictionarySourceMisses?.map(source => source.dictionaryName), ['ReadAge 自编词典', 'ReadAge 学习词典']);
+    assert.equal(values.get(cacheKey), storedCard, 'display changes do not rewrite cached content');
     const controller = new AbortController(); controller.abort();
     await assert.rejects(fetchWordCard(request, { signal: controller.signal }), /cancelled/);
   } finally {
@@ -224,7 +236,7 @@ test('old cards with incorrectly stemmed headwords are refreshed from the dictio
   try {
     assert.equal((await fetchWordCard(createWordCardRequest('speed')!)).wordOrPhrase, 'speed');
     assert.equal(calls, 1);
-    assert.ok(values.has('english-ai:v6:word-card:' + dictionaryCacheKey('en', catalog.catalogVersion, 'speed')));
+    assert.ok(values.has('english-ai:v7:word-card:' + dictionaryCacheKey('en', catalog.catalogVersion, 'speed')));
   } finally {
     globalThis.fetch = originalFetch;
     if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);

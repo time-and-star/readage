@@ -1,0 +1,28 @@
+module.exports = {
+  appId: 'com.readge.local',
+  productName: 'ReadAge',
+  electronVersion: '44.5.1',
+  directories: { output: 'build/desktop', buildResources: 'desktop/resources' },
+  extraMetadata: { main: 'desktop/main.mjs' },
+  extraResources: [
+    { from: 'build/desktop-resources', to: 'offline-resources', filter: ['manifest.json', 'workspace/**', 'licenses/**'] },
+    { from: 'build/desktop-dictionaries', to: 'released-dictionaries', filter: ['manifest.json', 'dictionaries/**'] },
+    { from: 'desktop/resources', to: 'brand', filter: ['readge.png', 'readge.ico', 'icon-manifest.json'] },
+  ],
+  files: [
+    'dist/**', 'desktop/**', 'scripts/kokoro-service.mjs', 'scripts/kokoro-french.mjs', 'scripts/kokoro-japanese.mjs',
+    'scripts/kokoro-japanese-g2p.py', 'scripts/hymt2-service.mjs', 'scripts/local-process.mjs',
+    'vendor/nextword-local-dictionary/**', 'data/dictionary/readage/**', 'data/dictionary/revisions/**',
+    'package.json', 'LICENSE', 'NOTICE', '!**/*.map', '!**/tests/**', '!**/.env*', '!local-data/**', '!data/magazines/**',
+    '!desktop/*.test.mjs', '!desktop/README.md',
+  ],
+  asar: true,
+  asarUnpack: ['**/*.node', '**/*.dll', '**/*.exe', '**/onnxruntime-node/**', 'scripts/kokoro-japanese-g2p.py'],
+  npmRebuild: true,
+  win: { executableName: 'readge', icon: 'desktop/resources/readge.ico', target: [{ target: 'nsis', arch: ['x64'] }], artifactName: 'ReadAge-${version}-windows-${arch}-setup.${ext}' },
+  nsis: { oneClick: false, perMachine: false, allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: true, createStartMenuShortcut: true, shortcutName: 'ReadAge',
+    installerIcon: 'desktop/resources/readge.ico', uninstallerIcon: 'desktop/resources/readge.ico',
+    installerHeaderIcon: 'desktop/resources/readge.ico', deleteAppDataOnUninstall: false },
+  publish: null,
+};

@@ -23,7 +23,8 @@ export type ProficiencyLevel = 0 | 1 | 2 | 3 | 4;
 export type MagazineSourceId = 'economist' | 'new_yorker' | 'atlantic' | 'wired' | string;
 export type MagazineIssueStatus = 'ready' | 'parsing' | 'failed' | 'partial';
 export type MagazineFormat = 'epub' | 'pdf' | 'html';
-export type MagazineSourceProvider = 'github' | 'news_in_levels';
+export type MagazineSourceProvider = 'github' | 'news_in_levels' | 'rss_fulltext';
+export type MagazineSourceKind = 'issue' | 'web_articles' | 'graded_news';
 
 export interface MagazineSourceMeta {
   id: MagazineSourceId;
@@ -32,6 +33,9 @@ export interface MagazineSourceMeta {
   /** Fixed source page for non-GitHub providers. */
   sourceUrl?: string;
   provider?: MagazineSourceProvider;
+  sourceKind?: MagazineSourceKind;
+  /** Exact hosts allowed for article images; never a wildcard or a tracking host. */
+  imageHosts?: string[];
   displayName: string;
   levelHint?: string;
   topic?: string;
@@ -40,6 +44,7 @@ export interface MagazineSourceMeta {
 export interface MagazineIssue {
   id: string;
   sourceId: MagazineSourceId;
+  sourceKind?: MagazineSourceKind;
   issueLabel: string;
   title: string;
   publishedAt?: string;
@@ -74,6 +79,7 @@ export interface MagazineSourceSummary {
   displayName: string;
   levelHint?: string;
   topic?: string;
+  sourceKind?: MagazineSourceKind;
   issueCount: number;
 }
 
@@ -139,6 +145,8 @@ export interface ArticleMedia {
 
 /** A picture-led entry into an article already in the local magazine library. */
 export interface MagazineGalleryItem {
+  /** Ephemeral stream round, permitting a new cycle after a small collection is exhausted. */
+  streamRound?: number;
   articleId: string;
   title: string;
   image: ArticleMedia;
@@ -156,6 +164,8 @@ export interface ArticleSourceDocument {
 
 export interface Article {
   id: string;
+  /** BCP 47 source language. Existing articles without this field remain English. */
+  language?: string;
   title: string;
   description: string;
   date: string;
@@ -329,6 +339,7 @@ export interface GrammarExplanation {
   dictionaryRecord?: DictionaryRecord;
   /** The sentence selected in the article; never presented as a curated example. */
   readingOriginalSentence?: string;
+  readingOriginalWord?: string;
 }
 
 export interface TranslationResult {

@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import type { ReadAgeExample, ReadAgeSense, ReadAgeWord } from '../../packages/dictionary/readage';
 import { DictionaryOriginalContent } from './DictionaryOriginalContent';
+import { WordCardRelatedButton } from './WordCardRelatedButton';
 
 type Item = Record<string, unknown>;
 type Lookup = ((word: string) => void) | undefined;
@@ -44,8 +45,8 @@ function Prose({ value, onLookup, className = '' }: { value: unknown; onLookup?:
 const ExtraContent: React.FC<{ value: unknown; onLookup?: Lookup }> = ({ value, onLookup }) => {
   if (!present(value)) return null;
   if (Array.isArray(value)) return <div className="readage-stack">{value.filter(present).map((item, i) => <ExtraContent key={i} value={item} onLookup={onLookup} />)}</div>;
-  if (typeof value === 'object') return <dl className="readage-facts readage-flow">{Object.entries(value).filter(([key, item]) => !internal.has(key) && present(item)).map(([key, item]) =>
-    <div key={key} className={typeof item === 'object' ? 'readage-flow-wide' : undefined}><dt>{labels[key] ?? '补充说明'}</dt><dd><ExtraContent value={item} onLookup={onLookup} /></dd></div>)}</dl>;
+  if (typeof value === 'object') return <dl className="readage-facts">{Object.entries(value).filter(([key, item]) => !internal.has(key) && present(item)).map(([key, item]) =>
+    <div key={key}><dt>{labels[key] ?? '补充说明'}</dt><dd><ExtraContent value={item} onLookup={onLookup} /></dd></div>)}</dl>;
   return <Prose value={typeof value === 'boolean' ? value ? '是' : '否' : value} onLookup={onLookup} />;
 };
 function Remaining({ item, used, onLookup }: { item: Item; used: string[]; onLookup?: Lookup }) {
@@ -53,7 +54,7 @@ function Remaining({ item, used, onLookup }: { item: Item; used: string[]; onLoo
   return present(extra) ? <Note title="补充说明"><ExtraContent value={extra} onLookup={onLookup} /></Note> : null;
 }
 function RelatedWord({ word, onLookup }: { word: string; onLookup?: Lookup }) {
-  return onLookup ? <button type="button" className="readage-related-word" onClick={() => onLookup(word)} lang="en">{word}</button> : <strong lang="en">{word}</strong>;
+  return onLookup ? <WordCardRelatedButton word={word} className="readage-related-word" onLookup={onLookup} /> : <strong lang="en">{word}</strong>;
 }
 function Module({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return <section className="readage-module"><h4 className="readage-module-heading"><strong>{title}</strong>{description && <small>{description}</small>}</h4>
@@ -243,8 +244,6 @@ export function ReadAgeEntrySections({ word, onLookupRelated: onLookup }: { word
         <h5 className="readage-group-title">{sense.titleZh}</h5><div className="readage-flow">{items(sense.synonyms).map((item, i) => <Comparison key={`syn-${i}`} item={item} onLookup={onLookup} />)}</div>
         {items(sense.antonyms).length > 0 && <h6>反义与语义对照</h6>}<div className="readage-flow">{items(sense.antonyms).map((item, i) => <Comparison key={`ant-${i}`} item={item} onLookup={onLookup} />)}</div></section>)}
         </Module>}
-      <Module title="发音与词汇信息" description="音标、音节与等级依据"><div className="readage-pronunciations">{word.pronunciations.filter(p => p.ipa).map((p, i) => <div key={i}><span>{p.region}</span><strong>{p.ipa}</strong><Prose value={p.source} className="readage-caption" onLookup={onLookup} /></div>)}</div>
-        <ExtraContent value={{ syllables: word.syllables, stress: word.stress, level: word.level, levelSource: word.levelSource, levelLabel: word.levelLabel, examTags: word.examTags }} onLookup={onLookup} /></Module>
       {(present(word.sources) || present(word.sourceNote)) && <Module title="参考来源" description={`${items(word.sources).length} 个来源`}>{items(word.sources).map((source, i) => <article className="readage-item" key={i}>
         <strong>{text(source.name)}</strong><Prose value={source.dataType} className="readage-translation" onLookup={onLookup} />
         {text(source.updatedAt) && <p className="readage-caption">更新于 {text(source.updatedAt)}</p>}

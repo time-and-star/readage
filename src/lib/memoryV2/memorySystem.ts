@@ -44,6 +44,10 @@ import { readFlashcardStudyPreferences, saveFlashcardStudyPreferences, importFla
   repairImportedFlashcardStates, updateFlashcardWords, type FlashcardStudyPreferences } from '../flashcardPreferences';
 import { LocalStorageMemoryStorage } from './localStorageImpl';
 import { IndexedDbMemoryStorage } from './indexedDbImpl';
+import { SqliteMemoryStorage } from './sqliteImpl';
+import { repairPassiveReadingRecall } from './passiveRecallRepair';
+
+export interface FlashcardRestoreTarget { wordId: string; relatedWordIds: readonly string[] }
 
 export interface WordProficiencyView {
   wordId: string;
@@ -70,6 +74,23 @@ export interface WordProficiencyStats {
   learningCount: number;
   masteredCount: number;
   dueCount: number;
+}
+
+export interface MemoryLearningSnapshot {
+  proficiencies: WordProficiencyView[];
+  dueWords: WordProficiencyView[];
+  confirmationWords: WordProficiencyView[];
+  stats: WordProficiencyStats;
+}
+
+/** Persisted data and projections retained by the shared store, invalidated on external changes. */
+export interface MemoryLearningSnapshotCache {
+  states: Map<string, WordMemoryState>;
+  preferences: FlashcardStudyPreferences;
+  views: Map<string, WordProficiencyView>;
+  dynamicWordIds: Set<string>;
+  projectedAt: number;
+  snapshot: MemoryLearningSnapshot;
 }
 
 export const DEFAULT_REVIEW_QUEUE_LIMIT = 5;
@@ -139,10 +160,126 @@ function learningStatusProjector(preferences: FlashcardStudyPreferences) {
   };
 }
 
+function limitWordViews(words: WordProficiencyView[], limit?: number): WordProficiencyView[] {
+  return limit === undefined ? words : limit > 0 ? words.slice(0, Math.floor(limit)) : [];
+}
+
+function selectDueWords(proficiencies: WordProficiencyView[], now: Date, limit?: number): WordProficiencyView[] {
+  const due = proficiencies.filter(word => word.isFlashcardEligible !== false && word.isIntroduced !== true
+    && Date.parse(word.nextReview) <= now.getTime());
+  due.sort((left, right) => Date.parse(left.nextReview) - Date.parse(right.nextReview) || left.wordId.localeCompare(right.wordId));
+  return limitWordViews(due, limit);
+}
+
+function selectConfirmationWords(proficiencies: WordProficiencyView[], states: Map<string, WordMemoryState>,
+  now: Date, timezone: string, limit?: number): WordProficiencyView[] {
+  const today = getLocalDateInTimeZone(now, timezone);
+  const anchors = new Map<string, number>();
+  const words = proficiencies.filter(word => {
+    if (word.isIntroduced !== true) return false;
+    const state = states.get(word.wordId);
+    if (!state || hasFormalRecallEvidence(state)) return false;
+    if (!state.rme && state.fsrsReviews.length === 0) return false;
+    const profile = rmeProfileForState(state);
+    if (!(profile.successfulExposureCount > 0 && profile.exposureHistory.some(exposure => exposure.isValid && exposure.quality >= 0.8))) return false;
+    const anchorAt = Date.parse(profile.lastEffectiveExposureAt ?? '');
+    anchors.set(word.wordId, Number.isFinite(anchorAt) ? anchorAt : Number.POSITIVE_INFINITY);
+    const lastDay = profile.lastEffectiveLocalDate
+      ?? (Number.isFinite(anchorAt) ? getLocalDateInTimeZone(new Date(anchorAt), timezone) : null);
+    return classifyExposure({ now, isRecommendation: true, isConfirmation: true,
+      localDate: today, previousLocalDate: lastDay, userTimezone: timezone,
+      lastExposureAt: profile.lastExposureAt, lastEffectiveExposureAt: profile.lastEffectiveExposureAt,
+      firstUnconfirmedExposureAt: profile.firstUnconfirmedExposureAt, lastReviewAt: state.lastAssistedAt,
+    }).isValid;
+  });
+  words.sort((left, right) => (right.opportunityScore ?? 0) - (left.opportunityScore ?? 0)
+    || (anchors.get(left.wordId) ?? Number.POSITIVE_INFINITY) - (anchors.get(right.wordId) ?? Number.POSITIVE_INFINITY)
+    || left.wordId.localeCompare(right.wordId));
+  return limitWordViews(words, limit);
+}
+
+function summarizeProficiency(proficiencies: WordProficiencyView[], now: Date): WordProficiencyStats {
+  const stats: WordProficiencyStats = { total: 0, byLevel: { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 },
+    averageScore: 0, introducedCount: 0, learningCount: 0, masteredCount: 0, dueCount: 0 };
+  let totalScore = 0;
+  for (const word of proficiencies) {
+    if (word.isFlashcardEligible === false) continue;
+    stats.total++; stats.byLevel[word.level]++; totalScore += word.memoryScore;
+    if (word.isIntroduced) stats.introducedCount++;
+    else if (word.level === 4) stats.masteredCount++;
+    else stats.learningCount++;
+    if (!word.isIntroduced && Date.parse(word.nextReview) <= now.getTime()) stats.dueCount++;
+  }
+  stats.averageScore = stats.total ? totalScore / stats.total : 0;
+  return stats;
+}
+
 export class MemorySystemV2 {
-  getMemoryStorageKind(): 'indexedDB' | 'localStorage' | 'unknown' {
+  private projectWordProficiency(state: WordMemoryState, projectLearning: ReturnType<typeof learningStatusProjector>, now: Date): WordProficiencyView {
+    const memoryScore = hasFormalRecallEvidence(state) ? calculateMemoryScore(state, this.params, now) : 0;
+    const level = scoreToLevel(memoryScore);
+    const learning = projectLearning(state);
+    return addRmeProjection(state, {
+      wordId: state.wordId, memoryScore, level, stability: state.stability, difficulty: state.difficulty,
+      nextReview: state.nextReview, lastReview: state.lastReview, ...learning,
+      status: learning.isIntroduced ? 'introduced' : level === 4 ? 'mastered' : 'learning',
+    }, now);
+  }
+
+  /** One read serves all learning collections; passive paragraph writes refresh only affected words. */
+  async getLearningSnapshot(userId: string, now: Date, userTimezone: string,
+    previous: MemoryLearningSnapshotCache | null = null, changedWordIds: readonly string[] = []): Promise<MemoryLearningSnapshotCache> {
+    let states: Map<string, WordMemoryState>;
+    let preferences: FlashcardStudyPreferences;
+    let changed: Set<string>;
+    if (!previous) {
+      const [allStates, loadedPreferences] = await Promise.all([
+        this.storage.getAllMemoryStates(userId), this.getFlashcardStudyPreferences(userId),
+      ]);
+      states = new Map(allStates.map(state => [state.wordId, structuredClone(state)]));
+      preferences = loadedPreferences;
+      changed = new Set(states.keys());
+    } else {
+      states = new Map(previous.states);
+      preferences = previous.preferences;
+      changed = new Set(changedWordIds);
+      if (changed.size) {
+        const refreshed = await this.storage.getBatchMemoryStates(userId, [...changed]);
+        for (const wordId of changed) {
+          const state = refreshed.get(wordId);
+          if (state) states.set(wordId, structuredClone(state)); else states.delete(wordId);
+        }
+      }
+    }
+    const views = new Map(previous?.views ?? []);
+    const dynamicWordIds = new Set(previous?.dynamicWordIds ?? []);
+    for (const wordId of changed) {
+      const state = states.get(wordId);
+      // Untouched imported cards have constant zero scores. Learned words retain exact clock-based projections.
+      if (state && (state.rme || state.lastReview || state.lastAssistedAt || hasFormalRecallEvidence(state))) dynamicWordIds.add(wordId);
+      else dynamicWordIds.delete(wordId);
+    }
+    const projectIds = new Set(changed);
+    if (!previous || previous.projectedAt !== now.getTime()) for (const wordId of dynamicWordIds) projectIds.add(wordId);
+    const projectLearning = learningStatusProjector(preferences);
+    for (const wordId of projectIds) {
+      const state = states.get(wordId);
+      if (state) views.set(wordId, this.projectWordProficiency(state, projectLearning, now)); else views.delete(wordId);
+    }
+    const proficiencies = [...views.values()];
+    const snapshot = {
+      proficiencies,
+      dueWords: selectDueWords(proficiencies, now),
+      confirmationWords: selectConfirmationWords(proficiencies, states, now, userTimezone),
+      stats: summarizeProficiency(proficiencies, now),
+    };
+    return { states, preferences, views, dynamicWordIds, projectedAt: now.getTime(), snapshot };
+  }
+
+  getMemoryStorageKind(): 'sqlite' | 'indexedDB' | 'localStorage' | 'unknown' {
     return this.storage instanceof LocalStorageMemoryStorage ? 'localStorage'
-      : this.storage instanceof IndexedDbMemoryStorage ? 'indexedDB' : 'unknown';
+      : this.storage instanceof IndexedDbMemoryStorage ? 'indexedDB'
+      : this.storage instanceof SqliteMemoryStorage ? 'sqlite' : 'unknown';
   }
   getFlashcardStudyPreferences(userId: string) { return readFlashcardStudyPreferences(this.storage, userId); }
   saveFlashcardStudyPreferences(userId: string, dailyNewWordLimit: number | null) {
@@ -150,6 +287,23 @@ export class MemorySystemV2 {
   }
   updateFlashcardWords(userId: string, wordIds: string[], action: 'pause' | 'resume' | 'remove') {
     return updateFlashcardWords(this.storage, userId, wordIds, action);
+  }
+  /** The store holds one write lock; only the final preference write resumes enrollment. */
+  async restoreFlashcardWords(userId: string, targets: readonly FlashcardRestoreTarget[], now = new Date()) {
+    if (!Number.isFinite(now.getTime())) throw new TypeError('Invalid flashcard restore date');
+    const ids = new Set<string>();
+    for (const { wordId, relatedWordIds } of targets) {
+      await this.seedCanonicalWordMemory(userId, wordId, relatedWordIds);
+      if (!await this.storage.getMemoryState(userId, wordId)) {
+        const state = initializeWordMemory(userId, wordId);
+        state.nextReview = now.toISOString();
+        state.fsrsCard.due = now.toISOString();
+        await this.storage.saveMemoryState(state);
+      }
+      ids.add(wordId);
+      relatedWordIds.forEach(id => ids.add(id));
+    }
+    return updateFlashcardWords(this.storage, userId, [...ids], 'resume');
   }
   importFlashcardWords(userId: string, canonicalWordIds: string[], existingCanonicalWordIds?: ReadonlyMap<string, string>, now = new Date()) {
     return importFlashcardWords(this.storage, userId, canonicalWordIds, existingCanonicalWordIds, now,
@@ -189,7 +343,9 @@ export class MemorySystemV2 {
     const state = await this.storage.getMemoryState(userId, wordId);
     if (!attempts.length && !state?.fsrsReviews.some(review => review.source === 'flashcard')) return;
     const days = this.storage.getWordDailyEvidence ? await this.storage.getWordDailyEvidence(userId, wordId)
-      : (await Promise.all([...new Set(attempts.map(attempt => attempt.localDate))]
+      : (await Promise.all([...new Set([...attempts.map(attempt => attempt.localDate),
+        ...state?.fsrsReviews.filter(review => review.localDate || Number.isFinite(Date.parse(review.review)))
+          .map(review => review.localDate ?? getLocalDateInTimeZone(new Date(review.review), this.timezone)) ?? []])]
         .map(date => this.storage.getDailyEvidence(userId, wordId, date)))).filter((day): day is DailyWordEvidence => Boolean(day));
     const updated = replayVerificationEvidence(state, attempts, this.timezone, days, now);
     if (updated && updated !== state) await this.storage.saveMemoryState(updated);
@@ -207,10 +363,27 @@ export class MemorySystemV2 {
 
   /** Preserve one known legacy baseline when a word first adopts its canonical ID. */
   async seedCanonicalWordMemory(userId: string, canonicalWordId: string, legacyWordIds: readonly string[]): Promise<void> {
-    if (await this.storage.getMemoryState(userId, canonicalWordId)) return;
+    const existing = await this.storage.getMemoryState(userId, canonicalWordId);
+    if (existing && !existing.fsrsReviews.some(review => review.source === undefined && review.rating === 3)) return;
     const aliases = [...new Set(legacyWordIds)].filter(id => id !== canonicalWordId);
-    if (!aliases.length) return;
-    const candidates = [...(await this.storage.getBatchMemoryStates(userId, aliases)).values()];
+    const originals = aliases.length ? [...(await this.storage.getBatchMemoryStates(userId, aliases)).values()] : [];
+    if (existing) {
+      const days = await this.readWordDailyEvidence(existing, this.timezone);
+      const copiedReviews = new Set(existing.fsrsReviews.map(review => JSON.stringify(review)));
+      for (const alias of originals) {
+        // Only dictionary-confirmed aliases carrying the exact copied history
+        // can supply missing evidence for an existing canonical baseline.
+        if (![...alias.fsrsReviews, ...alias.passiveReadingReviews ?? []]
+          .some(review => copiedReviews.has(JSON.stringify(review)))) continue;
+        days.push(...(await this.readWordDailyEvidence(alias, this.timezone)).map(day => ({ ...day, wordId: canonicalWordId })));
+      }
+      const updated = repairPassiveReadingRecall(existing, days, this.timezone);
+      if (updated !== existing) await this.storage.saveMemoryState(updated);
+      return;
+    }
+    if (!originals.length) return;
+    const candidates = await Promise.all(originals
+      .map(async state => repairPassiveReadingRecall(state, await this.readWordDailyEvidence(state, this.timezone), this.timezone)));
     const lastKnownAt = (state: WordMemoryState) => Math.max(0,
       Date.parse(state.lastReview ?? '') || 0, Date.parse(state.rme?.lastExposureAt ?? '') || 0);
     candidates.sort((left, right) => (Date.parse(right.lastReview ?? '') || 0) - (Date.parse(left.lastReview ?? '') || 0)
@@ -220,12 +393,65 @@ export class MemorySystemV2 {
     if (baseline) await this.storage.saveMemoryState({ ...baseline, wordId: canonicalWordId });
   }
 
+  /** Dictionary-resolved identities allow copied baselines to find their original reading proof. */
+  async repairCanonicalRecallHistory(userId: string, canonicalWordIds: ReadonlyMap<string, string>): Promise<string[]> {
+    const aliasesByCanonical = new Map<string, string[]>();
+    for (const [alias, canonical] of canonicalWordIds) {
+      if (!canonical || alias === canonical) continue;
+      const aliases = aliasesByCanonical.get(canonical) ?? [];
+      aliases.push(alias);
+      aliasesByCanonical.set(canonical, aliases);
+    }
+    if (!aliasesByCanonical.size) return [];
+    const states = await this.storage.getBatchMemoryStates(userId, [...aliasesByCanonical.keys()]);
+    const changed: string[] = [];
+    for (const [canonical, aliases] of aliasesByCanonical) {
+      const before = states.get(canonical);
+      if (!before?.fsrsReviews.some(review => review.source === undefined && review.rating === 3)) continue;
+      await this.seedCanonicalWordMemory(userId, canonical, aliases);
+      const after = await this.storage.getMemoryState(userId, canonical);
+      if (JSON.stringify(before) !== JSON.stringify(after)) changed.push(canonical);
+    }
+    return changed;
+  }
+
+  private async readWordDailyEvidence(state: WordMemoryState, timezone: string): Promise<DailyWordEvidence[]> {
+    if (this.storage.getWordDailyEvidence) return this.storage.getWordDailyEvidence(state.userId, state.wordId);
+    const dates = [...new Set(state.fsrsReviews.filter(review => review.localDate || Number.isFinite(Date.parse(review.review)))
+      .map(review => review.localDate
+      ?? getLocalDateInTimeZone(new Date(review.review), timezone)))];
+    return (await Promise.all(dates.map(date => this.storage.getDailyEvidence(state.userId, state.wordId, date))))
+      .filter((day): day is DailyWordEvidence => Boolean(day));
+  }
+
+  /** Run under the store's existing write lock; retain excluded logs for audit. */
+  private async repairPassiveRecallHistory(userId: string, timezone: string, now: Date): Promise<void> {
+    const candidates = (await this.storage.getAllMemoryStates(userId))
+      .filter(state => state.fsrsReviews.some(review => review.source === undefined && review.rating === 3));
+    if (!candidates.length) return;
+    const daysByWord = new Map<string, DailyWordEvidence[]>();
+    if (this.storage.getAllDailyEvidence) {
+      for (const day of await this.storage.getAllDailyEvidence(userId)) {
+        const rows = daysByWord.get(day.wordId) ?? [];
+        rows.push(day);
+        daysByWord.set(day.wordId, rows);
+      }
+    }
+    for (const state of candidates) {
+      const days = this.storage.getAllDailyEvidence ? daysByWord.get(state.wordId) ?? []
+        : await this.readWordDailyEvidence(state, timezone);
+      const updated = repairPassiveReadingRecall(state, days, timezone, now);
+      if (updated !== state) await this.storage.saveMemoryState(updated);
+    }
+  }
+
   /**
    * 记录原始事件
    * 实时更新文章级和每日级词据
    */
   async recordEvent(event: RawWordEvent): Promise<void> {
     if (await appendJournalEvents(this.storage, [event], this.timezone, new Date())) return;
+    await this.storage.prefetchEventBatch?.([event]);
     const { userId, wordId, articleId, localDate } = event;
     const currentState = await this.storage.getMemoryState(userId, wordId);
     const previousRaw = (await this.storage.getRawEventsByDate(userId, wordId, localDate))
@@ -298,6 +524,7 @@ export class MemorySystemV2 {
     }
     events = remaining;
     if (!events.length) return;
+    await this.storage.prefetchEventBatch?.(events);
 
     const preparedEvents: RawWordEvent[] = [];
     const preparedStates = new Map<string, WordMemoryState | null>();
@@ -374,6 +601,7 @@ export class MemorySystemV2 {
    * 在应用启动或用户进入新一天时调用
    */
   async finalizeHistoricalDates(userId: string, userTimezone: string): Promise<void> {
+    await this.repairPassiveRecallHistory(userId, userTimezone, new Date());
     await repairImportedFlashcardStates(this.storage, userId, new Date(),
       (wordId, aliases) => this.seedCanonicalWordMemory(userId, wordId, aliases));
     // Also recovers an interrupted import, even when some days were already marked finalized.
@@ -565,27 +793,7 @@ export class MemorySystemV2 {
     currentTime: Date = new Date(),
     limit?: number
   ): Promise<WordProficiencyView[]> {
-    const allProficiency = await this.getAllWordProficiency(userId, currentTime);
-
-    // 筛选出到期的单词
-    const dueWords = allProficiency.filter((p) => {
-      const nextReviewTime = new Date(p.nextReview);
-      return p.isFlashcardEligible !== false && p.isIntroduced !== true && nextReviewTime <= currentTime;
-    });
-
-    // 按到期时间排序（越早到期的越靠前）
-    dueWords.sort((a, b) => {
-      return (
-        new Date(a.nextReview).getTime() - new Date(b.nextReview).getTime()
-        || a.wordId.localeCompare(b.wordId)
-      );
-    });
-
-    if (limit !== undefined) {
-      return limit > 0 ? dueWords.slice(0, Math.floor(limit)) : [];
-    }
-
-    return dueWords;
+    return selectDueWords(await this.getAllWordProficiency(userId, currentTime), currentTime, limit);
   }
 
   /**
@@ -598,50 +806,8 @@ export class MemorySystemV2 {
     limit?: number,
     userTimezone: string = getSystemTimeZone(),
   ): Promise<WordProficiencyView[]> {
-    const [allProficiency, memoryStates] = await Promise.all([
-      this.getAllWordProficiency(userId, currentTime),
-      this.storage.getAllMemoryStates(userId),
-    ]);
-    const stateByWord = new Map(memoryStates.map((state) => [state.wordId, state]));
-    const today = getLocalDateInTimeZone(currentTime, userTimezone);
-    const confirmationWords = allProficiency.filter((proficiency) => {
-      if (proficiency.isIntroduced !== true) return false;
-      const state = stateByWord.get(proficiency.wordId);
-      if (!state || hasFormalRecallEvidence(state)) return false;
-      const profile = rmeProfileForState(state);
-      const hasEffectiveExposure = profile.successfulExposureCount > 0
-        && profile.exposureHistory.some(
-          (exposure) => exposure.isValid && exposure.quality >= 0.8,
-        );
-      if (!hasEffectiveExposure) return false;
-      const anchorAt = Date.parse(profile.lastEffectiveExposureAt ?? '');
-      const lastDay = profile.lastEffectiveLocalDate
-        ?? (Number.isFinite(anchorAt) ? getLocalDateInTimeZone(new Date(anchorAt), userTimezone) : null);
-      return classifyExposure({ now: currentTime, isRecommendation: true, isConfirmation: true,
-        localDate: today, previousLocalDate: lastDay, userTimezone,
-        lastExposureAt: profile.lastExposureAt, lastEffectiveExposureAt: profile.lastEffectiveExposureAt,
-        firstUnconfirmedExposureAt: profile.firstUnconfirmedExposureAt,
-        // A recent lookup is assistance, so wait a full day before confirming.
-        lastReviewAt: state.lastAssistedAt,
-      }).isValid;
-    });
-
-    confirmationWords.sort((left, right) => {
-      const opportunityDelta = (right.opportunityScore ?? 0) - (left.opportunityScore ?? 0);
-      if (opportunityDelta !== 0) return opportunityDelta;
-      const leftState = stateByWord.get(left.wordId);
-      const rightState = stateByWord.get(right.wordId);
-      const leftAt = Date.parse(rmeProfileForState(leftState ?? null).lastEffectiveExposureAt ?? '');
-      const rightAt = Date.parse(rmeProfileForState(rightState ?? null).lastEffectiveExposureAt ?? '');
-      return (Number.isFinite(leftAt) ? leftAt : Number.POSITIVE_INFINITY)
-        - (Number.isFinite(rightAt) ? rightAt : Number.POSITIVE_INFINITY)
-        || left.wordId.localeCompare(right.wordId);
-    });
-
-    if (limit !== undefined) {
-      return limit > 0 ? confirmationWords.slice(0, Math.floor(limit)) : [];
-    }
-    return confirmationWords;
+    const snapshot = await this.getLearningSnapshot(userId, currentTime, userTimezone);
+    return limitWordViews(snapshot.snapshot.confirmationWords, limit);
   }
 
   /**
@@ -651,41 +817,6 @@ export class MemorySystemV2 {
     userId: string,
     currentTime: Date = new Date(),
   ): Promise<WordProficiencyStats> {
-    const allProficiency = (await this.getAllWordProficiency(userId, currentTime))
-      .filter(word => word.isFlashcardEligible !== false);
-    const now = currentTime;
-
-    const byLevel: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
-    let totalScore = 0;
-    let introducedCount = 0;
-    let learningCount = 0;
-    let masteredCount = 0;
-    let dueCount = 0;
-
-    for (const p of allProficiency) {
-      byLevel[p.level]++;
-      totalScore += p.memoryScore;
-      if (p.isIntroduced) {
-        introducedCount++;
-      } else if (p.level === 4) {
-        masteredCount++;
-      } else {
-        learningCount++;
-      }
-
-      if (!p.isIntroduced && new Date(p.nextReview) <= now) {
-        dueCount++;
-      }
-    }
-
-    return {
-      total: allProficiency.length,
-      byLevel,
-      averageScore: allProficiency.length > 0 ? totalScore / allProficiency.length : 0,
-      introducedCount,
-      learningCount,
-      masteredCount,
-      dueCount,
-    };
+    return summarizeProficiency(await this.getAllWordProficiency(userId, currentTime), currentTime);
   }
 }

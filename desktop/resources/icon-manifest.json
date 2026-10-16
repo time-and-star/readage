@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "name": "ReadAge",
+  "source": "assets/brand/readge-icon.png",
+  "sourceSha256": "a5468f4a4621102795c354900d270d31b8c8eadb347ed8f803300d90c9e01958",
+  "sourceNote": "Shared ReadAge logo with exterior background removed for transparent icons across desktop, web and mobile.",
+  "ico": {
+    "file": "readge.ico",
+    "bytes": 93549,
+    "sha256": "eb72acef1e316ee1e4c936b03bdeeac50ca3fabbca6204e5ac8887d9145095ba"
+  },
+  "window": {
+    "file": "readge.png",
+    "bytes": 64901,
+    "sha256": "2ece354280f40998e17efb605949a90c2eed53e72f3db29c8742453b794e8684"
+  },
+  "frames": [
+    {
+      "size": 16,
+      "source": "desktop/resources/readge-icon-16.png",
+      "bytes": 859,
+      "sha256": "3c4cc759be16b1e198ccec7e12081cc81c2489015bfe87f87b740710b878d957"
+    },
+    {
+      "size": 32,
+      "source": "desktop/resources/readge-icon-32.png",
+      "bytes": 2477,
+      "sha256": "efee266c8a40738e967218e4b69d2a0eb4a493feb985b44f340720550bd63ae5"
+    },
+    {
+      "size": 48,
+      "source": "desktop/resources/readge-icon-48.png",
+      "bytes": 4539,
+      "sha256": "41950e602bf33f55b0626386287920fe73b46db4e0527f2592029a00c3a4f005"
+    },
+    {
+      "size": 128,
+      "source": "desktop/resources/readge-icon-128.png",
+      "bytes": 20687,
+      "sha256": "2b42ec2cb12f731dca513e0073b1b88feb5c720801c49d172862d716efdbd73d"
+    },
+    {
+      "size": 256,
+      "source": "desktop/resources/readge-icon-256.png",
+      "bytes": 64901,
+      "sha256": "2ece354280f40998e17efb605949a90c2eed53e72f3db29c8742453b794e8684"
+    }
+  ]
+}

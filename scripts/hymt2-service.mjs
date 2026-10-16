@@ -7,7 +7,9 @@ import dotenv from 'dotenv';
 import { portOccupied, stopChild } from './local-process.mjs';
 
 const filename = fileURLToPath(import.meta.url);
-const root = path.resolve(path.dirname(filename), '..');
+const root = process.env.READGE_DATA_ROOT?.trim()
+  ? path.resolve(process.env.READGE_DATA_ROOT)
+  : path.resolve(path.dirname(filename), '..');
 export const HYMT2_MODEL_ALIAS = 'readage-hymt2-1.8b';
 export const HYMT2_DATA_DIR = path.join(root, 'local-data', 'translation');
 

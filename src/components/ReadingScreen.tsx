@@ -1,4 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { getArticleLanguage, isEnglishArticle } from '../lib/articleLanguage';
+import { createDictionaryClient } from '../../packages/dictionary/client';
+import type { LookupResult } from '../../packages/dictionary/contracts';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
@@ -15,6 +18,7 @@ import {
 } from 'lucide-react';
 import {
   Article,
+  ArticleSource,
   GrammarExplanation,
   TranslationResult,
   StructuredAssessResult,
@@ -44,7 +48,7 @@ import {
 } from '../lib/readingDwell';
 import { getArticleLearningTerms, getArticleReviewWords } from '../lib/readingLearningTerms';
 import { postTutor } from '../lib/tutorClient';
-import { ON_DEMAND_TRANSLATION, translateSelection } from '../lib/localTranslation';
+import { ON_DEMAND_TRANSLATION, translateSelection, translatePassage } from '../lib/localTranslation';
 import { ARTICLE_DISCUSSION_ENABLED } from '../lib/readingFeatures';
 import { SelectionTranslationNote } from './SelectionTranslationNote';
 import { ReadingSelectionToolbar } from './ReadingSelectionToolbar';
@@ -52,7 +56,7 @@ import { ReadingTouchSelection } from './ReadingTouchSelection';
 import { useSpeech } from '../lib/speech/useSpeech';
 import type { SpeechTarget } from '../lib/speech';
 import { speechWords } from '../lib/speech/wordTiming';
-import { buildReadingSpeech } from '../lib/readingSpeech';
+import { buildReadingSpeech, createReadingWordSpeechTarget } from '../lib/readingSpeech';
 import { SpeechWordHighlighter } from './SpeechWordHighlighter';
 import { SpeechControls, SpeechFeedback } from './SpeechControls';
 import type { ImportJob } from '../lib/articleImport';
@@ -91,9 +95,18 @@ import {
   toVocabSnapshot,
 } from '../lib/vocabTelemetry';
 
+const languageDictionary = createDictionaryClient();
 let recommendationNavigationHintShown = false;
 
 const REWRITE_CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const;
+const ARTICLE_SOURCE_LABELS: Record<ArticleSource, string> = {
+  user_input: '导入内容',
+  library: '阅读库',
+  ai_generated: 'AI 生成',
+  oral_session: '口语练习',
+  magazine: '外刊',
+  level_rewrite: '按等级改写',
+};
 
 interface ReadingTextLocation { articleId: string; paragraphIndex: number; endOffset: number }
 interface ReadingSelectionAction {
@@ -193,7 +206,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   trackedLemmas = [],
   onChatMessagesChange,
 }) => {
-  const speech = useSpeech();
+  const language = getArticleLanguage(article);
+  const english = isEnglishArticle(article);
+  const discussionEnabled = english && ARTICLE_DISCUSSION_ENABLED;
+  const speech = useSpeech(english ? undefined : language);
+  const wordCardSpeechOwnedRef = useRef(false);
   const readingSpeechSources = useMemo(() => new Map([article, ...(continuousArticles || [])]
     .map(item => [item.id, buildReadingSpeech(item)] as const)), [article, continuousArticles]);
   useEffect(() => () => speech.stop(), [article.id, speech.stop]);
@@ -203,6 +220,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   const [isExplaining, setIsExplaining] = useState(false);
   const [grammarResult, setGrammarResult] = useState<GrammarExplanation | null>(null);
+  const [languageLookupResult, setLanguageLookupResult] = useState<LookupResult | null>(null);
   const [wordCardOpen, setWordCardOpen] = useState(false);
   const [wordCardError, setWordCardError] = useState<string | null>(null);
   const [lookupAnchor, setLookupAnchor] = useState<LookupAnchor | null>(null);
@@ -210,6 +228,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const retryLookupRef = useRef<() => void>(() => {});
   const retryRecordRef = useRef<(() => void) | null>(null);
   const lookupLocationRef = useRef<ReadingTextLocation | null>(null);
+  const lookupSpeechTargetRef = useRef<SpeechTarget | undefined>(undefined);
   const [selectionAction, setSelectionAction] = useState<ReadingSelectionAction | null>(null);
   const speechPreparationText = selectionAction?.text || (wordCardOpen && selectedText
     ? grammarResult ? getCompactWordCard(grammarResult, selectedText).word : selectedText
@@ -224,7 +243,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     const dismiss = (event: PointerEvent) => {
       if (!(event.target as Element).closest('.reading-selection-actions, [data-reading-touch-handle]')) setSelectionAction(null);
     };
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setSelectionAction(null); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); setSelectionAction(null); } };
     const onScroll = () => { if (!selectionAction.touchSelection) setSelectionAction(null); };
     document.addEventListener('pointerdown', dismiss);
     document.addEventListener('keydown', onKey);
@@ -260,7 +279,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         && window.getSelection()?.isCollapsed !== false) closeTranslation();
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeTranslation();
+      if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); closeTranslation(); }
     };
     document.addEventListener('click', dismiss, true);
     document.addEventListener('keydown', onKey);
@@ -295,14 +314,17 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   // Restore chat when switching articles / session
   useEffect(() => {
     setChatMessages(initialChatMessages);
+    wordCardAbortRef.current?.abort();
+    wordCardAbortRef.current = null;
     setShowChatPanel(false);
     setIsComposerExpanded(false);
     setWordCardOpen(false);
     setGrammarResult(null);
+    setLanguageLookupResult(null);
     setIsExplaining(false);
     // Real vocab particle session for this article (due/tracked lemmas if known)
     const dueWords = (trackedLemmas || []).slice(0, 40).map((wordId) => toVocabSnapshot(wordId, null));
-    startVocabSession({ articleId: article.id, dueWords });
+    if (english) startVocabSession({ articleId: article.id, dueWords });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [article.id]);
 
@@ -311,6 +333,12 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   }, [isComposerExpanded]);
 
   const [showMenu, setShowMenu] = useState(false);
+  useEffect(() => {
+    if (!showMenu) return;
+    const dismiss = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); setShowMenu(false); } };
+    document.addEventListener('keydown', dismiss);
+    return () => document.removeEventListener('keydown', dismiss);
+  }, [showMenu]);
   const [fontSize, setFontSize] = useState<'normal' | 'large' | 'xlarge'>('normal');
   /** Show Chinese paragraph translations produced on import. */
   const [showParagraphTranslations, setShowParagraphTranslations] = useState(false);
@@ -363,7 +391,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const exposureActivityChangedRef = useRef<(() => void) | null>(null);
   const exposureFlushRef = useRef<((articleId?: string) => Promise<void>) | null>(null);
   const readingOverlayOpen = wordCardOpen || isExplaining
-    || (ARTICLE_DISCUSSION_ENABLED && (showChatPanel || isComposerExpanded))
+    || (discussionEnabled && (showChatPanel || isComposerExpanded))
     || showMenu || showRewriteLevels || showLevelDetail
     || activeVerificationArticleIds.size > 0;
   const readingOverlayOpenRef = useRef(readingOverlayOpen);
@@ -487,7 +515,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         articleId,
         paragraphIndex,
         text,
-        units: extractLearningUnits(text, getArticleHighlightTerms(readingArticle)),
+        units: isEnglishArticle(readingArticle ?? primary)
+          ? extractLearningUnits(text, getArticleHighlightTerms(readingArticle)) : [],
         minimumDwellTimeMs: getMinimumExposureDwellMs(text),
         expectedDwellTimeMs: getExpectedReadingDwellMs(text),
         exposureOccurredAt: undefined as string | undefined,
@@ -558,6 +587,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     const finishSingleReading = () => {
       if (!isActive || hasAdvancedRef.current || mode === 'recommendation-feed') return;
       hasAdvancedRef.current = true;
+      if (!isEnglishArticle(article)) {
+        onReadingCompleteRef.current?.();
+        return;
+      }
       const exposed = [...(exposedLemmasByArticleRef.current.get(article.id) ?? new Set<string>())];
       // Completion bookkeeping does not stop measuring paragraphs still being read.
       void flushParagraphs(article.id, false).then(() => snapshotWordsRef.current(exposed)).then((words) => {
@@ -871,35 +904,41 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     };
   }, [article.id, mode, continuousArticles]);
 
-  const highlightTerms = getArticleHighlightTerms(article);
-  const reviewWords = getArticleReviewWords(article, reviewWordCandidates);
-  const currentLastParagraphIndex = article.content.reduce(
+  const reviewWords = useMemo(() => getArticleReviewWords(article, reviewWordCandidates), [article, reviewWordCandidates]);
+  const currentLastParagraphIndex = useMemo(() => article.content.reduce(
     (lastIndex, paragraph, index) => {
       const kind = classifyArticleParagraph(paragraph, article.title);
       return kind === 'furniture' || kind === 'title' ? lastIndex : index;
     },
     -1,
-  );
-  const continuationArticleList = mode === 'recommendation-feed'
+  ), [article.content, article.title]);
+  const continuationArticleList = useMemo(() => mode === 'recommendation-feed'
     ? (continuousArticles || []).filter((candidate) => candidate.id !== article.id)
-    : [];
-  const articleMedia = useArticleMedia([article, ...continuationArticleList]);
+    : [], [mode, continuousArticles, article.id]);
+  const mediaArticles = useMemo(() => [article, ...continuationArticleList], [article, continuationArticleList]);
+  const articleMedia = useArticleMedia(mediaArticles);
 
   const closeWordCard = useCallback(() => {
+    if (wordCardSpeechOwnedRef.current) speech.stop();
+    wordCardSpeechOwnedRef.current = false;
     wordCardAbortRef.current?.abort();
     wordCardAbortRef.current = null;
     setWordCardOpen(false);
     setIsExplaining(false);
     setGrammarResult(null);
+    setLanguageLookupResult(null);
     setWordCardError(null);
-  }, []);
+    lookupSpeechTargetRef.current = undefined;
+  }, [speech.stop]);
 
   const openWordCard = useCallback(
     async (wordOrPhrase: string, contextSentence = '', contextArticle: Article = article,
-      onResolved?: (result: GrammarExplanation) => Promise<void>, retryState?: LookupEvidenceState) => {
-      const request = createWordCardRequest(wordOrPhrase, contextSentence);
+      onResolved?: (result: GrammarExplanation) => Promise<void>, retryState?: LookupEvidenceState, speechTarget?: SpeechTarget) => {
+      const request = isEnglishArticle(contextArticle) ? createWordCardRequest(wordOrPhrase, contextSentence)
+        : wordOrPhrase.trim() ? { selectedText: wordOrPhrase.trim(), contextSentence } : null;
       if (!request) return;
       const evidence = retryState ?? { saved: false };
+      lookupSpeechTargetRef.current = speechTarget;
 
       wordCardAbortRef.current?.abort();
       const controller = new AbortController();
@@ -910,12 +949,19 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       setWordCardOpen(true);
       setIsExplaining(true);
       setGrammarResult(null);
+      setLanguageLookupResult(null);
       setWordCardError(null);
       setLookupRecordStatus(null);
       retryRecordRef.current = null;
-      retryLookupRef.current = () => { void openWordCard(wordOrPhrase, contextSentence, contextArticle, onResolved, evidence); };
+      retryLookupRef.current = () => { void openWordCard(wordOrPhrase, contextSentence, contextArticle, onResolved, evidence, speechTarget); };
 
       try {
+        if (!isEnglishArticle(contextArticle)) {
+          const result = await languageDictionary.lookup({ text: request.selectedText, language: getArticleLanguage(contextArticle),
+            context: request.contextSentence.slice(0, 32_768), preferredDefinitionLanguages: ['zh', getArticleLanguage(contextArticle), 'en'] }, controller.signal);
+          if (!controller.signal.aborted) setLanguageLookupResult(result);
+          return;
+        }
         const result = await fetchWordCard(request, {
           articleId: contextArticle.id,
           signal: controller.signal,
@@ -977,13 +1023,23 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     e.stopPropagation();
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
-    const request = createWordCardRequest(word, paragraph);
+    const request = isEnglishArticle(readingArticle) ? createWordCardRequest(word, paragraph)
+      : word.trim() ? { selectedText: word.trim() } : null;
     if (!request) return;
     const cleanWord = request.selectedText;
 
     // Memory V2.2: record clicks for any article in the continuous stream
     const paragraphElement = (e.target as HTMLElement).closest('[data-reading-paragraph], [data-reading-context]');
     lookupLocationRef.current = getReadingTextLocation(e.currentTarget as HTMLElement);
+    const clickedElement = e.currentTarget as HTMLElement;
+    const speechTarget = createReadingWordSpeechTarget(readingArticle.id, clickedElement.dataset.speechStart, clickedElement.dataset.speechEnd);
+    setSelectionAction(null);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setLookupAnchor({ left: rect.left, top: rect.top, bottom: rect.bottom });
+    if (!isEnglishArticle(readingArticle)) {
+      void openWordCard(cleanWord, paragraph, readingArticle, undefined, undefined, speechTarget);
+      return;
+    }
     // A word lookup records the clicked word even inside an article learning phrase.
     const learningUnit = findLearningUnitAtTokenIndex(
       paragraph,
@@ -992,14 +1048,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     );
     // Title lookups have their own occurrence; they must not collide with body paragraph 0.
     const paragraphIndex = Number(paragraphElement?.getAttribute('data-reading-paragraph') ?? -1);
-    setSelectionAction(null);
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setLookupAnchor({ left: rect.left, top: rect.top, bottom: rect.bottom });
     void openWordCard(cleanWord, paragraph, readingArticle, async result => {
       const lemma = await resolveDictionaryLearningWordId(cleanWord, result.learningTermRef);
       if (learningUnit) await recordWordClick(learningUnit, paragraphIndex, readingArticle.id, { contextText: paragraph.slice(0, 2_000) }, lemma);
       onWordClick?.(lemma, readingArticle.id);
-    });
+    }, undefined, speechTarget);
   };
 
   const copyTextToClipboard = async (text: string): Promise<boolean> => {
@@ -1044,7 +1097,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   };
 
   const quoteSelectedText = (text: string) => {
-    if (!ARTICLE_DISCUSSION_ENABLED) return;
+    if (!discussionEnabled) return;
     setUserInput((currentInput) => formatSelectionQuote(text, currentInput));
     setShowChatPanel(true);
     setIsComposerExpanded(true);
@@ -1145,7 +1198,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     setTranslationError(null);
 
     try {
-      const result = await translateSelection(text, { signal: controller.signal });
+      const sourceArticle = location.articleId === article.id ? article
+        : continuousArticles?.find(item => item.id === location.articleId) ?? article;
+      const translate = isEnglishArticle(sourceArticle) ? translateSelection : translatePassage;
+      const result = await translate(text, { signal: controller.signal,
+        ...(isEnglishArticle(sourceArticle) ? {} : { sourceLanguage: getArticleLanguage(sourceArticle) }) });
       if (!controller.signal.aborted && translationAbortRef.current === controller) setTranslationResult(result);
     } catch (error) {
       if (!controller.signal.aborted && translationAbortRef.current === controller) {
@@ -1165,7 +1222,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   const handleSendQuestion = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!ARTICLE_DISCUSSION_ENABLED) return;
+    if (!discussionEnabled) return;
     if (!userInput.trim() || isSending) return;
 
     const query = userInput.trim();
@@ -1228,10 +1285,17 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   };
 
   const handleSpeakText = (text: string, target?: SpeechTarget) => {
-    if (!target) {
-      const source = readingSpeechSources.get(article.id);
-      const paragraph = source ? [...source.paragraphs.values()].find(item => item.text === selectedContext && item.text.includes(text)) : undefined;
-      if (paragraph) target = { articleId: article.id, startOffset: paragraph.start + paragraph.text.indexOf(text) };
+    wordCardSpeechOwnedRef.current = false;
+    if (!target && wordCardOpen) {
+      const headwords = languageLookupResult?.sources.flatMap(source => source.matches.map(match => match.entry.headword)) ?? [];
+      const words = [selectedText, grammarResult?.wordOrPhrase,
+        grammarResult ? getCompactWordCard(grammarResult, selectedText).word : undefined, ...headwords];
+      if (words.some(word => word && word.trim() === text.trim())) target = lookupSpeechTargetRef.current;
+      if (!target && text === selectedContext && lookupLocationRef.current) {
+        const location = lookupLocationRef.current;
+        const paragraph = readingSpeechSources.get(location.articleId)?.paragraphs.get(location.paragraphIndex);
+        if (paragraph?.text === text) target = { articleId: location.articleId, startOffset: paragraph.start };
+      }
     }
     speech.speak(text, target);
   };
@@ -1299,7 +1363,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       );
     });
     const note = renderSelectionTranslation(readingArticle.id, paragraphIndex ?? -1);
-    const tokens = tokenizeReadingParagraph(paragraph);
+    const tokens = tokenizeReadingParagraph(paragraph, getArticleLanguage(readingArticle));
     const [before, after] = note ? splitReadingTokensForAnnotation(tokens, translationLocation!.endOffset) : [tokens, []];
     return <>{renderTokens(before)}{note}{renderTokens(after)}</>;
   };
@@ -1312,7 +1376,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   };
 
   const canStartSwipe = (target: EventTarget | null): boolean => {
-    if (mode !== 'recommendation-feed' || shouldIgnoreSwipeTarget(target)) return false;
+    if (mode !== 'recommendation-feed' || readingOverlayOpenRef.current || shouldIgnoreSwipeTarget(target)) return false;
     const selection = window.getSelection();
     return !selection || selection.isCollapsed;
   };
@@ -1335,7 +1399,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   /** Skip to the next recommended article (left-swipe / desktop right-click). */
   const advanceToNextRecommendedArticle = () => {
-    if (mode !== 'recommendation-feed') return;
+    if (mode !== 'recommendation-feed' || readingOverlayOpenRef.current) return;
     const articleId = getCurrentContinuousArticleId();
     if (completedContinuousArticleIdsRef.current.has(articleId)) return;
     const selection = window.getSelection();
@@ -1433,6 +1497,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   return (
     <div
+      lang={language}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerCancel}
@@ -1451,7 +1516,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         </div>
       )}
 
-      <header className="app-page-header sticky top-0 z-20 bg-[#F8F6F0]/90 px-4 backdrop-blur-md safe-pt sm:px-6">
+      <header className="app-page-header reading-page-header sticky top-0 z-20 bg-[#F8F6F0]/90 px-4 backdrop-blur-md safe-pt sm:px-6">
         <div className="app-page-header__inner mx-auto grid h-16 w-full max-w-[1040px] grid-cols-[auto_minmax(0,1fr)_auto] items-center sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
           <div className="flex min-w-11 items-center gap-3">
           <button
@@ -1490,7 +1555,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               {(article.levelRating?.level || article.level) && article.source && (
                 <span> · </span>
               )}
-              {article.source && <span>{article.source}</span>}
+              {article.source && <span>{ARTICLE_SOURCE_LABELS[article.source]}</span>}
               </p>
             )}
             </div>
@@ -1510,7 +1575,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             </button>
 
             {showMenu && (
-              <div className="absolute right-0 mt-2 w-[min(16rem,calc(100vw-1.5rem))] bg-[#FAF8F3] border border-[#E0D9CB] rounded-2xl shadow-xl p-2 z-30 text-sm text-[#3D372E]">
+              <div className="reading-options-menu absolute right-0 mt-2 w-[min(16rem,calc(100vw-1.5rem))] bg-[#FAF8F3] border border-[#E0D9CB] rounded-2xl shadow-xl p-2 z-30 text-sm text-[#3D372E]">
               <p className="px-3 pb-2 pt-1 text-xs font-medium text-[#7B7267]">阅读字号</p>
               <div className="flex gap-1 p-1 mb-2 bg-[#EFECE3] rounded-lg">
                 {(['normal', 'large', 'xlarge'] as const).map((size) => (
@@ -1531,7 +1596,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 ))}
               </div>
 
-              <SpeechControls preferences={speech.preferences} onChange={speech.setPreferences} />
+              <SpeechControls preferences={speech.preferences} onChange={speech.setPreferences} language={english ? undefined : language} />
               <button
                 type="button"
                 onClick={() => {
@@ -1562,7 +1627,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 </button>
               )}
 
-              {onRewriteAtLevel && (
+              {english && onRewriteAtLevel && (
                 <div className="mt-1 border-t border-[#E7E2D5] pt-1">
                   <button
                     type="button"
@@ -1652,7 +1717,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 </button>
               )}
               {(article.levelRating?.level || article.level) && article.source && <span> · </span>}
-              {article.source && <span>{article.source}</span>}
+              {article.source && <span>{ARTICLE_SOURCE_LABELS[article.source]}</span>}
             </p>
           )}
         </header>
@@ -1852,20 +1917,21 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               </div>
             );
             })}
-            <ReadingVerificationPause key={article.id} articleId={article.id}
+            {english && <ReadingVerificationPause key={article.id} articleId={article.id}
               excludedContextTexts={article.content}
               articleTitle={article.title} readingComplete={verificationReadyArticleIds.has(article.id)}
               level={article.levelRating?.level || article.level || preferredCefrLevel}
-              onActiveChange={handleVerificationActiveChange} />
+              onActiveChange={handleVerificationActiveChange} />}
           </section>
 
-          {onDifficultyFeedback && <ReadingDifficultyControl value={difficultyFeedback} onChange={onDifficultyFeedback} />}
+          {english && onDifficultyFeedback && <ReadingDifficultyControl value={difficultyFeedback} onChange={onDifficultyFeedback} />}
           {readingContinuation}
           {onNextArticle && <button data-reading-interaction="true" className="mb-4 min-h-11 rounded-xl border border-stone-300 px-4 font-sans text-sm" onClick={() => {
             window.getSelection()?.removeAllRanges();
             if (mode === 'recommendation-feed') advanceToNextRecommendedArticle();
             else onNextArticle();
           }}>{nextArticleLabel}</button>}
+          {article.importBatchId && !onNextArticle && <p role="status" className="mb-4 font-sans text-sm text-stone-600">本文件末章，已到最后一篇。</p>}
           {continuationArticleList.map((nextArticle) => {
             const nextLastParagraphIndex = nextArticle.content.reduce(
               (lastIndex, paragraph, index) => {
@@ -1877,6 +1943,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             return (
               <section
                 key={nextArticle.id}
+                lang={getArticleLanguage(nextArticle)}
                 data-reading-article-section={nextArticle.id}
                 data-reading-article-id={nextArticle.id}
                 className="mt-12 border-t border-[#E7E2D5] pt-10"
@@ -1933,11 +2000,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     );
                   })}
                 </div>
-                <ReadingVerificationPause key={nextArticle.id} articleId={nextArticle.id}
+                {isEnglishArticle(nextArticle) && <ReadingVerificationPause key={nextArticle.id} articleId={nextArticle.id}
                   excludedContextTexts={nextArticle.content}
                   articleTitle={nextArticle.title} readingComplete={verificationReadyArticleIds.has(nextArticle.id)}
                   level={nextArticle.levelRating?.level || nextArticle.level || preferredCefrLevel}
-                  onActiveChange={handleVerificationActiveChange} />
+                  onActiveChange={handleVerificationActiveChange} />}
               </section>
             );
           })}
@@ -1952,7 +2019,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           )}
         </div>
 
-        {ARTICLE_DISCUSSION_ENABLED && !isComposerExpanded && (
+        {discussionEnabled && !isComposerExpanded && (
           <div className="mt-10 flex justify-center sm:hidden">
             <button
               type="button"
@@ -1981,8 +2048,15 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         onSelectionStart={beginTouchSelection} onSelectionChange={handleTextSelection} onGestureEnd={finishTouchSelection} />
       {selectionAction && <ReadingSelectionToolbar anchor={selectionAction.anchor}
         touchSelection={selectionAction.touchSelection}
+        allowDiscussion={english}
         onTranslate={() => actOnTextSelection(current => { void handleTranslate(current.text, current.location); })}
-        onExplain={() => actOnTextSelection(current => { setLookupAnchor(current.anchor); void openWordCard(current.text, current.context); })}
+        onLookup={english ? undefined : () => actOnTextSelection(current => {
+          lookupLocationRef.current = current.location;
+          setLookupAnchor(current.anchor);
+          const sourceArticle = continuousArticles?.find(item => item.id === current.location.articleId) ?? article;
+          void openWordCard(current.text, current.context, sourceArticle, undefined, undefined, current.speechTarget);
+        })}
+        onExplain={() => actOnTextSelection(current => { setLookupAnchor(current.anchor); void openWordCard(current.text, current.context, article, undefined, undefined, current.speechTarget); })}
         onDiscuss={() => actOnTextSelection(current => quoteSelectedText(current.text))}
         onCopy={() => actOnTextSelection(current => { void copyTextToClipboard(current.text).then(ok => flashCopyHint(ok ? '已复制' : '复制失败')); })}
         onSpeak={() => actOnTextSelection(current => handleSpeakText(current.text, current.speechTarget))} />}
@@ -1995,9 +2069,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         onRetryRecord={retryRecordRef.current ?? undefined}
         loading={isExplaining}
         result={grammarResult}
+        neutralResult={languageLookupResult}
         selectedText={selectedText}
         onClose={closeWordCard}
-        onSpeak={handleSpeakText}
+        onSpeak={text => { handleSpeakText(text); wordCardSpeechOwnedRef.current = true; }}
+        onStopSpeech={() => { speech.stop(); wordCardSpeechOwnedRef.current = false; }}
         onLookupRelated={handleExplainWord}
         onTranslate={() => {
           void handleTranslate();
@@ -2014,7 +2090,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       {/* Discussion UI is portaled to document.body so reading-root transform/opacity
           cannot clip or scroll it off-screen (fixed descendants of transformed
           ancestors are positioned against that ancestor, not the viewport). */}
-      {ARTICLE_DISCUSSION_ENABLED && showChatPanel && !isComposerExpanded && createPortal(
+      {discussionEnabled && showChatPanel && !isComposerExpanded && createPortal(
         <div
           data-reading-interaction="true"
           className="fixed inset-x-3 bottom-[max(5.5rem,calc(4.5rem+env(safe-area-inset-bottom,0px)))] z-[70] flex max-h-[min(50dvh,24rem)] flex-col rounded-2xl border border-[#E0DBCF] bg-[#FAF8F3] p-4 shadow-2xl sm:inset-x-auto sm:bottom-24 sm:right-8 sm:left-auto sm:w-96 sm:max-h-96"
@@ -2061,7 +2137,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         document.body,
       )}
 
-      {ARTICLE_DISCUSSION_ENABLED && (isComposerExpanded
+      {discussionEnabled && (isComposerExpanded
         ? createPortal(
           <footer
             data-reading-interaction="true"
@@ -2176,5 +2252,4 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     </div>
   );
 };
-
 

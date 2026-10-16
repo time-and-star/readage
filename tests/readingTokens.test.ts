@@ -107,3 +107,33 @@ test('links keep navigation behavior and surrounding prose keeps the same click/
   assert.equal(findLearningUnitAtTokenIndex(paragraph, [], 1), null);
   assert.equal(findWordIndexInParagraph(paragraph, 'reflect'), 4);
 });
+
+test('repeated reading tokenization preserves language, link targets and independent mutable results', () => {
+  for (const [language, paragraph] of [
+    ['en-US', 'We can’t alter [the source](https://example.com/en).'],
+    ['fr-FR', 'L’été arrive. [la source](https://example.com/fr)'],
+    ['ja-JP', '日本語を読みます。[出典](https://example.com/ja)'],
+  ]) {
+    const first = tokenizeReadingParagraph(paragraph, language);
+    const expected = structuredClone(first);
+    const second = tokenizeReadingParagraph(paragraph, language);
+    assert.deepEqual(second, expected);
+    assert.notEqual(first, second);
+    assert.notEqual(first[0], second[0]);
+    first[0].value = 'changed';
+    first.splice(1);
+    const link = second.find(token => token.type === 'link');
+    if (link?.type === 'link') link.href = 'https://wrong.example';
+    assert.deepEqual(tokenizeReadingParagraph(paragraph, language), expected);
+    assert.deepEqual(tokenizeReadingParagraph(paragraph, language.split('-')[0]), expected);
+  }
+  const paragraph = '日本語とfrançais';
+  assert.notDeepEqual(tokenizeReadingParagraph(paragraph, 'ja'), tokenizeReadingParagraph(paragraph, 'en'));
+});
+
+test('reading tokenization remains correct after many articles displace cached paragraphs', () => {
+  const paragraph = 'Readers revisit [an article](https://example.com/old) over time.';
+  const expected = tokenizeReadingParagraph(paragraph);
+  for (let index = 0; index < 600; index++) tokenizeReadingParagraph(`Article ${index}: a different paragraph.`);
+  assert.deepEqual(tokenizeReadingParagraph(paragraph), expected);
+});

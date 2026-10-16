@@ -6,6 +6,7 @@ import {
 } from './config';
 import type { MagazineSourceMeta } from '../../src/types';
 import type { GitHubContentItem, RemoteIssueCandidate } from './github';
+import { magazineFetch } from './network';
 
 export interface ParsedNewsInLevelsArticle {
   title: string;
@@ -156,7 +157,7 @@ export async function discoverNewsInLevelsIssues(
     throw new Error(`Source ${source.id} is not a News in Levels source`);
   }
 
-  const fetchImpl = options?.fetchImpl ?? fetch;
+  const fetchImpl = options?.fetchImpl ?? magazineFetch;
   const sourceUrl = validateNewsInLevelsUrl(source.sourceUrl);
   const level = sourceLevel(source);
   const indexHtml = await fetchNewsInLevelsPage(sourceUrl.href, fetchImpl);

@@ -65,6 +65,30 @@ test('lists article-level CEFR matches using the official rating before the lega
 
   const b1 = await loadCatalogArticlePage({ level: 'B1', limit: 10 }, root);
   assert.deepEqual(b1.articles.map((article) => article.id), ['legacy']);
+
+  await writeArticle(root, 'official', {
+    id: 'official', title: 'Updated science policy', description: 'A revised article', date: '2026.07.25',
+    level: 'B2', levelRating: { level: 'B2', difficultyScore: 55, summary: 'Revised' },
+    magazineSourceId: 'atlantic', magazineIssueId: 'atlantic:2026.07.25', content: ['Revised body has five words'],
+  });
+  const updated = await loadCatalogArticlePage({ level: 'B2', query: 'updated', limit: 10 }, root);
+  assert.deepEqual(updated.articles.map(article => [article.id, article.wordCount]), [['official', 5]],
+    'an enriched or overwritten article invalidates its cached catalog row');
+  assert.equal((await loadCatalogArticlePage({ level: 'C1', query: 'climate', limit: 10 }, root)).total, 1);
+
+  await fs.unlink(path.join(root, 'articles_by_id', 'older.json'));
+  await writeArticle(root, 'new', { id: 'new', title: 'New climate report', description: 'Fresh import',
+    date: '2026.07.26', level: 'C1', magazineSourceId: 'atlantic',
+    magazineIssueId: 'atlantic:2026.07.25', content: ['New body text'],
+  });
+  assert.deepEqual((await loadCatalogArticlePage({ level: 'C1', limit: 10 }, root)).articles.map(article => article.id), ['new'],
+    'new and removed files are reflected without restarting the server');
+
+  const index = JSON.parse(await fs.readFile(path.join(root, 'index.json'), 'utf8'));
+  index.sources[0].displayName = 'Updated publication';
+  await fs.writeFile(path.join(root, 'index.json'), JSON.stringify(index), 'utf8');
+  assert.equal((await loadCatalogArticlePage({ level: 'C1', limit: 10 }, root)).articles[0].sourceName, 'Updated publication',
+    'source labels are always resolved against the current catalog');
 });
 
 test('validates article catalog query parameters at the API boundary', () => {

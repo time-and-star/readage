@@ -16,6 +16,8 @@ import {
 } from '../userReadingProfile';
 import { normalizeCefrBand, type CefrBand } from '../articleLevel';
 import { toLemma } from '../proficiency';
+import { DEFAULT_ARTICLE_TARGET_POOL_SIZE } from '../recommendationPolicy';
+import { isNonStoryArticleTitle } from '../articleEligibility';
 
 export interface Article {
   id: string;
@@ -59,7 +61,8 @@ export function getArticleWordCount(
 }
 
 export function isRecommendationArticleWithinBounds(
-  article: Pick<Article, 'content' | 'estimatedWordCount' | 'levelRating' | 'level' | 'rewriteTargetLevel'>,
+  article: Pick<Article, 'content' | 'estimatedWordCount' | 'levelRating' | 'level' | 'rewriteTargetLevel'>
+    & Partial<Pick<Article, 'title'>>,
   profile: CefrRecommendationProfile,
   options: {
     mode?: RecommendationMode;
@@ -67,6 +70,7 @@ export function isRecommendationArticleWithinBounds(
     allowedBands?: readonly CefrBand[];
   } = {},
 ): boolean {
+  if (isNonStoryArticleTitle(article.title)) return false;
   const mode = options.mode ?? 'normal';
   const wordCount = getArticleWordCount(article);
   if (wordCount !== null && wordCount > RECOMMENDATION_WORD_COUNT_LIMITS[mode]) {
@@ -94,6 +98,10 @@ export interface RecommendationScore {
   score: number;
   /** 需要复习的单词�?*/
   dueWordsCount: number;
+  /** Distinct requested review targets found in this article. */
+  reviewWordsCount?: number;
+  /** Distinct pending learning/review words found in this article. */
+  learningTargetCount?: number;
   /** L0-L2 的单词数（学习区�?*/
   learningZoneCount: number;
   /** L3-L4 的单词数（巩固区�?*/
@@ -188,17 +196,33 @@ export function isGlobalColdStart(
   return proficiencyMap.size < Math.max(1, params.minLearningZoneWords);
 }
 
-/** Fraction of article lemmas that already have a proficiency record. */
+/** Resolve each normalized article word once, retaining legacy raw-key lookups. */
+function distinctArticleWordProficiencies(
+  lemmas: readonly string[],
+  proficiencyMap: Map<string, WordProficiencyView>
+): Map<string, WordProficiencyView | undefined> {
+  const words = new Map<string, WordProficiencyView | undefined>();
+  for (const rawLemma of lemmas) {
+    const lemma = toLemma(rawLemma);
+    if (!lemma) continue;
+    const proficiency = proficiencyMap.get(lemma) ?? proficiencyMap.get(rawLemma);
+    if (!words.has(lemma) || !words.get(lemma)) words.set(lemma, proficiency);
+  }
+  return words;
+}
+
+/** Fraction of distinct article lemmas that already have a proficiency record. */
 export function articleProficiencyCoverage(
   lemmas: readonly string[],
   proficiencyMap: Map<string, WordProficiencyView>
 ): number {
-  if (lemmas.length === 0) return 0;
+  const words = distinctArticleWordProficiencies(lemmas, proficiencyMap);
+  if (words.size === 0) return 0;
   let known = 0;
-  for (const lemma of lemmas) {
-    if (proficiencyMap.has(lemma)) known += 1;
+  for (const proficiency of words.values()) {
+    if (proficiency) known += 1;
   }
-  return known / lemmas.length;
+  return known / words.size;
 }
 
 /**
@@ -317,6 +341,7 @@ export class RecommendationEngine {
     now: Date = new Date()
   ): RecommendationScore {
     const { article, lemmas } = candidate;
+    const articleWords = distinctArticleWordProficiencies(lemmas, proficiencyMap);
     const params = this.params;
     const personalized = shouldUsePersonalizedFilters(candidate, proficiencyMap, params);
     const globallyColdStart = isGlobalColdStart(proficiencyMap, params);
@@ -330,9 +355,7 @@ export class RecommendationEngine {
     let knownWordsCount = 0;
 
     // 统计各类单词
-    for (const lemma of lemmas) {
-      const proficiency = proficiencyMap.get(lemma);
-
+    for (const proficiency of articleWords.values()) {
       if (!proficiency) {
         // Untracked lemmas only count as hard "unknown" once personalization is reliable.
         if (personalized) unknownWordsCount++;
@@ -355,7 +378,7 @@ export class RecommendationEngine {
       }
     }
 
-    const totalWords = lemmas.length || 1;
+    const totalWords = articleWords.size || 1;
     const unknownWordsRatio = unknownWordsCount / totalWords;
     const averageMemoryScore = knownWordsCount > 0 ? totalMemoryScore / knownWordsCount : 0;
 
@@ -456,7 +479,7 @@ export class RecommendationEngine {
       consolidationZoneCount,
       unknownWordsCount: personalized
         ? unknownWordsCount
-        : Math.max(0, lemmas.length - knownWordsCount),
+        : Math.max(0, articleWords.size - knownWordsCount),
       averageMemoryScore,
       reason,
       cefrScore: cefr.score,
@@ -515,7 +538,8 @@ export class RecommendationEngine {
   ): ArticleCandidate[] {
     const params = this.params;
     const filtered = candidates.filter((candidate) => {
-      if (candidate.lemmas.length === 0) return false;
+      const articleWords = distinctArticleWordProficiencies(candidate.lemmas, proficiencyMap);
+      if (articleWords.size === 0) return false;
 
       if (!isRecommendationArticleWithinBounds(
         candidate.article,
@@ -534,7 +558,7 @@ export class RecommendationEngine {
       const score = this.scoreArticle(candidate, proficiencyMap);
 
       // 未知单词过多
-      const totalWords = candidate.lemmas.length || 1;
+      const totalWords = articleWords.size || 1;
       const unknownRatio = score.unknownWordsCount / totalWords;
       if (unknownRatio > params.maxUnknownWordsRatio) {
         return false;
@@ -685,7 +709,7 @@ export function rankCandidatesByReviewHits(
 export function scheduleReviewArticles(
   dueWords: WordProficiencyView[],
   candidates: ArticleCandidate[],
-  targetReviewCount: number = 10
+  targetReviewCount: number = DEFAULT_ARTICLE_TARGET_POOL_SIZE
 ): ArticleCandidate[] {
   // 按到期紧急程度排�?
   const sortedDueWords = [...dueWords].sort((a, b) => {
@@ -719,7 +743,7 @@ export function scoreArticlesForReview(
   const targets = [
     ...new Set(
       targetWords
-        .map((word) => word.trim().toLowerCase())
+        .map(toLemma)
         .filter(Boolean)
     ),
   ];
@@ -744,10 +768,12 @@ export function scoreArticlesForReview(
       ...base,
       score: hits * REVIEW_HIT_SCORE_WEIGHT + base.score,
       dueWordsCount: Math.max(base.dueWordsCount, hits),
-      reason: `���� ${hits}/${targets.length} ����ϰ��${base.reason ? `��${base.reason}` : ''}`,
+      reviewWordsCount: hits,
+      reason: `命中 ${hits}/${targets.length} 个复习词${base.reason ? `，${base.reason}` : ''}`,
     });
   }
 
-  scored.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => (b.reviewWordsCount ?? 0) - (a.reviewWordsCount ?? 0)
+    || b.score - a.score);
   return scored.slice(0, Math.max(1, limit));
 }

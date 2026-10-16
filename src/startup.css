@@ -1,0 +1,56 @@
+/* The first frame is ready before React or the database modules load. */
+html[data-app-starting], html[data-app-starting] body { margin: 0; background: #ff5b22; }
+.app-startup {
+  --startup-ink: #211a16;
+  --startup-top: max(32px, var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
+  --startup-bottom: max(38px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  --startup-left: max(28px, var(--safe-area-inset-left, env(safe-area-inset-left, 0px)));
+  --startup-right: max(28px, var(--safe-area-inset-right, env(safe-area-inset-right, 0px)));
+  box-sizing: border-box;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: var(--startup-top) var(--startup-right) var(--startup-bottom) var(--startup-left);
+  background: #ff5b22;
+  color: var(--startup-ink);
+  font-family: Arial, "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+.app-startup__content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 540px;
+  min-height: calc(100vh - var(--startup-top) - var(--startup-bottom));
+  min-height: calc(100dvh - var(--startup-top) - var(--startup-bottom));
+  margin: 0 auto;
+}
+.app-startup__hero { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 28px 0 60px; }
+.app-startup__art { height: 330px; height: clamp(230px, 43vh, 370px); margin: 0 calc(-1 * var(--startup-right)) 20px calc(-1 * var(--startup-left)); overflow: hidden; }
+.app-startup__composition { display: block; width: 100%; height: 100%; }
+.app-startup__name { margin: 0; font: 750 clamp(56px, 19vw, 88px)/.95 Arial, "Helvetica Neue", sans-serif; letter-spacing: -.075em; }
+.app-startup__name::after { content: "."; }
+.app-startup__loading { width: 100%; }
+.app-startup__status { margin: 17px 0 0; font-size: 13px; line-height: 1.7; letter-spacing: .2px; overflow-wrap: anywhere; }
+.app-startup__hint { margin: 12px 0 0; max-width: 420px; color: #48291e; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.app-startup__activity { position: relative; display: block; width: 100%; height: 2px; overflow: hidden; background: rgba(33, 26, 22, .2); }
+.app-startup__activity::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 27%; background: var(--startup-ink); animation: app-startup-sweep 2s ease-in-out infinite alternate; }
+.app-startup [hidden] { display: none !important; }
+.app-startup__retry { min-width: 128px; min-height: 44px; margin-top: 20px; padding: 11px 20px; border: 1px solid var(--startup-ink); border-radius: 5px; background: var(--startup-ink); color: #fff7e9; font: 600 14px/1.5 Arial, "Microsoft YaHei", sans-serif; cursor: pointer; }
+.app-startup__retry:focus-visible { outline: 2px solid var(--startup-ink); outline-offset: 4px; }
+.app-startup__retry:disabled { opacity: .6; cursor: wait; }
+@keyframes app-startup-sweep { to { transform: translateX(270%); } }
+@media (prefers-reduced-motion: reduce) { .app-startup__activity::before { animation: none; } }
+@media (max-height: 520px) and (min-width: 540px) {
+  .app-startup { --startup-top: max(24px, var(--safe-area-inset-top, env(safe-area-inset-top, 0px))); --startup-bottom: max(24px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))); }
+  .app-startup__content { max-width: 960px; }
+  .app-startup__hero { position: relative; min-height: 180px; padding: 24px 0; }
+  .app-startup__art { position: absolute; width: 48%; height: 220px; top: -10px; right: 0; margin: 0; }
+  .app-startup__name { position: relative; max-width: 50%; font-size: clamp(52px, 11vw, 80px); }
+  .app-startup__loading { max-width: 440px; }
+}
+@media (max-height: 520px) and (max-width: 539px) {
+  .app-startup__hero { padding: 16px 0 24px; }
+  .app-startup__art { height: 190px; margin-bottom: 8px; }
+  .app-startup__name { font-size: clamp(52px, 19vw, 64px); }
+}

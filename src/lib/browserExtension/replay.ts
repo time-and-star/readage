@@ -6,6 +6,7 @@ import { getLocalDateInTimeZone, getUtcInstantForLocalDayEnd } from '../memoryV2
 import { calculateExposureQuality, createEmptyRmeProfile, recordExposure } from '../memoryV4';
 import { mergeExposureSnapshot } from '../memoryV2/rawEventPersistence';
 import { replayVerificationEvidence } from '../memoryV2/verificationMemory';
+import { repairPassiveReadingRecall } from '../memoryV2/passiveRecallRepair';
 
 export type TimedWordEvent = RawWordEvent & { timezone?: string };
 export interface WordJournal {
@@ -45,6 +46,10 @@ function unloggedBaselineFor(state: WordMemoryState | null): WordMemoryState | n
 
 export function replayWordJournal(journal: WordJournal, timezone: string, now: Date,
   verifications: readonly ReadingVerificationEvidence[] = []) {
+  // Repair locally: the immutable journal baseline still records the original
+  // history, but its proven passive Good decisions must never be replayed.
+  const baselineState = journal.baselineState
+    ? repairPassiveReadingRecall(journal.baselineState, journal.baselineDaily, timezone, now) : null;
   const baselineRawKeys = new Set(journal.baselineRaw.map(eventKey));
   const finalizedBaselineDates = new Set(journal.baselineDaily.filter(row => row.finalizedAt).map(row => row.localDate));
   const incomingEvents = journal.events.filter(event => !baselineRawKeys.has(eventKey(event)));
@@ -58,15 +63,16 @@ export function replayWordJournal(journal: WordJournal, timezone: string, now: D
   const exposureKey = (event: { occurrenceId: string; localDate: string }) =>
     JSON.stringify([event.occurrenceId, event.localDate]);
   const rawOccurrences = new Set(raw.map(exposureKey));
-  const baselineProfile = rmeProfileForState(journal.baselineState);
+  const baselineProfile = rmeProfileForState(baselineState);
   const historicalExposures = baselineProfile.exposureHistory.filter(event => !rawOccurrences.has(exposureKey(event)));
-  const unloggedBaseline = unloggedBaselineFor(journal.baselineState);
+  const unloggedBaseline = unloggedBaselineFor(baselineState);
   const baselineReviewAt = Date.parse(unloggedBaseline?.lastReview ?? '');
   const afterBaseline = (at: string) => !Number.isFinite(baselineReviewAt) || Date.parse(at) > baselineReviewAt;
   const replayableVerifications = verifications.filter(attempt => afterBaseline(attempt.occurredAt));
   const state = unloggedBaseline ?? initializeWordMemory(journal.userId, journal.wordId);
+  if (baselineState?.passiveReadingReviews) state.passiveReadingReviews = baselineState.passiveReadingReviews.map(review => ({ ...review }));
   const firstAt = [raw[0]?.occurredAt, historicalExposures[0]?.occurredAt,
-    journal.baselineState?.fsrsReviews[0]?.due].filter((value): value is string => Boolean(value)).sort()[0] || now.toISOString();
+    baselineState?.fsrsReviews[0]?.due ?? baselineState?.fsrsCard.due].filter((value): value is string => Boolean(value)).sort()[0] || now.toISOString();
   if (!unloggedBaseline) {
     state.nextReview = firstAt;
     state.fsrsCard.due = firstAt;
@@ -82,10 +88,10 @@ export function replayWordJournal(journal: WordJournal, timezone: string, now: D
   const dates = new Set([...journal.baselineDaily.map(row => row.localDate), ...raw.map(row => row.localDate)]);
   const flashcardIds = new Set(verifications.filter(attempt => attempt.purpose === 'flashcard_review').map(attempt => attempt.attemptId));
   const verificationIds = new Set(verifications.filter(attempt => attempt.purpose !== 'flashcard_review').map(attempt => attempt.attemptId));
-  const independentRecalls = (journal.baselineState?.fsrsReviews ?? []).filter(review =>
+  const independentRecalls = (baselineState?.fsrsReviews ?? []).filter(review =>
     (review.source === 'flashcard' && !review.verificationAttemptIds?.some(id => flashcardIds.has(id)))
     || (review.source === 'verification' && !review.verificationAttemptIds?.some(id => verificationIds.has(id))));
-  const legacyReviews = (journal.baselineState?.fsrsReviews ?? []).filter(review => review.source !== 'verification'
+  const legacyReviews = (baselineState?.fsrsReviews ?? []).filter(review => review.source !== 'verification'
     && review.source !== 'flashcard');
   const legacyReviewDates = new Map<string, string>();
   for (const review of legacyReviews) {
@@ -122,7 +128,7 @@ export function replayWordJournal(journal: WordJournal, timezone: string, now: D
   const latestAssisted = (at: string) => {
     if (!current.lastAssistedAt || Date.parse(at) > Date.parse(current.lastAssistedAt)) current.lastAssistedAt = at;
   };
-  if (journal.baselineState?.lastAssistedAt) latestAssisted(journal.baselineState.lastAssistedAt);
+  if (baselineState?.lastAssistedAt) latestAssisted(baselineState.lastAssistedAt);
   for (const exposure of historicalExposures) {
     actions.push({ at: exposure.occurredAt, order: 0, run: () => {
       current.rme = recordExposure(current.rme!, { ...exposure, now: new Date(exposure.occurredAt),

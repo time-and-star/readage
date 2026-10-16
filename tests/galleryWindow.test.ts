@@ -86,3 +86,11 @@ test('without an active image the window can trim directly to its ordinary bound
   assert.equal(result.items.length, 48);
   assert.equal(result.removed, 12);
 });
+
+test('small catalog streams advance into a new round while duplicates within a round stay suppressed', () => {
+  const current = appendGalleryWindow([], [1, 2].map(id => ({ ...image(id), streamRound: 0 })), null, 1);
+  const next = appendGalleryWindow(current.items, [2, 1, 1].map(id => ({ ...image(id), streamRound: 1 })), 2, current.nextSequence);
+  assert.deepEqual(next.items.map(item => [item.image.src, item.streamRound, item.sequence]),
+    [[image(1).image.src, 0, 1], [image(2).image.src, 0, 2], [image(2).image.src, 1, 3], [image(1).image.src, 1, 4]]);
+  assert.equal(next.items[1], current.items[1]);
+});

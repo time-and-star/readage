@@ -16,8 +16,8 @@ export interface DictionaryImportResult {
   warning?: string;
 }
 export class DictionaryImportError extends Error {
-  constructor(readonly status: 400 | 413 | 503, readonly code: string, message: string) {
-    super(message); this.name = 'DictionaryImportError';
+  constructor(readonly status: 400 | 413 | 503, readonly code: string, message: string, cause?: unknown) {
+    super(message, { cause }); this.name = 'DictionaryImportError';
   }
 }
 const MAX_IMPORTS = 32;
@@ -114,7 +114,7 @@ export function createDictionaryImporter(options: {
       checkAbort(input.signal);
       const manifest: ImportedMdxManifest = { format: 'dictionary-mdx-import.v1', dictionaryId,
         name: (input.name?.trim() || inspected.title || filename.replace(/\.mdx$/i, '')).slice(0, 160), language,
-        sha256, bytes: input.bytes.length, entryCount: inspected.entryCount, filename };
+        sha256, bytes: input.bytes.length, entryCount: inspected.entryCount, filename, collationLocale: new Intl.Collator().resolvedOptions().locale };
       const manifestFile = await fs.promises.open(path.join(staging, 'manifest.json'), 'wx', 0o600);
       try { await manifestFile.writeFile(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8'); await manifestFile.sync(); }
       finally { await manifestFile.close(); }
@@ -132,7 +132,7 @@ export function createDictionaryImporter(options: {
       if (input.signal?.aborted) throw input.signal.reason ?? new DOMException('Aborted', 'AbortError');
       if (error instanceof DictionaryImportError) throw error;
       if (error instanceof MdxFormatError) throw new DictionaryImportError(400, 'INVALID_MDX', error.message);
-      throw new DictionaryImportError(503, 'DICTIONARY_IMPORT_STORAGE_UNAVAILABLE', '词典无法保存，当前词典配置保持不变。');
+      throw new DictionaryImportError(503, 'DICTIONARY_IMPORT_STORAGE_UNAVAILABLE', '词典无法保存，当前词典配置保持不变。', error);
     } finally { await cleanup(staging); }
   }
   return {

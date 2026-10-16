@@ -13,6 +13,22 @@ test('word ranges preserve contractions, punctuation, numbers and repeated words
   assert.equal(mapped[1][0].start, 22);
 });
 
+test('Japanese words preserve source offsets and repeated sentence mapping', () => {
+  const text = '今日は図書館へ行きます。今日は図書館へ行きます。';
+  const words = speechWords(text);
+  assert.ok(words.length > 4, 'Japanese highlighting should move through words within a sentence');
+  assert.deepEqual(words.map(word => text.slice(word.start, word.end)), words.map(word => word.text));
+  const chunks = splitRemoteSpeechText(text, 20, 20, 'ja-JP');
+  const mapped = mapSpokenChunks(text, chunks).flat();
+  assert.deepEqual(mapped, words);
+  const repeatedLibrary = mapped.filter(word => word.text === '図書館');
+  assert.equal(repeatedLibrary.length, 2);
+  assert.ok(repeatedLibrary[1].start > repeatedLibrary[0].start);
+  const timeline = estimateWordTimeline(text, 12);
+  assert.equal(timeline.length, words.length);
+  assert.ok(Math.abs(timeline.at(-1)!.end - 12) < 0.00001);
+});
+
 test('estimated guide spans the actual audio duration and follows seeking and boundaries', () => {
   const timeline = estimateWordTimeline('First, considerably longer words.', 10);
   assert.equal(timeline[0].start, 0);

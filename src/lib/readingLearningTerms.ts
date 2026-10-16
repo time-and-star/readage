@@ -3,17 +3,19 @@ import { toLemma } from './proficiency.legacy';
 import { getReadingTermMatches } from './textHighlight';
 import { tokenizeReadingParagraph } from './readingTokens';
 import { classifyArticleParagraph } from './articlePresentation';
+import { isEnglishArticle } from './articleLanguage';
 
 /** Reading and recommendation catalogs must agree on highlighted phrase units. */
 export function getArticleLearningTerms(article?: Article): string[] {
-  if (!article || article.source === 'level_rewrite' || article.generationKind === 'level-rewrite') return [];
+  if (!article || !isEnglishArticle(article) || article.source === 'level_rewrite' || article.generationKind === 'level-rewrite') return [];
   return [...(article.keyWords ?? []), ...(article.embeddedReviewWords ?? [])];
 }
 
 /** A requested focus word is only shown as covered when it appears in reading text. */
 export function getArticleReviewWords(article: Article, candidates: readonly string[] = []): string[] {
-  if (article.source === 'level_rewrite' || article.generationKind === 'level-rewrite') return [];
+  if (!isEnglishArticle(article) || article.source === 'level_rewrite' || article.generationKind === 'level-rewrite') return [];
   const terms = [...new Set([...(article.embeddedReviewWords ?? []), ...candidates].map(toLemma).filter(Boolean))];
+  if (!terms.length) return [];
   const present = new Set<string>();
   for (const paragraph of article.content) {
     const kind = classifyArticleParagraph(paragraph, article.title);

@@ -2,7 +2,7 @@ export const TTS_MAX_TEXT_LENGTH = 2_000;
 export const TTS_MAX_AUDIO_BYTES = 8 * 1024 * 1024;
 
 export type TtsProviderId = 'browser' | 'openai-compatible';
-export type TtsLanguage = 'en-US' | 'en-GB';
+export type TtsLanguage = 'en-US' | 'en-GB' | 'fr-FR' | 'ja-JP';
 export type TtsAudioFormat = 'mp3' | 'wav';
 
 export interface TtsRequest {
@@ -19,6 +19,8 @@ export interface TtsConfiguration {
   model: string;
   voice: string;
   voiceEnGb?: string;
+  voiceFrFr?: string;
+  voiceJaJp?: string;
   apiKey?: string;
   audioFormat: TtsAudioFormat;
   maxTextLength: number;

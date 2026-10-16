@@ -83,14 +83,15 @@ export function createDictionaryService(config: DictionaryServiceConfig = {}): D
         ?? [{ text: language?.normalize(request.text) ?? request.text, kind: language ? 'normalized' as const : 'exact' as const }];
       // Without a language adapter preserve the exact Unicode input, including case and typography.
       const adapters = ordered().filter(adapter => (!enabled || enabled.has(adapter.metadata.id))
-        && (!selected || selected.includes(adapter.metadata.id)) && supports(adapter.metadata.languages, request.language));
+        && (!selected || selected.includes(adapter.metadata.id)) && supports(adapter.metadata.languages, request.language))
+        .sort((a, b) => Number(b.metadata.id === config.defaultSource) - Number(a.metadata.id === config.defaultSource));
       async function query(adapter: DictionaryAdapter, texts = candidates): Promise<SourceLookupResult> {
         try {
           const matches = [...await abortable(adapter.lookup({ ...request, candidates: texts, exactOnly: !language }, signal), signal)];
-          return { dictionaryId: adapter.metadata.id, dictionaryName: adapter.metadata.name, status: matches.length ? 'found' : 'not_found', matches };
+          return { dictionaryId: adapter.metadata.id, dictionaryName: adapter.metadata.name, provenance: adapter.metadata.provenance, status: matches.length ? 'found' : 'not_found', matches };
         } catch {
           checkAbort(signal);
-          return { dictionaryId: adapter.metadata.id, dictionaryName: adapter.metadata.name, status: 'unavailable', matches: [],
+          return { dictionaryId: adapter.metadata.id, dictionaryName: adapter.metadata.name, provenance: adapter.metadata.provenance, status: 'unavailable', matches: [],
             error: { code: 'SOURCE_UNAVAILABLE', message: 'Dictionary source is unavailable.' } };
         }
       }

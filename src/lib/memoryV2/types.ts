@@ -161,6 +161,8 @@ export interface WordMemoryState {
     originalFlashcardRating?: 1 | 2 | 3 | 4;
     flashcardRevisions?: FlashcardReviewRevision[];
   }>;
+  /** Audited old passive-reading decisions, excluded from FSRS recall history. */
+  passiveReadingReviews?: WordMemoryState['fsrsReviews'];
   /** Additive RME-V4 profile; absent on legacy V2.2 states. */
   rme?: RmeMemoryProfile;
 }

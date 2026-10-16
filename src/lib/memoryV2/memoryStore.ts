@@ -3,8 +3,9 @@
  * and day-boundary refresh coordination.
  */
 
-import { MemorySystemV2 } from './memorySystem';
+import { MemorySystemV2, type FlashcardRestoreTarget, type MemoryLearningSnapshot, type MemoryLearningSnapshotCache } from './memorySystem';
 import { withMemoryWriteLock } from '../browserExtension/memoryLock';
+import { isLocalDatabaseActive, withLocalDatabaseAccess } from '../localDatabase';
 import { LocalStorageMemoryStorage } from './localStorageImpl';
 import { createPreferredMemoryStorage, MemoryStorageMigrationError } from './indexedDbImpl';
 import type { MemoryStorage } from './storage';
@@ -25,6 +26,7 @@ export interface MemoryStoreSnapshot {
   retryable: boolean;
   lifecycleError: string | null;
   version: number;
+  activityVersion: number;
   storageError: string | null;
   userId: string;
   timezone: string;
@@ -51,6 +53,21 @@ function isQuotaError(error: unknown): boolean {
 }
 
 export class MemoryV2Store {
+  async restoreFlashcardWords(targets: readonly FlashcardRestoreTarget[]) {
+    await this.ensureReady();
+    try {
+      const preferences = await withMemoryWriteLock(() => this.system.restoreFlashcardWords(
+        this.userId, targets, this.now()));
+      this.storageError = null;
+      this.notifyFlashcardChange();
+      return preferences;
+    } catch (error) {
+      this.invalidateLearningSnapshot();
+      this.storageError = isQuotaError(error) ? '存储空间不足，词卡恢复暂未保存。' : '词卡恢复暂未保存，请重试。';
+      this.bumpVersion();
+      throw error;
+    }
+  }
   async updateFlashcardWords(wordIds: string[], action: 'pause' | 'resume' | 'remove') {
     await this.ensureReady();
     try {
@@ -59,6 +76,7 @@ export class MemoryV2Store {
       this.notifyFlashcardChange();
       return preferences;
     } catch (error) {
+      this.invalidateLearningSnapshot();
       this.storageError = '词表调整暂未保存，请重试。';
       this.bumpVersion();
       throw error;
@@ -72,6 +90,7 @@ export class MemoryV2Store {
       this.notifyFlashcardChange();
       return preferences;
     } catch (error) {
+      this.invalidateLearningSnapshot();
       this.storageError = isQuotaError(error) ? '存储空间不足，词卡设置暂未保存。' : '词卡设置暂未保存，请重试。';
       this.bumpVersion();
       throw error;
@@ -91,7 +110,9 @@ export class MemoryV2Store {
       throw error;
     }
   }
-  private notifyFlashcardChange(): void {
+  private notifyFlashcardChange(wordIds?: readonly string[]): void {
+    this.invalidateLearningSnapshot(wordIds);
+    this.activityVersion += 1;
     this.bumpVersion();
     if (typeof BroadcastChannel !== 'undefined') {
       const channel = new BroadcastChannel('readage-memory-changed');
@@ -103,6 +124,8 @@ export class MemoryV2Store {
     await this.ensureReady();
     try {
       await withMemoryWriteLock(() => this.system.recordVerification(this.userId, input, this.now()));
+      this.invalidateLearningSnapshot([input.wordId]);
+      this.activityVersion += 1;
       this.storageError = null;
       this.bumpVersion();
       if (typeof BroadcastChannel !== 'undefined') {
@@ -111,6 +134,7 @@ export class MemoryV2Store {
         channel.close();
       }
     } catch (error) {
+      this.invalidateLearningSnapshot();
       if (isQuotaError(error)) { this.storageError = '学习记录存储空间不足，确认结果暂未保存。'; this.bumpVersion(); }
       throw error;
     }
@@ -120,8 +144,9 @@ export class MemoryV2Store {
     try {
       await withMemoryWriteLock(() => this.system.correctFlashcardReview(this.userId, input, this.now()));
       this.storageError = null;
-      this.notifyFlashcardChange();
+      this.notifyFlashcardChange([input.wordId]);
     } catch (error) {
+      this.invalidateLearningSnapshot();
       if (isQuotaError(error)) {
         this.storageError = '学习记录存储空间不足，评分修改尚未完成，请重试。';
         this.bumpVersion();
@@ -131,7 +156,10 @@ export class MemoryV2Store {
   }
   async importExtensionLookups(events: unknown): Promise<string[]> {
     await this.ensureReady();
-    const ids = await withMemoryWriteLock(() => this.system.importExtensionLookups(this.userId, events, this.timezone, this.now()));
+    const ids = await withMemoryWriteLock(() => this.system.importExtensionLookups(this.userId, events, this.timezone, this.now()))
+      .catch(error => { this.invalidateLearningSnapshot(); throw error; });
+    this.invalidateLearningSnapshot();
+    this.activityVersion += 1;
     this.bumpVersion();
     if (typeof BroadcastChannel !== 'undefined') {
       const channel = new BroadcastChannel('readage-memory-changed');
@@ -141,7 +169,11 @@ export class MemoryV2Store {
     return ids;
   }
 
-  refreshExternalChanges(): void { this.bumpVersion(); }
+  refreshExternalChanges(): void {
+    this.invalidateLearningSnapshot();
+    this.activityVersion += 1;
+    this.bumpVersion();
+  }
   system: MemorySystemV2;
   readonly userId: string;
   readonly timezone: string;
@@ -150,6 +182,12 @@ export class MemoryV2Store {
   private status: MemoryStoreStatus = 'idle';
   private lifecycleError: string | null = null;
   private version = 0;
+  private activityVersion = 0;
+  private learningSnapshotGeneration = 0;
+  private learningSourceVersion = 0;
+  private learningSnapshotCache: MemoryLearningSnapshotCache | null = null;
+  private learningSnapshotJob: { generation: number; job: Promise<MemoryLearningSnapshotCache> } | null = null;
+  private changedMemoryWordIds = new Set<string>();
   private storageError: string | null = null;
   private listeners = new Set<MemoryStoreListener>();
   private finalizeJob: Promise<void> | null = null;
@@ -178,6 +216,7 @@ export class MemoryV2Store {
       retryable: this.status === 'degraded',
       lifecycleError: this.lifecycleError,
       version: this.version,
+      activityVersion: this.activityVersion,
       storageError: this.storageError,
       userId: this.userId,
       timezone: this.timezone,
@@ -191,6 +230,54 @@ export class MemoryV2Store {
       this.listeners.delete(listener);
     };
   };
+
+  private invalidateLearningSnapshot(wordIds?: readonly string[]): void {
+    this.learningSnapshotGeneration += 1;
+    if (wordIds && this.learningSnapshotCache) {
+      for (const wordId of wordIds) this.changedMemoryWordIds.add(wordId);
+    } else {
+      this.learningSourceVersion += 1;
+      this.learningSnapshotCache = null;
+      this.changedMemoryWordIds.clear();
+    }
+  }
+
+  /** Legacy alias indexes follow full source changes without rebuilding for each paragraph. */
+  getLearningSourceVersion(): number { return this.learningSourceVersion; }
+
+  /** Shared, fresh-clock collections; writers invalidate word IDs and external changes discard the source snapshot. */
+  async getLearningSnapshot(force = false): Promise<MemoryLearningSnapshot> {
+    await this.ensureReady();
+    if (force) this.invalidateLearningSnapshot();
+    for (;;) {
+      let pending = this.learningSnapshotJob;
+      if (!pending) {
+        const now = this.now();
+        if (this.learningSnapshotCache && !this.changedMemoryWordIds.size && this.learningSnapshotCache.projectedAt === now.getTime()) {
+          return this.copyLearningSnapshot(this.learningSnapshotCache.snapshot);
+        }
+        const generation = this.learningSnapshotGeneration;
+        const previous = this.learningSnapshotCache;
+        const changed = [...this.changedMemoryWordIds];
+        const job = withLocalDatabaseAccess(() => this.system.getLearningSnapshot(this.userId, now, this.timezone, previous, changed));
+        pending = { generation, job };
+        this.learningSnapshotJob = pending;
+        void job.finally(() => { if (this.learningSnapshotJob?.job === job) this.learningSnapshotJob = null; }).catch(() => {});
+      }
+      const loaded = await pending.job;
+      // A writer or another browser may have changed the source while it was loading.
+      if (pending.generation !== this.learningSnapshotGeneration) continue;
+      this.learningSnapshotCache = loaded;
+      this.changedMemoryWordIds.clear();
+      return this.copyLearningSnapshot(loaded.snapshot);
+    }
+  }
+
+  private copyLearningSnapshot(snapshot: MemoryLearningSnapshot): MemoryLearningSnapshot {
+    const copyViews = (words: MemoryLearningSnapshot['proficiencies']) => words.map(word => ({ ...word }));
+    return { proficiencies: copyViews(snapshot.proficiencies), dueWords: copyViews(snapshot.dueWords),
+      confirmationWords: copyViews(snapshot.confirmationWords), stats: { ...snapshot.stats, byLevel: { ...snapshot.stats.byLevel } } };
+  }
 
   /** Start storage and historical finalization. Failed starts remain retryable. */
   async start(): Promise<void> {
@@ -215,10 +302,10 @@ export class MemoryV2Store {
             const preferred = await withMemoryWriteLock(() => createPreferredMemoryStorage());
             this.system = new MemorySystemV2(preferred, undefined, this.timezone);
           } catch (error) {
-            if (error instanceof MemoryStorageMigrationError) {
+            if (error instanceof MemoryStorageMigrationError || isLocalDatabaseActive()) {
               this.ready = false;
               this.status = 'degraded';
-              this.lifecycleError = error.message;
+              this.lifecycleError = error instanceof Error ? error.message : '电脑学习档案暂时无法访问，请重试读取。';
               this.bumpVersion();
               throw error;
             }
@@ -265,6 +352,8 @@ export class MemoryV2Store {
     this.finalizeJob = (async () => {
       try {
         await withMemoryWriteLock(() => this.system.finalizeHistoricalDates(this.userId, this.timezone));
+        this.invalidateLearningSnapshot();
+        this.activityVersion += 1;
         this.lastSeenLocalDate = getLocalDateInTimeZone(this.now(), this.timezone);
         this.storageError = null;
         this.lifecycleError = null;
@@ -272,6 +361,7 @@ export class MemoryV2Store {
         this.status = 'ready';
         this.bumpVersion();
       } catch (error) {
+        this.invalidateLearningSnapshot();
         console.error('Failed to finalize historical dates:', error);
         this.ready = false;
         this.status = 'degraded';
@@ -309,7 +399,20 @@ export class MemoryV2Store {
 
   async seedCanonicalWordMemory(canonicalWordId: string, legacyWordIds: readonly string[]): Promise<void> {
     await this.ensureReady();
-    await withMemoryWriteLock(() => this.system.seedCanonicalWordMemory(this.userId, canonicalWordId, legacyWordIds));
+    await withMemoryWriteLock(() => this.system.seedCanonicalWordMemory(this.userId, canonicalWordId, legacyWordIds))
+      .catch(error => { this.invalidateLearningSnapshot(); throw error; });
+    this.invalidateLearningSnapshot([canonicalWordId]);
+  }
+
+  async repairCanonicalRecallHistory(canonicalWordIds: ReadonlyMap<string, string>): Promise<boolean> {
+    await this.ensureReady();
+    const changed = await withMemoryWriteLock(() => this.system.repairCanonicalRecallHistory(this.userId, canonicalWordIds))
+      .catch(error => { this.invalidateLearningSnapshot(); throw error; });
+    if (!changed.length) return false;
+    this.invalidateLearningSnapshot(changed);
+    this.activityVersion += 1;
+    this.bumpVersion();
+    return true;
   }
 
   async recordExposure(
@@ -377,9 +480,11 @@ export class MemoryV2Store {
 
     try {
       await withMemoryWriteLock(() => this.system.recordBatchEvents(events));
+      this.invalidateLearningSnapshot(events.map(event => event.wordId));
       this.storageError = null;
       this.scheduleNotify();
     } catch (error) {
+      this.invalidateLearningSnapshot();
       if (isQuotaError(error)) {
         this.storageError = '学习记录存储空间不足，部分进度可能无法保存。';
         this.scheduleNotify();
@@ -392,9 +497,11 @@ export class MemoryV2Store {
     await this.ensureReady();
     try {
       await withMemoryWriteLock(() => this.system.recordEvent(event));
+      this.invalidateLearningSnapshot([event.wordId]);
       this.storageError = null;
       this.scheduleNotify();
     } catch (error) {
+      this.invalidateLearningSnapshot();
       if (isQuotaError(error)) {
         this.storageError = '学习记录存储空间不足，部分进度可能无法保存。';
         this.scheduleNotify();
@@ -403,9 +510,9 @@ export class MemoryV2Store {
     }
   }
 
-  /** Debounced version bump so multi-word paragraph exposure does not thrash React. */
+  /** Coalesce a burst without postponing notifications indefinitely during continuous reading. */
   private scheduleNotify(delayMs = 50): void {
-    if (this.notifyTimer) clearTimeout(this.notifyTimer);
+    if (this.notifyTimer) return;
     this.notifyTimer = setTimeout(() => {
       this.notifyTimer = null;
       this.bumpVersion();
@@ -413,6 +520,7 @@ export class MemoryV2Store {
   }
 
   private bumpVersion(): void {
+    if (this.notifyTimer) { clearTimeout(this.notifyTimer); this.notifyTimer = null; }
     this.version += 1;
     for (const listener of this.listeners) {
       try {
@@ -447,6 +555,7 @@ export class MemoryV2Store {
     if (this.midnightTimer) clearTimeout(this.midnightTimer);
     this.listeners.clear();
     this.startJob = null;
+    this.invalidateLearningSnapshot();
   }
 }
 

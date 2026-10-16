@@ -15,6 +15,8 @@ import { getJsonApiHeaders } from '../lib/apiAuth';
 import { AppPageHeader } from './AppPageHeader';
 import { defaultLibraryView, normalizeLibraryView, type LibraryView } from '../lib/libraryView';
 import { readPersistentValue, STORAGE_KEYS, updatePersistentValue } from '../lib/storage';
+import { fetchMagazineArticleById } from '../lib/magazineLemmaIndex';
+import { CAN_MANUALLY_SYNC_MAGAZINES, IS_OFFLINE_APP } from '../lib/platform/runtime';
 
 type LibraryTab = 'mine' | 'magazines';
 
@@ -26,7 +28,18 @@ type MagLayer = 'sources' | 'issues' | 'articles';
 
 const publicationMarks: Record<string, string> = {
   economist: 'E', new_yorker: 'N', atlantic: 'A', wired: 'W',
+  conversation: 'C', jstor_daily: 'J', science_news_explores: 'S', mit_press_reader: 'M',
 };
+
+function publicationDate(value?: string): string {
+  const date = value?.match(/^(\d{4})[.\/-](\d{2})[.\/-](\d{2})/);
+  return date ? `${date[1]}.${date[2]}.${date[3]}` : '';
+}
+
+function issueDisplayTitle(issue: MagazineIssue, source?: MagazineSourceSummary | null): string {
+  const kind = source?.sourceKind || issue.sourceKind;
+  return !kind || kind === 'web_articles' ? issue.title : issue.issueLabel || issue.title;
+}
 
 const issueStatusLabels: Record<MagazineIssue['status'], string> = {
   ready: '', partial: '部分可读', parsing: '整理中', failed: '暂不可用',
@@ -80,7 +93,9 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   navigation,
 }) => {
   const [initialView] = useState<LibraryView>(() => {
-    return readPersistentValue(STORAGE_KEYS.libraryView, defaultLibraryView, normalizeLibraryView);
+    const fallback = { ...defaultLibraryView };
+    const view = readPersistentValue(STORAGE_KEYS.libraryView, fallback, normalizeLibraryView);
+    return view;
   });
   const [tab, setTab] = useState<LibraryTab>(initialView.tab);
   const [levelFilter, setLevelFilter] = useState<string>(initialView.levelFilter);
@@ -151,6 +166,11 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     () => sources.find((s) => s.id === activeSourceId) ?? null,
     [sources, activeSourceId]
   );
+  const activeSourceKind = activeSource?.sourceKind || selectedIssue?.sourceKind;
+  const isWebArticleSource = activeSourceKind === 'web_articles';
+  const isGradedNewsSource = activeSourceKind === 'graded_news';
+  const isArticleSource = isWebArticleSource || isGradedNewsSource;
+  const sourceUpdateLabel = isWebArticleSource ? '更新本站文章' : isGradedNewsSource ? '更新分级新闻' : '更新这本外刊';
 
   const activeImportFile = useMemo(() => {
     if (!activeImportBatchId) return null;
@@ -195,7 +215,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
           issue.issueLabel.toLowerCase().includes(q)
         );
       })
-      .sort((a, b) => (b.issueLabel || '').localeCompare(a.issueLabel || ''));
+      .sort((a, b) => (b.publishedAt || b.issueLabel || '').localeCompare(a.publishedAt || a.issueLabel || ''));
   }, [issues, activeSourceId, topicQuery]);
 
   const filteredIssueArticles = useMemo(() => {
@@ -357,7 +377,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         });
         return;
       }
-      if (!res.ok && !data.ok) {
+      if (!res.ok || data.ok !== true) {
         throw new Error(data.error?.message || '同步启动失败');
       }
       setSyncStatus({
@@ -391,14 +411,14 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     if (!preserveQuery) setTopicQuery('');
     try {
       const res = await fetch(`/api/magazines/issues/${encodeURIComponent(issue.id)}`);
-      const data = await readJson(res, '本期文章');
+      const data = await readJson(res, isArticleSource ? '文章目录' : '本期文章');
       if (request !== issueRequest.current) return;
-      if (!data.ok) throw new Error(data.error?.message || '加载期号失败');
+      if (!data.ok) throw new Error(data.error?.message || '加载文章目录失败');
       setIssueArticles(data.articles || []);
     } catch (e) {
       if (request !== issueRequest.current) return;
       retryAction.current = () => { void openIssue(issue, true); };
-      setError(e instanceof Error ? e.message : '加载期号失败');
+      setError(e instanceof Error ? e.message : '加载文章目录失败');
     } finally {
       if (request === issueRequest.current) setLoadingIssue(false);
     }
@@ -413,12 +433,9 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     setLoadingArticleId(stub.id);
     setError(null);
     try {
-      const res = await fetch(`/api/magazines/articles/${encodeURIComponent(stub.id)}`);
-      const data = await res.json();
-      if (!data.ok || !data.article) {
-        throw new Error(data.error?.message || '加载文章失败');
-      }
-      await onSelectArticle(data.article as Article);
+      const article = await fetchMagazineArticleById(stub.id, { deferMedia: true });
+      if (!article) throw new Error('加载文章失败');
+      await onSelectArticle(article);
     } catch (e) {
       retryAction.current = () => { void openMagazineArticle(stub); };
       setError(e instanceof Error ? e.message : '加载文章失败');
@@ -472,25 +489,36 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   const showCefr = tab === 'mine' || magLayer === 'sources';
   const isNested = Boolean(tab === 'mine' ? activeImportFile : activeSourceId);
   const title = tab === 'mine' && activeImportFile ? activeImportFile.title
-    : tab === 'magazines' && selectedIssue ? selectedIssue.issueLabel || selectedIssue.title
+    : tab === 'magazines' && selectedIssue ? issueDisplayTitle(selectedIssue, activeSource)
       : tab === 'magazines' && activeSource ? activeSource.displayName : 'Library';
   const searchPlaceholder = tab === 'mine'
     ? activeImportFile ? '搜索章节、文章' : '搜索书籍、文章'
     : isArticleCatalogFilter ? '搜索文章'
-      : magLayer === 'articles' ? '搜索本期文章' : magLayer === 'issues' ? '搜索期刊' : '搜索外刊';
+      : magLayer === 'articles' ? isArticleSource ? '搜索文章' : '搜索本期文章'
+        : magLayer === 'issues' ? isArticleSource ? '搜索文章' : '搜索期刊' : '搜索外刊';
   const resultCount = tab === 'mine' ? filteredMine.length
     : isArticleCatalogFilter ? catalogTotal
       : magLayer === 'sources' ? filteredSources.length
         : magLayer === 'issues' ? filteredIssues.length : filteredIssueArticles.length;
   const sectionTitle = tab === 'mine' ? activeImportFile ? '目录' : '我的书架'
     : isArticleCatalogFilter ? `${levelFilter} 文章`
-      : magLayer === 'sources' ? '外刊' : magLayer === 'issues' ? '全部期刊' : '本期目录';
+      : magLayer === 'sources' ? '外刊'
+        : magLayer === 'issues' ? isArticleSource ? '全部文章' : '全部期刊'
+          : isArticleSource ? '文章目录' : '本期目录';
   const isLoading = tab === 'magazines' && (isArticleCatalogFilter
     ? loadingCatalogArticles && catalogArticles.length === 0
     : magLayer === 'articles' ? loadingIssue : loadingCatalog);
   const lastUpdatedDate = new Date(lastSyncAt || syncStatus?.lastRunAt || '');
   const syncDate = Number.isFinite(lastUpdatedDate.getTime())
     ? lastUpdatedDate.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : null;
+  const syncCounts = activeSourceId
+    ? syncStatus?.lastResult?.perSource?.[activeSourceId]
+    : syncStatus?.lastResult ? {
+      imported: syncStatus.lastResult.importedIssues,
+      skipped: syncStatus.lastResult.skippedIssues,
+      failed: syncStatus.lastResult.failedIssues,
+    } : null;
+  const syncCountUnit = activeSourceId ? isArticleSource ? '篇' : '期' : '条';
   const renderEmpty = (message = '没有找到匹配的内容') => (
     <div className="library-empty"><p>{message}</p>
       {hasFilters && <button type="button" onClick={resetFilters}>清除筛选</button>}
@@ -513,18 +541,24 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
               <ChevronRight size={12} aria-hidden="true" />
               {tab === 'magazines' && selectedIssue ? (
                 <><button type="button" onClick={handleHeaderBack}>{activeSource?.displayName}</button>
-                  <ChevronRight size={12} aria-hidden="true" /><span>{selectedIssue.issueLabel || selectedIssue.title}</span></>
+                  <ChevronRight size={12} aria-hidden="true" /><span>{issueDisplayTitle(selectedIssue, activeSource)}</span></>
               ) : <span>{tab === 'mine' ? '我的书架' : '外刊'}</span>}
             </nav>
           ) : <p className="library-eyebrow">The reading room</p>}
           <div className="library-heading-line">
             <div><h1 className={isNested ? 'library-title library-title--detail' : 'library-title'}>{title}</h1>
               {activeImportFile && fileProgress && <p className="library-heading-meta">{activeImportFile.articles.length} {fileProgress.unit}<span>·</span>已读 {fileProgress.completedCount} {fileProgress.unit}</p>}
-              {selectedIssue && <p className="library-heading-meta">{activeSource?.displayName}</p>}
+              {selectedIssue && <p className="library-heading-meta">{activeSource?.displayName}
+                {isArticleSource && publicationDate(selectedIssue.publishedAt) && <><span>·</span>{publicationDate(selectedIssue.publishedAt)}</>}
+              </p>}
             </div>
             {activeImportFile && fileProgress?.resumeArticle ? (
               <button type="button" className="library-primary" onClick={() => onSelectArticle(fileProgress.resumeArticle!)}>
                 {fileProgress.completed ? '再读一遍' : fileProgress.started ? '继续阅读' : '开始阅读'}<ArrowUpRight size={15} aria-hidden="true" />
+              </button>
+            ) : CAN_MANUALLY_SYNC_MAGAZINES && tab === 'magazines' && magLayer !== 'articles' ? (
+              <button type="button" onClick={() => void handleSync()} disabled={Boolean(syncStatus?.running)} className="library-primary">
+                <RefreshCw size={15} className={syncStatus?.running ? 'animate-spin' : ''} aria-hidden="true" />{syncStatus?.running ? '正在更新' : activeSourceId ? sourceUpdateLabel : '更新外刊目录'}
               </button>
             ) : <button type="button" onClick={onInsertArticle} className="library-primary"><FilePlus2 size={15} aria-hidden="true" />导入</button>}
           </div>
@@ -578,51 +612,59 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
           ) : isArticleCatalogFilter ? (
             catalogArticles.length === 0 ? renderEmpty() : <>
               <div className="library-reading-list">{catalogArticles.map((article, index) => renderMagazineArticle(article, index,
-                <><span>{article.sourceName}</span><span>{article.issueLabel}</span><span>{article.wordCount.toLocaleString()} 词</span></>,
+                <><span>{article.sourceName}</span><span>{publicationDate(article.date) || article.issueLabel}</span><span>{article.wordCount.toLocaleString()} 词</span></>,
               ))}</div>
               {catalogNextCursor && <button type="button" className="library-load-more" disabled={loadingCatalogArticles} onClick={() => void loadCatalogArticlePage(catalogNextCursor, true)}>
                 {loadingCatalogArticles ? <><Loader2 size={14} className="animate-spin" aria-hidden="true" />正在加载…</> : '更多文章'}
               </button>}
             </>
           ) : magLayer === 'sources' ? (
-            filteredSources.length === 0 ? renderEmpty(sources.length ? '没有找到匹配的外刊' : '暂时没有外刊，更新目录后再看看') : (
+            filteredSources.length === 0 ? renderEmpty(sources.length ? '没有找到匹配的外刊' : CAN_MANUALLY_SYNC_MAGAZINES ? '点击“更新外刊目录”，下载后即可离线阅读。' : '没有已保存的外刊，可导入文件或学习迁移包。') : (
               <div className="library-publications">{filteredSources.map((source) => (
                 <button type="button" key={source.id} className="library-publication" data-publication={source.id} onClick={() => openSource(source.id)}>
                   <span className="library-publication-mark" aria-hidden="true"><span className="library-mark-rule" />
                     <span>{publicationMarks[source.id] || source.displayName.match(/Level\s+(\d+)/i)?.[1] || source.displayName.slice(0, 1)}</span>
-                    <span className="library-mark-foot">{source.id.startsWith('news') ? 'News in Levels' : 'Journal'}</span>
+                    <span className="library-mark-foot">{source.sourceKind === 'web_articles' ? 'Articles' : source.sourceKind === 'graded_news' ? 'News in Levels' : 'Journal'}</span>
                   </span>
                   <div className="library-publication-body"><span className="library-publication-topic">{source.topic}</span>
-                    <h3>{source.displayName}</h3><div className="library-meta"><span>{source.issueCount} 期</span>{source.levelHint && <span>{source.levelHint}</span>}</div>
+                    <h3>{source.displayName}</h3><div className="library-meta">
+                      <span>{source.sourceKind === 'web_articles' ? '网站文章' : source.sourceKind === 'graded_news' ? '分级新闻' : '整期杂志'}</span>
+                      <span>{source.issueCount} {source.sourceKind && source.sourceKind !== 'issue' ? '篇' : '期'}</span>{source.levelHint && <span>{source.levelHint}</span>}</div>
                   </div><ArrowUpRight size={17} className="library-arrow" aria-hidden="true" />
                 </button>
               ))}</div>
             )
           ) : magLayer === 'issues' ? (
-            filteredIssues.length === 0 ? renderEmpty(issues.some((issue) => issue.sourceId === activeSourceId) ? '没有找到匹配的期刊' : '暂无期刊，更新目录后再看看') : (
+            filteredIssues.length === 0 ? renderEmpty(issues.some((issue) => issue.sourceId === activeSourceId)
+              ? isArticleSource ? '没有找到匹配的文章' : '没有找到匹配的期刊'
+              : CAN_MANUALLY_SYNC_MAGAZINES ? `点击“${sourceUpdateLabel}”，下载后即可离线阅读。`
+                : isArticleSource ? '没有已保存的文章，可导入文件或学习迁移包。' : '没有已保存的期刊，可导入文件或学习迁移包。') : (
               <div className="library-issues">{filteredIssues.map((issue, index) => (
                 <button type="button" key={issue.id} className="library-issue" onClick={() => void openIssue(issue)}>
                   <span className="library-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
-                  <div className="library-row-body"><h3>{issue.issueLabel || issue.title}</h3><div className="library-meta"><span>{issue.articleCount} 篇文章</span>
+                  <div className="library-row-body"><h3>{issueDisplayTitle(issue, activeSource)}</h3><div className="library-meta">
+                    {isArticleSource && publicationDate(issue.publishedAt) && <span>{publicationDate(issue.publishedAt)}</span>}
+                    <span>{issue.articleCount} 篇文章</span>
                     {issueStatusLabels[issue.status] && <span className={issue.status === 'failed' ? 'library-failed' : ''}>{issueStatusLabels[issue.status]}</span>}
                   </div></div><ArrowUpRight size={17} className="library-arrow" aria-hidden="true" />
                 </button>
               ))}</div>
             )
-          ) : filteredIssueArticles.length === 0 ? renderEmpty(issueArticles.length ? '没有找到匹配的文章' : '本期暂无可读文章') : (
+          ) : filteredIssueArticles.length === 0 ? renderEmpty(issueArticles.length ? '没有找到匹配的文章' : isArticleSource ? '暂无可读文章' : '本期暂无可读文章') : (
             <div className="library-reading-list">{filteredIssueArticles.map((article) => renderMagazineArticle(article, issueArticles.findIndex((item) => item.id === article.id),
               article.wordCount != null ? <span>{article.wordCount.toLocaleString()} 词</span> : null,
             ))}</div>
           )}
         </main>
-        {tab === 'magazines' && magLayer !== 'articles' && <footer className="library-catalog-footer">
-          {syncStatus?.running && <p className="library-sync-progress" role="status"><Loader2 size={13} className="animate-spin" aria-hidden="true" />正在更新外刊…</p>}
-          <details className="library-sync-details"><summary><span>外刊更新{syncDate && <span className="library-sync-date">{syncDate}</span>}</span><ChevronDown size={13} aria-hidden="true" /></summary>
-            <div className="library-sync-content"><button type="button" className="library-text-action" onClick={() => void handleSync()} disabled={Boolean(syncStatus?.running)}>
-              <RefreshCw size={13} className={syncStatus?.running ? 'animate-spin' : ''} aria-hidden="true" />{syncStatus?.running ? '正在更新' : activeSourceId ? '更新这本外刊' : '更新外刊目录'}
-            </button>
-              {syncStatus?.lastResult && !syncStatus.running && <p>新增 {syncStatus.lastResult.importedIssues} 期 · 已有 {syncStatus.lastResult.skippedIssues} 期{syncStatus.lastResult.failedIssues > 0 && ` · 失败 ${syncStatus.lastResult.failedIssues} 期`}</p>}
-              <p>外刊内容用于个人学习，请支持原刊订阅。</p>
+        {CAN_MANUALLY_SYNC_MAGAZINES && tab === 'magazines' && magLayer !== 'articles' && <footer className="library-catalog-footer">
+          {syncStatus?.running && <p className="library-sync-progress" role="status"><Loader2 size={13} className="animate-spin" aria-hidden="true" />{syncStatus.progress || '正在更新外刊…'}</p>}
+          {syncStatus?.lastResult?.errors?.length && !syncStatus.running ? <p className="library-failed" role="alert">{syncStatus.lastResult.errors[0]}</p> : null}
+          <details className="library-sync-details"><summary><span>更新详情{syncDate && <span className="library-sync-date">{syncDate}</span>}</span><ChevronDown size={13} aria-hidden="true" /></summary>
+            <div className="library-sync-content">
+              {syncStatus?.lastResult?.errors?.length && !syncStatus.running ? <ul className="library-failed" aria-label="外刊更新失败详情">{syncStatus.lastResult.errors.map((message, index) => <li key={`${index}:${message}`}>{message}</li>)}</ul> : null}
+              {syncCounts && !syncStatus?.running && <p>新增 {syncCounts.imported} {syncCountUnit} · 已有 {syncCounts.skipped} {syncCountUnit}{syncCounts.failed > 0 && ` · 失败 ${syncCounts.failed} ${syncCountUnit}`}</p>}
+              <button type="button" className="library-text-action" onClick={onInsertArticle}><FilePlus2 size={13} aria-hidden="true" />导入 EPUB / PDF 杂志文件</button>
+              <p>{IS_OFFLINE_APP ? '点击更新时连接外刊来源；导入的本地文件保存在我的书架。' : '外刊内容用于个人学习，请支持原刊订阅。'}</p>
             </div>
           </details>
         </footer>}

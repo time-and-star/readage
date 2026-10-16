@@ -95,6 +95,58 @@ test('timing headers expose only numeric speech metrics and cache hits do not re
   });
 });
 
+test('French synthesis chooses the configured French voice and never the English fallback', async () => {
+  const voices: string[] = [];
+  await harness(async (req, res) => { const body = await readBody(req); voices.push(body.voice as string); audio(res); }, async ({ url, env }) => {
+    const unsupported = await synthesize(url, { text: 'Bonjour.', lang: 'fr-FR' });
+    assert.equal(unsupported.status, 503); assert.deepEqual(voices, []);
+    (env as NodeJS.ProcessEnv).TTS_VOICE_FR_FR = 'ff_siwis';
+    const status = await (await fetch(`${url}/api/tts/status`)).json();
+    assert.deepEqual(status.languages, ['en-US', 'en-GB', 'fr-FR']);
+    const response = await synthesize(url, { text: 'Bonjour.', lang: 'fr-FR' });
+    assert.equal(response.status, 200); await response.arrayBuffer();
+    assert.deepEqual(voices, ['ff_siwis']);
+  });
+});
+
+test('Japanese synthesis advertises only its configured voice and keeps language and voice caches separate', async () => {
+  const voices: string[] = [];
+  assert.deepEqual(validateTtsRequest({ text: '今日は晴れです。', lang: 'ja' }), {
+    text: '今日は晴れです。', lang: 'ja-JP', rate: 1,
+  });
+  await harness(async (req, res) => {
+    const body = await readBody(req);
+    voices.push(body.voice as string);
+    audio(res);
+  }, async ({ url, env }) => {
+    const unsupported = await synthesize(url, { text: '今日は晴れです。', lang: 'ja-JP' });
+    assert.equal(unsupported.status, 503);
+    assert.equal((await unsupported.json()).error.code, 'TTS_NOT_CONFIGURED');
+    assert.deepEqual(voices, []);
+
+    env.TTS_VOICE_JA_JP = 'jf_alpha';
+    const status = await (await fetch(`${url}/api/tts/status`)).json();
+    assert.deepEqual(status.languages, ['en-US', 'en-GB', 'ja-JP']);
+    assert.equal(JSON.stringify(status).includes('jf_alpha'), false);
+    for (const lang of ['ja', 'ja-JP', 'en-US']) {
+      const response = await synthesize(url, { text: '今日は晴れです。', lang });
+      assert.equal(response.status, 200);
+      await response.arrayBuffer();
+    }
+    assert.deepEqual(voices, ['jf_alpha', 'af_heart']);
+    env.TTS_VOICE_JA_JP = 'jf_beta';
+    const changed = await synthesize(url, { text: '今日は晴れです。', lang: 'ja-JP' });
+    assert.equal(changed.status, 200);
+    await changed.arrayBuffer();
+    assert.deepEqual(voices, ['jf_alpha', 'af_heart', 'jf_beta']);
+    env.TTS_VOICE_FR_FR = 'ff_siwis';
+    assert.deepEqual((await (await fetch(`${url}/api/tts/status`)).json()).languages,
+      ['en-US', 'en-GB', 'fr-FR', 'ja-JP']);
+    env.TTS_PROVIDER = 'browser';
+    assert.deepEqual((await (await fetch(`${url}/api/tts/status`)).json()).languages, []);
+  });
+});
+
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve: () => void;
   const promise = new Promise<void>((done) => { resolve = done; });

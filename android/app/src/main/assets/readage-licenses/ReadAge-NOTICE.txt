@@ -1,0 +1,9 @@
+ReadAge
+Copyright 2026 ReadAge contributors
+
+ReadAge's original source code is licensed under the Apache License, Version 2.0.
+See LICENSE for the complete terms.
+
+Third-party libraries, dictionaries, models, voices, and imported publications
+retain their respective licenses, copyright notices, and distribution terms.
+Bundled third-party notices and source archives remain part of their distributions.

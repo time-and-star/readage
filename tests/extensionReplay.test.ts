@@ -62,14 +62,71 @@ function finalizedLegacyJournal(): WordJournal {
     baselineDaily: daily, baselineRaw: raw, events: [] };
 }
 
-test('new spacing rules preserve finalized baseline review decisions and credited history', () => {
+test('journal replay removes proven passive Good while preserving credited reading history and immutable baseline', () => {
   const input = finalizedLegacyJournal();
   input.events = events('2026-09-04', 'later-reading', false);
+  const before = structuredClone(input);
+  const result = replayWordJournal(input, 'UTC', new Date('2026-09-08T12:00:00.000Z'));
+  assert.deepEqual(result.state.fsrsReviews, []);
+  assert.equal(result.state.fsrsCard.reps, 0);
+  assert.equal(result.state.stability, 0);
+  assert.equal(result.state.lastReview, null);
+  assert.deepEqual(result.state.passiveReadingReviews, input.baselineState!.fsrsReviews);
+  assert.equal(result.state.rme?.exposureHistory.find(event => event.occurrenceId === 'b')?.isValid, true);
+  assert.equal(result.state.rme?.exposureHistory.find(event => event.occurrenceId === 'c')?.isValid, true);
+  assert.deepEqual(input, before);
+  assert.deepEqual(replayWordJournal(input, 'UTC', new Date('2026-09-08T12:00:00.000Z')), result);
+});
+
+test('explicit flashcard reviews survive journal repair with their correction metadata', () => {
+  const input = finalizedLegacyJournal();
+  input.baselineState!.fsrsReviews[0] = { ...input.baselineState!.fsrsReviews[0], source: 'flashcard',
+    verificationAttemptIds: ['card:baseline'], originalFlashcardRating: 2,
+    flashcardRevisions: [{ correctionId: 'fix:baseline', revision: 1, previousRating: 2, rating: 3,
+      correctedAt: '2026-09-04T12:00:00.000Z' }] };
   const result = replayWordJournal(input, 'UTC', new Date('2026-09-08T12:00:00.000Z'));
   assert.deepEqual(result.state.fsrsReviews, input.baselineState!.fsrsReviews);
   assert.deepEqual(result.state.fsrsCard, input.baselineState!.fsrsCard);
-  assert.equal(result.state.rme?.exposureHistory.find(event => event.occurrenceId === 'b')?.isValid, true);
-  assert.equal(result.state.rme?.exposureHistory.find(event => event.occurrenceId === 'c')?.isValid, true);
+  assert.equal(result.state.passiveReadingReviews, undefined);
+});
+
+test('genuine recalls are replayed without earlier passive stability and retain the repair audit', () => {
+  const input = finalizedLegacyJournal();
+  const passive = [...input.baselineState!.fsrsReviews];
+  const at = new Date('2026-09-04T12:00:00.000Z');
+  input.baselineState = submitFsrsReview(input.baselineState!, 3, at);
+  input.baselineState.fsrsReviews[1].source = 'flashcard';
+  input.baselineState.fsrsReviews[1].verificationAttemptIds = ['card:genuine'];
+  Object.freeze(input.baselineState.fsrsCard);
+  input.baselineState.fsrsReviews.forEach(Object.freeze);
+  Object.freeze(input.baselineState.fsrsReviews);
+  Object.freeze(input.baselineState);
+  const result = replayWordJournal(input, 'UTC', new Date('2026-09-08T12:00:00.000Z'));
+  const empty = initializeWordMemory('u', 'run');
+  empty.nextReview = empty.fsrsCard.due = input.baselineRaw[0].occurredAt;
+  const expected = submitFsrsReview(empty, 3, at);
+  expected.fsrsReviews[0].source = 'flashcard';
+  expected.fsrsReviews[0].verificationAttemptIds = ['card:genuine'];
+  assert.deepEqual(result.state.fsrsCard, expected.fsrsCard);
+  assert.deepEqual(result.state.fsrsReviews, expected.fsrsReviews);
+  assert.deepEqual(result.state.passiveReadingReviews, passive);
+  assert.equal(input.baselineState.fsrsCard.reps, 2);
+});
+
+test('the passive audit survives replay and suppresses restored old reviews when daily evidence was pruned', () => {
+  const input = finalizedLegacyJournal();
+  const now = new Date('2026-09-08T12:00:00.000Z');
+  const repaired = replayWordJournal(input, 'UTC', now);
+  const restored: WordJournal = { ...input, baselineDaily: [], baselineRaw: [],
+    baselineState: { ...input.baselineState!, passiveReadingReviews: repaired.state.passiveReadingReviews } };
+  const result = replayWordJournal(restored, 'UTC', now);
+  assert.deepEqual(result.state.fsrsReviews, []);
+  assert.equal(result.state.fsrsCard.reps, 0);
+  assert.deepEqual(result.state.passiveReadingReviews, repaired.state.passiveReadingReviews);
+  restored.baselineState = result.state;
+  const again = replayWordJournal(restored, 'UTC', now);
+  assert.deepEqual(again.state.fsrsReviews, []);
+  assert.deepEqual(again.state.passiveReadingReviews, repaired.state.passiveReadingReviews);
 });
 
 test('a genuinely new historical lookup changes that day from Good to Again once', () => {
@@ -127,11 +184,12 @@ test('later measured snapshots merge with the frozen raw baseline without adding
   const result = replayWordJournal(input, 'UTC', new Date('2026-09-08T12:00:00.000Z'));
   assert.equal(result.raw.find(event => event.occurrenceId === 'c')?.dwellTimeMs, 90_000);
   assert.equal(result.state.rme?.exposureHistory.find(event => event.occurrenceId === 'c')?.quality, 0.5);
-  assert.deepEqual(result.state.fsrsReviews, input.baselineState!.fsrsReviews);
-  assert.equal(result.state.fsrsCard.reps, input.baselineState!.fsrsCard.reps);
+  assert.deepEqual(result.state.fsrsReviews, []);
+  assert.equal(result.state.fsrsCard.reps, 0);
+  assert.deepEqual(result.state.passiveReadingReviews, input.baselineState!.fsrsReviews);
 });
 
-test('a measured downgrade of the original frozen Good retracts only that encounter', () => {
+test('measured changes preserve passive audit and cannot resurrect automatic Good from separate encounters', () => {
   for (const rawWasPruned of [false, true]) {
     const input = finalizedLegacyJournal();
     const original = { ...input.baselineRaw[2], dwellTimeMs: 6_000, expectedDwellTimeMs: 30_000 };
@@ -148,12 +206,14 @@ test('a measured downgrade of the original frozen Good retracts only that encoun
     const result = replayWordJournal(input, 'UTC', new Date('2026-09-08T12:00:00.000Z'));
     assert.equal(result.state.fsrsReviews.length, 0);
     assert.equal(result.state.fsrsCard.reps, 0);
+    assert.deepEqual(result.state.passiveReadingReviews, input.baselineState!.fsrsReviews);
     assert.equal(result.state.rme?.exposureHistory.find(event => event.occurrenceId === 'c')?.dwellTimeMs, 60_000);
     assert.equal(result.daily.find(day => day.localDate === '2026-09-03')?.pendingGrade, null);
 
     input.events = [{ ...original, occurrenceId: 'a-separate-encounter', dwellTimeMs: 60_000, rmeQuality: 0.5 }];
     const separate = replayWordJournal(input, 'UTC', new Date('2026-09-08T12:00:00.000Z'));
-    assert.equal(separate.state.fsrsReviews.length, 1);
-    assert.equal(separate.state.fsrsReviews[0].rating, 3);
+    assert.equal(separate.state.fsrsReviews.length, 0);
+    assert.equal(separate.state.fsrsCard.reps, 0);
+    assert.deepEqual(separate.state.passiveReadingReviews, input.baselineState!.fsrsReviews);
   }
 });

@@ -5,6 +5,7 @@ export type DictionaryAuthoringMethod = 'model-manual' | 'pack-import' | 'unknow
 /** Ordered independent source views for the legacy English presentation boundary. */
 export interface DictionarySourceView {
   dictionaryRef: import('../contracts').DictionaryDisplayRef;
+  provenance?: import('../contracts').EntryProvenance[];
   record: DictionaryRecord;
   originalContent?: DictionaryOriginalContent;
   readageContent?: import('../readage').ReadAgeWord;

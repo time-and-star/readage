@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { DictionaryRecord, GrammarExplanation } from '../src/types';
+import type { DictionaryRecord, DictionarySourceView, GrammarExplanation } from '../src/types';
 import { getCompactWordCard } from '../src/lib/compactWordCard';
+import { toDictionarySourceWordCard } from '../src/lib/dictionaryClient';
 
 function explanation(overrides: Partial<GrammarExplanation> = {}): GrammarExplanation {
   return {
@@ -23,6 +24,61 @@ function record(groups: Array<{ pos: string; en: string; zh?: string }>): Dictio
     })),
   };
 }
+
+function authoredSource(coreMeaning = { zh: '跑；经营；运转', en: 'move quickly, manage, or operate' }): DictionarySourceView {
+  return {
+    dictionaryRef: { protocolVersion: 'dictionary-api.v1', catalogVersion: 'test', dictionaryId: 'native-reviewed',
+      entryId: 'run', contentVersion: 'test', fieldSources: {} },
+    record: record([{ pos: 'v.', en: 'move faster than walking', zh: '以比步行更快的速度移动' }]),
+    readageContent: { id: 'run', lemma: 'run', language: 'en', tier: 'core', coreMeaning,
+      senses: [], pronunciations: [], forms: [], family: [] },
+  };
+}
+
+test('authored core meanings win over first senses and external original content regardless of source order', () => {
+  const authored = authoredSource({ zh: '  跑；经营；运转  ', en: '  move quickly, manage, or operate  ' });
+  const fallback = { ...authored, readageContent: undefined,
+    dictionaryRef: { ...authored.dictionaryRef, dictionaryId: 'fallback' },
+    originalContent: { mediaType: 'text/plain', content: 'External definition', plainText: 'External definition' } };
+  const primary = toDictionarySourceWordCard(fallback);
+  for (const sources of [[fallback, authored], [authored, fallback]]) {
+    const result = { ...primary, dictionarySources: sources };
+    const before = JSON.stringify(result);
+    const preview = getCompactWordCard(result, 'running');
+    assert.equal(preview.meaningZh, '跑；经营；运转');
+    assert.equal(preview.definitionEn, 'move quickly, manage, or operate');
+    assert.equal(preview.originalText, undefined);
+    assert.equal(preview.partOfSpeech, 'v.');
+    assert.equal(preview.restoredFrom, 'running');
+    assert.equal(JSON.stringify(result), before);
+  }
+});
+
+test('missing authored core fields fall back only to that authored source', () => {
+  const fallback = explanation({ definitionChinese: '外部翻译', chineseTranslation: '汇总翻译',
+    dictionaryRecord: record([{ pos: 'n.', en: 'an external noun sense', zh: '外部名词义项' }]) });
+  for (const coreMeaning of [{ zh: ' ', en: ' ' }, { zh: '跑；经营', en: ' ' }, { zh: ' ', en: 'move or operate' }]) {
+    const preview = getCompactWordCard({ ...fallback, dictionarySources: [authoredSource(coreMeaning)] });
+    assert.equal(preview.meaningZh, coreMeaning.zh.trim() || '以比步行更快的速度移动');
+    assert.equal(preview.definitionEn, coreMeaning.en.trim() || 'move faster than walking');
+    assert.equal(preview.partOfSpeech, 'v.');
+  }
+});
+
+test('authored pronunciation takes priority and supplementation requires the same headword', () => {
+  const authored = authoredSource();
+  const primary = explanation({ phonetic: '/external/' });
+  assert.equal(getCompactWordCard({ ...primary, dictionarySources: [authored] }).phonetic, '/rʌn/');
+  const withoutPronunciation = { ...authored, record: { ...authored.record, phonetic: '' } };
+  assert.equal(getCompactWordCard({ ...primary, wordOrPhrase: 'Run', dictionarySources: [withoutPronunciation] }).phonetic, '/external/');
+  assert.equal(getCompactWordCard({ ...primary, wordOrPhrase: 'unrelated', dictionarySources: [withoutPronunciation] }).phonetic, undefined);
+});
+
+test('cards without an authored entry keep the existing dictionary fallback', () => {
+  const fallback = { ...authoredSource(), readageContent: undefined };
+  const primary = toDictionarySourceWordCard(fallback);
+  assert.deepEqual(getCompactWordCard({ ...primary, dictionarySources: [fallback] }), getCompactWordCard(primary));
+});
 
 test('canonical preview selects one bilingual sense and keeps its part of speech and pair together', () => {
   const preview = getCompactWordCard(explanation({

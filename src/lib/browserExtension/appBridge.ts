@@ -24,6 +24,8 @@ export function installExtensionBridge(store: MemoryV2Store): () => void {
   const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('readage-memory-changed') : null;
   if (channel) channel.onmessage = () => store.refreshExternalChanges();
   const ready = () => window.postMessage({ channel: EXTENSION_CHANNEL, type: 'READY' }, location.origin);
+  const localChanged = () => store.refreshExternalChanges();
+  window.addEventListener('readage-local-data-changed', localChanged);
   void store.ensureReady().then(ready).catch(() => {});
-  return () => { window.removeEventListener('message', listener); channel?.close(); };
+  return () => { window.removeEventListener('message', listener); window.removeEventListener('readage-local-data-changed', localChanged); channel?.close(); };
 }

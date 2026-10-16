@@ -1,5 +1,5 @@
 {
-  "name": "English AI - Active Reading App",
+  "name": "ReadAge",
   "description": "AI-powered active English reading, interactive grammar analysis, vocabulary review, and learning progress dashboard.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

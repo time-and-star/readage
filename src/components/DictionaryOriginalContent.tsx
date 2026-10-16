@@ -22,7 +22,10 @@ export const DictionaryOriginalContent: React.FC<DictionaryOriginalContentProps>
     if (node.kind === 'lookup') {
       if (!onLookupRelated || inLookup) return <span key={key}>{children}</span>;
       return <button key={key} type="button" className="dictionary-original-content__related"
-        data-word-card-text={interactions ? 'true' : undefined} onClick={() => onLookupRelated(node.word)}>
+        data-word-card-text={interactions ? 'true' : undefined} onClick={event => {
+          if (interactions) interactions.lookup(node.word, event.currentTarget.getBoundingClientRect());
+          else onLookupRelated(node.word);
+        }}>
         {children}
       </button>;
     }

@@ -2,11 +2,14 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { LocalStorageMemoryStorage } from '../src/lib/memoryV2/localStorageImpl';
 import { MemorySystemV2 } from '../src/lib/memoryV2/memorySystem';
-import { initializeWordMemory } from '../src/lib/memoryV2/fsrsIntegration';
-import { importLookupEvents, readExternalLearningActivity } from '../src/lib/browserExtension/importer';
+import { initializeWordMemory, submitFsrsReview } from '../src/lib/memoryV2/fsrsIntegration';
+import { importLookupEvents, persistJournal, readExternalLearningActivity } from '../src/lib/browserExtension/importer';
+import { repairPassiveReadingRecall } from '../src/lib/memoryV2/passiveRecallRepair';
+import type { WordJournal } from '../src/lib/browserExtension/replay';
 import { getLearningActivityDateKeys, countRecentLearningEvents } from '../src/lib/learningAnalytics';
 import type { LookupEvent } from '../src/lib/browserExtension/protocol';
-import type { RawWordEvent } from '../src/lib/memoryV2/types';
+import { canonicalLearningWordId } from '../src/lib/learningWordIds';
+import type { DailyWordEvidence, RawWordEvent, WordMemoryState } from '../src/lib/memoryV2/types';
 
 class BrowserStorage implements Storage {
   data = new Map<string, string>();
@@ -33,6 +36,106 @@ afterEach(() => { Reflect.deleteProperty(globalThis, 'window'); });
 const now = new Date('2026-09-08T12:00:00Z');
 const lookup = (day: string, id = crypto.randomUUID()): LookupEvent => ({ version: 1, id, query: 'running', lemma: 'run',
   occurredAt: `${day}T12:00:00.000Z`, timezone: 'Asia/Shanghai', sourceId: 'web:' + 'a'.repeat(64) });
+
+test('hyphenated extension words import once under the same spaced learning identity as reading', async () => {
+  const { storage } = setup();
+  for (const query of ['well-known', 'mother-in-law']) {
+    const wordId = canonicalLearningWordId(query);
+    const event = { ...lookup('2026-09-05'), query, lemma: wordId };
+    assert.deepEqual(await importLookupEvents(storage, 'u', [event], 'Asia/Shanghai', now), [event.id]);
+    const first = await storage.getMemoryState('u', wordId);
+    assert.ok(first);
+    assert.equal(first.wordId, wordId);
+    assert.equal(await storage.getMemoryState('u', query), null);
+    await importLookupEvents(storage, 'u', [event], 'Asia/Shanghai', now);
+    assert.deepEqual(await storage.getMemoryState('u', wordId), first);
+    const raw = await storage.getRawEventsByDate('u', wordId, '2026-09-05');
+    assert.equal(raw.length, 2);
+    assert.ok(raw.every(row => row.wordId === wordId));
+  }
+});
+
+function passiveLegacy() {
+  const baseline = initializeWordMemory('u', 'run');
+  baseline.nextReview = baseline.fsrsCard.due = '2026-08-01T00:00:00.000Z';
+  const state = submitFsrsReview(baseline, 3, new Date('2026-08-01T23:59:59.999Z'));
+  const day: DailyWordEvidence = { userId: 'u', wordId: 'run', localDate: '2026-08-01',
+    articleCount: 1, validExposureCount: 1, clickedOccurrenceCount: 0, pendingGrade: 'Good',
+    finalizedAt: '2026-08-02T00:00:00.000Z', articleEvidence: [{ userId: 'u', wordId: 'run', articleId: 'reading-a',
+      localDate: '2026-08-01', validExposureCount: 1, clickedOccurrenceCount: 0,
+      firstSeenAt: '2026-08-01T12:00:00.000Z', lastSeenAt: '2026-08-01T12:00:00.000Z' }] };
+  const journal: WordJournal = { version: 1, userId: 'u', wordId: 'run', baselineState: state,
+    baselineDaily: [], baselineRaw: [], events: [] };
+  return { baseline, state, day, journal };
+}
+
+test('startup journal refresh retains a current passive audit when the frozen daily baseline was pruned', async () => {
+  const { storage } = setup();
+  const original = passiveLegacy();
+  const key = `extension-journal:${JSON.stringify(['u', 'run'])}`;
+  await storage.saveMemoryState(original.state);
+  await storage.saveDailyEvidence(original.day);
+  await storage.setMeta('extension-journal-index:u', ['run']);
+  await storage.setMeta(key, original.journal);
+  const before = structuredClone(original.journal);
+  const writes: WordMemoryState[] = [];
+  const save = storage.saveMemoryState.bind(storage);
+  storage.saveMemoryState = async state => { writes.push(structuredClone(state)); await save(state); };
+  const system = new MemorySystemV2(storage, undefined, 'UTC');
+  await system.finalizeHistoricalDates('u', 'UTC');
+  assert.equal(writes.length, 2, 'both initial repair and journal recovery save the repaired history');
+  assert.ok(writes.every(state => state.fsrsCard.reps === 0 && state.passiveReadingReviews?.length === 1));
+  const first = (await storage.getMemoryState('u', 'run'))!;
+  assert.deepEqual(first.fsrsReviews, []);
+  assert.deepEqual(first.passiveReadingReviews, original.state.fsrsReviews);
+  await system.finalizeHistoricalDates('u', 'UTC');
+  assert.deepEqual(await storage.getMemoryState('u', 'run'), first);
+  assert.deepEqual(await storage.getMeta(key), before, 'current audit does not rewrite the immutable journal');
+});
+
+test('current passive audit removes old credit without replacing genuine baseline recalls or their metadata', async () => {
+  const { storage } = setup();
+  const original = passiveLegacy();
+  const at = new Date('2026-08-03T12:00:00.000Z');
+  original.state = submitFsrsReview(original.state, 3, at);
+  original.state.fsrsReviews[1] = { ...original.state.fsrsReviews[1], source: 'flashcard',
+    verificationAttemptIds: ['card:genuine'], originalFlashcardRating: 2,
+    flashcardRevisions: [{ correctionId: 'fix:genuine', revision: 1, previousRating: 2, rating: 3,
+      correctedAt: '2026-08-04T12:00:00.000Z' }] };
+  original.journal.baselineState = original.state;
+  const repaired = repairPassiveReadingRecall(original.state, [original.day], 'UTC', now);
+  await storage.saveMemoryState(repaired);
+  const before = structuredClone(original.journal);
+  Object.freeze(original.journal.baselineState);
+  Object.freeze(original.journal);
+  await persistJournal(storage, original.journal, 'UTC', now);
+  const first = (await storage.getMemoryState('u', 'run'))!;
+  assert.deepEqual(first.fsrsCard, repaired.fsrsCard);
+  assert.deepEqual(first.fsrsReviews, repaired.fsrsReviews);
+  assert.deepEqual(first.passiveReadingReviews, repaired.passiveReadingReviews);
+  await persistJournal(storage, original.journal, 'UTC', now);
+  assert.deepEqual(await storage.getMemoryState('u', 'run'), first);
+  await persistJournal(storage, original.journal, 'UTC', new Date('2026-09-09T12:00:00Z'));
+  const later = (await storage.getMemoryState('u', 'run'))!;
+  assert.deepEqual(later.fsrsCard, first.fsrsCard);
+  assert.deepEqual(later.fsrsReviews, first.fsrsReviews);
+  assert.deepEqual(later.passiveReadingReviews, first.passiveReadingReviews);
+  assert.deepEqual(original.journal, before);
+});
+
+test('an empty original baseline retains and deduplicates the current passive audit on repeated journal saves', async () => {
+  const { storage } = setup();
+  const original = passiveLegacy();
+  const repaired = repairPassiveReadingRecall(original.state, [original.day], 'UTC', now);
+  repaired.passiveReadingReviews!.push({ ...repaired.passiveReadingReviews![0] });
+  await storage.saveMemoryState(repaired);
+  original.journal.baselineState = null;
+  await persistJournal(storage, original.journal, 'UTC', now);
+  await persistJournal(storage, original.journal, 'UTC', now);
+  const saved = (await storage.getMemoryState('u', 'run'))!;
+  assert.equal(saved.fsrsCard.reps, 0);
+  assert.deepEqual(saved.passiveReadingReviews, original.state.fsrsReviews);
+});
 
 test('extension activity recovers from stored journals and preserves captured dates without duplicates', async () => {
   const { storage } = setup();

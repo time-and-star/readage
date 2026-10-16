@@ -24,6 +24,8 @@ export async function saveArticleImage(buffer: Buffer, dataRoot = getDataRoot())
   const file = path.join(dataRoot, 'assets', name);
   try {
     await fs.access(file);
+    const existing = await fs.readFile(file);
+    if (!existing.equals(buffer)) await writeFileAtomic(file, buffer);
   } catch {
     await writeFileAtomic(file, buffer);
   }

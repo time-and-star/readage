@@ -13,6 +13,111 @@ const config = (remote = false, maxTextLength = 2000, preload = false) => new Re
   ok: true, configured: remote, provider: remote ? 'openai-compatible' : 'browser', maxTextLength, preload,
 }), { headers: { 'Content-Type': 'application/json' } });
 const audioResponse = () => new Response('audio bytes', { headers: { 'Content-Type': 'audio/mpeg' } });
+
+test('French speech uses declared capability and preserves the stored English accent', async () => {
+  const requests: Record<string, unknown>[] = [];
+  const f = fixture(async (url, options) => {
+    if (url === '/api/tts/status') return new Response(JSON.stringify({ ok: true, configured: true, provider: 'openai-compatible',
+      maxTextLength: 200, languages: ['en-US', 'en-GB', 'fr-FR'] }));
+    requests.push(JSON.parse(options!.body as string)); return audioResponse();
+  });
+  f.client.setSpeechPreferences({ lang: 'en-GB' });
+  await f.client.speakText('Les chevaux mangent.', { lang: 'fr', scope: 'french' });
+  assert.equal(requests[0].lang, 'fr-FR');
+  assert.equal(f.client.getSpeechPreferences().lang, 'en-GB');
+  await f.client.speakText('The horses eat.');
+  assert.equal(requests[1].lang, 'en-GB');
+});
+
+test('an English-only service is never asked to read French and a missing French device voice is explicit', async () => {
+  let syntheses = 0;
+  const f = fixture(async url => { if (url === '/api/tts/status') return config(true); syntheses++; return audioResponse(); });
+  await assert.rejects(f.client.speakText('Bonjour.', { lang: 'fr-FR' }), /没有此语言/);
+  assert.equal(syntheses, 0); assert.equal(f.utterances.length, 0);
+  f.setVoices([voice('French', 'fr-FR')]);
+  const result = await f.client.speakText('Bonjour.', { lang: 'fr-FR' });
+  assert.equal(result.provider, 'browser');
+  assert.equal(f.utterances[0].voice?.lang, 'fr-FR');
+  assert.equal(f.utterances[0].lang, 'fr-FR');
+  await assert.rejects(f.client.speakText('Bad language.', { lang: 'bad_language' }), /语言标识无效/);
+  assert.equal(f.client.getSnapshot().state.status, 'error');
+  await f.client.speakText('Bonjour.', { lang: 'fr-FR' });
+  assert.equal(f.client.getSnapshot().state.status, 'idle');
+});
+
+test('Japanese preparation and playback share normalized language cache and preserve the English accent', async () => {
+  const requests: Record<string, unknown>[] = [];
+  const f = fixture(async (url, options) => {
+    if (url === '/api/tts/status') return new Response(JSON.stringify({ ok: true, configured: true,
+      provider: 'openai-compatible', preload: true, maxTextLength: 200, languages: ['en-US', 'en-GB', 'ja-JP'] }));
+    requests.push(JSON.parse(options!.body as string));
+    return audioResponse();
+  });
+  f.client.setSpeechPreferences({ lang: 'en-GB', rate: 0.9 });
+  f.client.prepareText('日本語を読みます。', { lang: 'ja', scope: 'japanese' });
+  await tick();
+  assert.equal(f.audios.length, 0);
+  assert.equal(f.client.getSnapshot().state.status, 'idle');
+  await f.client.speakText('日本語を読みます。', { lang: 'ja', scope: 'japanese' });
+  await f.client.speakText('日本語を読みます。', { lang: 'ja-JP' });
+  assert.deepEqual(requests, [{ text: '日本語を読みます。', lang: 'ja-JP', rate: 0.9 }]);
+  assert.equal(f.client.getSpeechPreferences().lang, 'en-GB');
+  await f.client.speakText('日本語を読みます。', { lang: 'ja', rate: 1 });
+  await f.client.speakText('日本語を読みます。');
+  assert.equal(requests.length, 3);
+  assert.equal(requests[1].lang, 'ja-JP');
+  assert.equal(requests[2].lang, 'en-GB');
+  assert.equal(f.utterances.length, 0);
+  assert.equal(f.liveURLs.size, 0);
+});
+
+test('Japanese uses a matching device voice when the service has no Japanese capability', async () => {
+  let syntheses = 0;
+  const f = fixture(async url => { if (url === '/api/tts/status') return config(true); syntheses++; return audioResponse(); });
+  await assert.rejects(f.client.speakText('日本語を読みます。', { lang: 'ja' }), /没有此语言/);
+  assert.equal(syntheses, 0);
+  assert.equal(f.utterances.length, 0);
+  f.setVoices([voice('English', 'en-US'), voice('Japanese Natural', 'ja-JP')]);
+  const result = await f.client.speakText('日本語を読みます。', { lang: 'ja' });
+  assert.equal(result.provider, 'browser');
+  assert.equal(f.utterances[0].voice?.lang, 'ja-JP');
+  assert.equal(f.utterances[0].lang, 'ja-JP');
+});
+
+test('Japanese service failure falls back to Japanese device speech', async () => {
+  const f = fixture(async url => url === '/api/tts/status'
+    ? new Response(JSON.stringify({ ok: true, configured: true, provider: 'openai-compatible', languages: ['ja-JP'] }))
+    : new Response('{}', { status: 503 }));
+  f.setVoices([voice('English', 'en-US'), voice('Japanese', 'ja-JP')]);
+  const result = await f.client.speakText('今日は晴れです。', { lang: 'ja' });
+  assert.equal(result.provider, 'browser');
+  assert.equal(result.fallback, true);
+  assert.equal(f.utterances[0].lang, 'ja-JP');
+  assert.equal(f.utterances[0].text, '今日は晴れです。');
+});
+
+test('a Japanese prefetch failure resumes at forced source boundaries without skipping words', async () => {
+  let requests = 0;
+  const text = `${'図書館'.repeat(60)}へ行きます。`;
+  const chunks = splitRemoteSpeechText(text, 200, 100, 'ja-JP');
+  const f = fixture(async url => {
+    if (url === '/api/tts/status') return new Response(JSON.stringify({ ok: true, configured: true,
+      provider: 'openai-compatible', preload: true, maxTextLength: 200, languages: ['ja-JP'] }));
+    requests += 1;
+    return requests === 1 ? audioResponse() : new Response('{}', { status: 503 });
+  });
+  f.setVoices([voice('Japanese', 'ja-JP')]);
+  const boundaries: number[] = [];
+  f.client.subscribeProgress(() => {
+    const word = f.client.getProgress().word;
+    if (word) boundaries.push(word.start);
+  });
+  const result = await f.client.speakText(text, { lang: 'ja', target: { articleId: 'ja', startOffset: 0 } });
+  assert.equal(result.fallback, true);
+  assert.equal(f.audios.length, 1);
+  assert.equal(f.utterances.map(utterance => utterance.text).join(''), chunks.slice(1).join(''));
+  assert.ok(boundaries.includes(chunks[0].length), 'fallback highlighting starts at the first unread character');
+});
 const voice = (name: string, lang: string, isDefault = false) => ({ name, lang, default: isDefault } as SpeechSynthesisVoice);
 
 class FakeUtterance {
@@ -92,6 +197,40 @@ test('article chunks preserve paragraph pauses, sentence punctuation, and stay w
   assert.ok(chunks[0].endsWith('.'));
   assert.equal(splitSpeechText('  ').length, 0);
   assert.ok(splitSpeechText('x'.repeat(2001)).every((chunk) => chunk.length <= 2000));
+});
+
+test('Japanese sentence and opening chunks preserve punctuation and text without inserting spaces', () => {
+  const text = '今日は晴れです。「図書館へ行きます。」本を借りました！日本語を勉強します。';
+  for (const limit of [10, 20]) {
+    const chunks = splitSpeechText(text, limit, 'ja-JP');
+    assert.ok(chunks.every(chunk => chunk.length > 0 && chunk.length <= limit));
+    assert.equal(chunks.join(''), text);
+  }
+  const remote = splitRemoteSpeechText(text, 20, 20, 'ja-JP');
+  assert.equal(remote[0], '今日は晴れです。');
+  assert.equal(remote.join(''), text);
+  const phrase = `${'日本語'.repeat(18)}、${'読書'.repeat(60)}。`;
+  const phraseChunks = splitRemoteSpeechText(phrase, 200, 100, 'ja-JP');
+  assert.equal(phraseChunks[0], `${'日本語'.repeat(18)}、`);
+  assert.equal(phraseChunks.join(''), phrase);
+  const long = `${'本📖'.repeat(30)}。`;
+  const longChunks = splitSpeechText(long, 10, 'ja-JP');
+  assert.equal(longChunks.join(''), long);
+  assert.ok(longChunks.every(chunk => !/[\uD800-\uDBFF]$/.test(chunk)));
+});
+
+test('Japanese punctuation also splits on devices without Intl.Segmenter', () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Intl, 'Segmenter')!;
+  try {
+    Object.defineProperty(Intl, 'Segmenter', { ...descriptor, value: undefined });
+    const text = '今日は晴れです。明日は雨です。「本を読みます。」';
+    const chunks = splitRemoteSpeechText(text, 20, 20, 'ja-JP');
+    assert.equal(chunks[0], '今日は晴れです。');
+    assert.equal(chunks.join(''), text);
+    assert.deepEqual(splitSpeechText('春です。夏です。秋です。', 8, 'ja-JP'), ['春です。夏です。', '秋です。']);
+  } finally {
+    Object.defineProperty(Intl, 'Segmenter', descriptor);
+  }
 });
 
 test('local preparation uses matching opening and preferences without playback or visible state changes', async () => {
@@ -426,6 +565,106 @@ test('the opening sentence starts playing while the following audio is still bei
   assert.equal(f.audios.length, 2);
   f.audios[1].onended?.();
   assert.equal((await playing).cancelled, false);
+  assert.equal(f.liveURLs.size, 0);
+});
+
+test('ready audio remains loading until the media actually starts; late play completion cannot revive cancelled playback', async () => {
+  const playReady = deferred<void>();
+  const f = fixture(async url => url === '/api/tts/status' ? config(true) : audioResponse(), false);
+  const createAudio = f.environment.createAudio;
+  f.environment.createAudio = () => {
+    const audio = createAudio();
+    audio.play = () => playReady.promise;
+    return audio;
+  };
+  const spoken = f.client.speakText('Ready to read.', { scope: 'reader', target: { articleId: 'fixture', startOffset: 0 } });
+  await tick();
+  assert.equal(f.audios.length, 1);
+  assert.equal(f.client.getSnapshot().state.status, 'loading');
+  assert.equal(f.client.getSnapshot().state.timing?.firstPlaybackMs, undefined);
+  assert.deepEqual(f.client.getProgress(), {});
+  f.audios[0].onplaying?.();
+  assert.equal(f.client.getSnapshot().state.status, 'speaking');
+  assert.ok(f.client.getSnapshot().state.timing?.firstPlaybackMs !== undefined);
+  f.client.stopSpeech('reader');
+  assert.equal((await spoken).cancelled, true);
+  playReady.resolve();
+  await tick();
+  assert.equal(f.client.getSnapshot().state.status, 'idle');
+  assert.deepEqual(f.client.getProgress(), {});
+  assert.equal(f.audios.length, 1);
+  assert.equal(f.liveURLs.size, 0);
+});
+
+test('slow prefetch clears the completed word guide and shows loading, then resumes the exact next chunk', async () => {
+  const nextAudio = deferred<Response>();
+  const requested: string[] = [];
+  const first = 'The opening sentence is ready.';
+  const second = 'The remaining sentence waits for its local voice to finish generating and must play once.';
+  const f = fixture(async (url, init) => {
+    if (url === '/api/tts/status') return config(true, 200, true);
+    requested.push(JSON.parse(String(init?.body)).text);
+    return requested.length === 1 ? audioResponse() : nextAudio.promise;
+  }, false);
+  const spoken = f.client.speakText(`${first}\n\n${second}`, { scope: 'reader', target: { articleId: 'fixture', startOffset: 0 } });
+  await tick();
+  f.audios[0].onplaying?.();
+  f.audios[0].currentTime = 7.9;
+  f.audios[0].ontimeupdate?.();
+  assert.ok(f.client.getProgress().word);
+  f.audios[0].onended?.();
+  await tick();
+  assert.equal(f.client.getSnapshot().state.status, 'loading');
+  assert.deepEqual(f.client.getProgress(), {});
+  assert.equal(f.audios.length, 1);
+  assert.equal(f.audios[0].src, '');
+  nextAudio.resolve(audioResponse());
+  await tick();
+  assert.deepEqual(requested, [first, second]);
+  assert.equal(f.audios.length, 2);
+  f.audios[1].onplaying?.();
+  assert.equal(f.client.getSnapshot().state.status, 'speaking');
+  assert.equal(f.client.getProgress().word?.start, first.length + 2);
+  f.audios[1].onended?.();
+  assert.equal((await spoken).cancelled, false);
+  assert.equal(f.client.getSnapshot().state.status, 'idle');
+  assert.equal(f.liveURLs.size, 0);
+});
+
+test('already prepared next chunks do not flash loading, and cancellation in a prefetch gap cannot restart or repeat text', async () => {
+  const prepared = fixture(async url => url === '/api/tts/status' ? config(true, 50) : audioResponse(), false);
+  const statuses: string[] = [];
+  prepared.client.subscribe(() => statuses.push(prepared.client.getSnapshot().state.status));
+  const complete = prepared.client.speakText(`${'A'.repeat(45)}\n\n${'B'.repeat(45)}`);
+  await tick();
+  prepared.audios[0].onended?.();
+  await tick();
+  assert.equal(prepared.audios.length, 2);
+  assert.equal(statuses.lastIndexOf('loading'), statuses.indexOf('loading'));
+  prepared.audios[1].onended?.();
+  await complete;
+
+  const late = deferred<Response>();
+  const requested: string[] = [];
+  const f = fixture(async (url, init) => {
+    if (url === '/api/tts/status') return config(true, 200, true);
+    requested.push(JSON.parse(String(init?.body)).text);
+    return requested.length === 1 ? audioResponse() : late.promise;
+  }, false);
+  const cancelled = f.client.speakText('First sentence.\n\nThe second sentence is longer and waits for generation before playing after the first sentence.',
+    { scope: 'reader', target: { articleId: 'fixture', startOffset: 0 } });
+  await tick();
+  f.audios[0].onended?.();
+  await tick();
+  assert.equal(f.client.getSnapshot().state.status, 'loading');
+  f.client.stopSpeech('reader');
+  assert.equal((await cancelled).cancelled, true);
+  late.resolve(audioResponse());
+  await tick();
+  assert.equal(f.audios.length, 1);
+  assert.equal(requested.length, 2);
+  assert.equal(f.client.getSnapshot().state.status, 'idle');
+  assert.deepEqual(f.client.getProgress(), {});
   assert.equal(f.liveURLs.size, 0);
 });
 

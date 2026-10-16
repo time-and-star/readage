@@ -4,6 +4,7 @@ import type { GalleryWindowItem } from '../lib/galleryWindow';
 import { buildGalleryArtDirection, galleryImageInsets } from '../lib/galleryArtDirection';
 import { readGlassImageAnalysis } from '../lib/glassImageAnalysis';
 import { StainedGlass } from './StainedGlass';
+import { nativeAssetUrl } from '../lib/platform/nativeFiles';
 
 interface GalleryStoryProps {
   item: GalleryWindowItem;
@@ -57,7 +58,7 @@ export const GalleryStory = memo(function GalleryStory({ item, eager, disabled, 
       <div className="reading-gallery__artwork">
         <div className="reading-gallery__mat">
           <div className="reading-gallery__image">
-            <img ref={imageRef} src={item.image.src} alt={item.image.alt || item.title}
+            <img ref={imageRef} src={nativeAssetUrl(item.image.src)} alt={item.image.alt || item.title}
               loading={eager ? 'eager' : 'lazy'} decoding="async" draggable={false}
               onLoad={event => directImage(event.currentTarget)} onError={onImageError} />
             <StainedGlass identity={identity} imageSrc={item.image.src} form={direction.form} />

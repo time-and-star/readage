@@ -30,6 +30,7 @@ export interface ImportedMdxManifest {
   bytes: number;
   entryCount: number;
   filename: string;
+  collationLocale?: string;
 }
 
 function requireFormat(condition: unknown, message?: string): asserts condition { if (!condition) throw new MdxFormatError(message); }
@@ -293,6 +294,10 @@ export class MdxDictionaryAdapter implements DictionaryAdapter {
       requireFormat(inspected.sha256 === this.options.manifest.sha256 && inspected.entryCount === this.count);
       this.caseSensitive = inspected.caseSensitive;
       this.parser = new BoundedMdxReader(this.options.file, { isStripKey: false, isCaseSensitive: true });
+      if (this.options.manifest.collationLocale) {
+        const collator = new Intl.Collator(this.options.manifest.collationLocale);
+        this.parser.keywordList.sort((a, b) => collator.compare(a.keyText, b.keyText));
+      }
       const offsets = [...new Set(this.parser.keywordList.map(item => item.recordStartOffset))].sort((a, b) => a - b);
       const ends = new Map(offsets.map((offset, index) => [offset, offsets[index + 1] ?? inspected.recordBytes]));
       for (const [index, item] of this.parser.keywordList.entries()) {

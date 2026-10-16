@@ -16,6 +16,7 @@ import { canonicalLearningWordId } from './learningWordIds';
 import {
   emitVocabClick,
   emitVocabExposure,
+  isVocabTelemetryEnabled,
   toVocabSnapshot,
 } from './vocabTelemetry';
 
@@ -195,6 +196,7 @@ export function useMemoryV2Integration(
 
   const snapshotWords = useCallback(
     async (wordIds: readonly string[]) => {
+      if (!isVocabTelemetryEnabled()) return [];
       const unique = [...new Set((await resolveLearningWordIds(wordIds)).filter(Boolean))];
       if (unique.length === 0) return [];
       try {

@@ -1,11 +1,12 @@
 import { createDictionaryClient } from '../../packages/dictionary/client';
 import { DictionaryCatalogCache, type CatalogSnapshot } from '../../packages/dictionary/cache';
 import type { SourceCatalog } from '../../packages/dictionary/contracts';
+import { IS_ANDROID } from './platform/runtime';
 
 const STORAGE_KEY = 'english-ai:dictionary-catalog:v1';
 const client = createDictionaryClient();
 export const dictionaryCatalogCache = new DictionaryCatalogCache({
-  fetchCatalog: () => client.listSources(AbortSignal.timeout(2_000)),
+  fetchCatalog: () => client.listSources(AbortSignal.timeout(IS_ANDROID ? 30_000 : 2_000)),
   async read() {
     if (typeof localStorage === 'undefined') return undefined;
     const raw = localStorage.getItem(STORAGE_KEY);

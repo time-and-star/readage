@@ -46,6 +46,9 @@ function stripHtml(html: string, imageFormatter?: HtmlToTextOptions['formatters'
       { selector: 'script', format: 'skip' },
       { selector: 'style', format: 'skip' },
       { selector: 'nav', format: 'skip' },
+      // Keep Japanese ruby base text readable and queryable without inline furigana.
+      { selector: 'rt', format: 'skip' },
+      { selector: 'rp', format: 'skip' },
     ],
   });
 }
@@ -87,7 +90,9 @@ function splitHtmlDocuments(html: string): string[] {
 }
 
 function textFromHtmlFragment(fragment: string): string {
-  return htmlToText(fragment, { wordwrap: false })
+  return htmlToText(fragment, { wordwrap: false, selectors: [
+    { selector: 'rt', format: 'skip' }, { selector: 'rp', format: 'skip' },
+  ] })
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -182,14 +187,16 @@ interface ImageCandidate {
   afterParagraphIndex: number;
 }
 
-function collectImagePositions(html: string, htmlPath: string, paragraphs: string[]): ImageCandidate[] {
+function collectImagePositions(html: string, htmlPath: string, paragraphs: string[], inlineImages = false): ImageCandidate[] {
   const candidates: ImageCandidate[] = [];
   const markerPrefix = `\uE000IMAGE${randomUUID().replace(/-/g, '')}_`;
   const marker = new RegExp(`${markerPrefix}(\\d+)\uE001`, 'g');
   const baseDir = htmlPath.includes('/') ? htmlPath.slice(0, htmlPath.lastIndexOf('/')) : '';
   const markedText = stripHtml(html, {
     articleImage: (node, _walk, builder) => {
-      const archivePath = resolveEpubPath(baseDir, String(node.attribs?.src || ''));
+      const source = String(node.attribs?.src || '');
+      const archivePath = inlineImages && /^data:image\/(png|jpe?g|gif|webp);base64,/i.test(source)
+        ? source : resolveEpubPath(baseDir, source);
       if (!archivePath) return;
       const index = candidates.length;
       candidates.push({
@@ -351,6 +358,36 @@ export function parseHtmlContent(html: string, fallbackTitle: string, minWords =
     const chapter = parseHtmlDocument(document, fallbackTitle || `Section ${index + 1}`, minWords);
     if (chapter) chapters.push(chapter);
     index += 1;
+  }
+  return chapters;
+}
+
+/** HTML uploads contain their own data images; external URLs are never fetched. */
+export async function parseHtmlContentWithMedia(html: string, fallbackTitle: string, options: EpubParseOptions = {}): Promise<ParsedChapter[]> {
+  const chapters: ParsedChapter[] = [], saved = new Map<string, Promise<string | null>>();
+  let imageBytes = 0;
+  for (const document of splitHtmlDocuments(html)) {
+    options.signal?.throwIfAborted();
+    const chapter = parseHtmlDocument(document, fallbackTitle, options.minWords);
+    if (!chapter) continue;
+    chapter.media = [];
+    for (const image of collectImagePositions(document, '', chapter.paragraphs, true)) {
+      options.signal?.throwIfAborted();
+      if (!/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(image.archivePath)) continue;
+      const encoded = image.archivePath.slice(image.archivePath.indexOf(',') + 1).replace(/\s+/g, '');
+      if (encoded.length > 24 * 1024 * 1024) throw new Error('HTML 内嵌图片过大。');
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) continue;
+      if (!saved.has(image.archivePath)) {
+        const bytes = Buffer.from(encoded, 'base64');
+        imageBytes += bytes.length;
+        if (bytes.length > 16 * 1024 * 1024 || imageBytes > 64 * 1024 * 1024) throw new Error('HTML 插图超过允许大小。');
+        saved.set(image.archivePath, (options.saveImage || saveArticleImage)(bytes));
+      }
+      const src = await saved.get(image.archivePath);
+      options.signal?.throwIfAborted();
+      if (src) chapter.media.push({ src, alt: image.alt, caption: image.caption, afterParagraphIndex: image.afterParagraphIndex });
+    }
+    chapters.push(chapter);
   }
   return chapters;
 }

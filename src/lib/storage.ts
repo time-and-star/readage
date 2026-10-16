@@ -1,5 +1,6 @@
 import { useCallback, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react';
 import type { ArticleSession, ChatMessage } from '../types';
+import { commitLocalSetting, flushLocalDatabaseWrites, getApplicationStorage, isLocalDatabaseActive } from './localDatabase';
 
 const PREFIX = 'english-ai:v2';
 
@@ -98,11 +99,10 @@ export function writeStorage<T>(storage: Storage | undefined, key: string, value
 }
 
 function getBrowserStorage(): Storage | undefined {
-  try { return typeof window === 'undefined' ? undefined : window.localStorage; }
-  catch { return undefined; }
+  return getApplicationStorage();
 }
 
-type PendingWrite<T> = { action: SetStateAction<T>; resolve: () => void; reject: (error: Error) => void };
+type PendingWrite<T> = { action: SetStateAction<T>; operationId: string; resolve: () => void; reject: (error: Error) => void };
 type PersistentEntry<T> = {
   value: T; fallback: T; normalize?: StorageNormalizer<T>; listeners: Set<() => void>;
   pending: PendingWrite<T>[]; running: boolean; currentFlush?: Promise<void>;
@@ -130,14 +130,16 @@ export function readPersistentValue<T>(key: string, fallback: T, normalize?: Sto
 
 /** Rebase operations on the latest value while holding the cross-tab write lock. */
 export async function commitPersistentUpdate<T>(
-  storage: Storage, key: string, fallback: T, action: SetStateAction<T>, normalize?: StorageNormalizer<T>,
+  storage: Storage, key: string, fallback: T, action: SetStateAction<T>, normalize?: StorageNormalizer<T>, operationId?: string,
 ): Promise<T> {
+  if (isLocalDatabaseActive() && storage === getApplicationStorage()) return commitLocalSetting(key, fallback, action, normalize, operationId);
   const commit = async () => {
     const raw = storage.getItem(key);
     const parsed = raw === null ? fallback : JSON.parse(raw);
     const previous = normalize ? normalize(parsed, fallback) : parsed as T;
     const next = applyAction(previous, action);
-    storage.setItem(key, JSON.stringify(next));
+    const serialized = JSON.stringify(next);
+    if (serialized !== raw) storage.setItem(key, serialized);
     return next;
   };
   if (typeof navigator !== 'undefined' && navigator.locks) {
@@ -155,7 +157,7 @@ async function performEntryFlush<T>(key: string, entry: PersistentEntry<T>) {
       try {
         const storage = getBrowserStorage();
         if (!storage) throw new Error('浏览器未允许本地存储。');
-        const committed = await commitPersistentUpdate(storage, key, entry.fallback, pending.action, entry.normalize);
+        const committed = await commitPersistentUpdate(storage, key, entry.fallback, pending.action, entry.normalize, pending.operationId);
         entry.pending.shift();
         entry.value = entry.pending.reduce((value, item) => applyAction(value, item.action), committed);
         errors.delete(key);
@@ -192,13 +194,15 @@ export async function flushPendingPersistentWrites(): Promise<void> {
       throw new Error('学习记录尚未全部保存，备份未导出。请保持页面打开并重试保存。');
     }
   }
+  await flushLocalDatabaseWrites();
 }
 
 export function updatePersistentValue<T>(key: string, fallback: T, action: SetStateAction<T>): Promise<void> {
   const entry = entryFor(key, fallback);
-  entry.value = applyAction(entry.value, action);
-  const done = new Promise<void>((resolve, reject) => entry.pending.push({ action, resolve, reject }));
-  entry.listeners.forEach(listener => listener());
+  const previous = entry.value;
+  entry.value = applyAction(previous, action);
+  const done = new Promise<void>((resolve, reject) => entry.pending.push({ action, operationId: crypto.randomUUID(), resolve, reject }));
+  if (!Object.is(previous, entry.value)) entry.listeners.forEach(listener => listener());
   void flushEntry(key, entry);
   return done;
 }
@@ -209,6 +213,16 @@ export function usePersistenceError() {
 }
 
 if (typeof window !== 'undefined') {
+  window.addEventListener('readage-local-data-changed', event => {
+    const changedKeys = (event as CustomEvent<{ keys?: string[] }>).detail?.keys;
+    const keys = changedKeys ? new Set(changedKeys) : null;
+    entries.forEach((entry, key) => {
+      if (keys && !keys.has(key)) return;
+      const committed = readStorage(getBrowserStorage(), key, entry.fallback, entry.normalize);
+      entry.value = entry.pending.reduce((value, item) => applyAction(value, item.action), committed);
+      entry.listeners.forEach(listener => listener());
+    });
+  });
   window.addEventListener('storage', event => {
     entries.forEach((entry, key) => {
       if (event.key !== null && event.key !== key) return;

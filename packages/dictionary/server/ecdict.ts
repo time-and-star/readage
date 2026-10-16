@@ -15,7 +15,7 @@ export class EcdictAdapter implements DictionaryAdapter {
   constructor(private options: { dataDir?: string; manifestPath?: string } = {}) {
     let contentVersion = 'ecdict:unavailable';
     try {
-      const manifest = fs.readFileSync(options.manifestPath ?? path.resolve('vendor/nextword-local-dictionary/DATA_MANIFEST.json'));
+      const manifest = fs.readFileSync(options.manifestPath ?? path.resolve(process.env.READGE_APP_ROOT || '.', 'vendor/nextword-local-dictionary/DATA_MANIFEST.json'));
       contentVersion = `ecdict:${createHash('sha256').update(manifest).digest('hex')}`;
       // Custom packs may omit a manifest. Hash their header/index identity without loading the pack.
       if (options.dataDir) {

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { buildSync } from 'esbuild';
 import { dictionaryCacheKey } from '../packages/dictionary/cache';
+import { canonicalLearningWordId } from '../src/lib/learningWordIds';
+import { parseLookupBatch } from '../src/lib/browserExtension/protocol';
 
 const code = buildSync({ entryPoints: ['extension/background.ts'], bundle: true, write: false,
   format: 'iife', platform: 'browser', target: 'es2022', absWorkingDir: process.cwd() }).outputFiles[0].text;
@@ -14,6 +16,7 @@ const entry = { query: 'running', lemma: 'run', phonetic: '/rʌn/', cefrLevel: '
 
 function harness() {
   let displayedEntry: Record<string, any> = structuredClone(entry);
+  let identityLemma = entry.learningTermRef.stableId;
   const values: Record<string, any> = { settings: { origin, enabled: true, sites: ['https://example.com'] } };
   let receive: any; let fetches = 0; let online = true; let responseMode: 'success' | 'http' | 'json' | 'invalid' = 'success';
   let fetchGate: Promise<void> | null = null;
@@ -56,6 +59,7 @@ function harness() {
       if (responseMode === 'json') throw new SyntaxError('Unexpected token <');
       if (responseMode === 'invalid') return { ok: true, results: [] };
       if (url.endsWith('/v1/sources')) return { ok: true, catalog: { protocolVersion: 'dictionary-api.v1', catalogVersion: 'test-catalog.v1', defaultSource: 'native-reviewed', sources: [] } };
+      if (url.endsWith('/lemmas')) return { ok: true, lemmas: [identityLemma] };
       return url.endsWith('/health') ? { dictionary: { available: true } } : { ok: true, results: [responseEntry] };
     } };
   };
@@ -67,6 +71,7 @@ function harness() {
     fetches: () => fetches, offline() { online = false; }, respondWith(mode: typeof responseMode) { responseMode = mode; },
     displayHeadword(headword: string) { displayedEntry.lemma = headword; },
     displayEntry(changes: Record<string, unknown>) { displayedEntry = { ...structuredClone(entry), ...changes }; },
+    identity(headword: string) { identityLemma = headword; },
     onLookup(handler: typeof lookupHandler) { lookupHandler = handler; },
     onImport(handler: typeof importHandler) { importHandler = handler; },
     pauseRequests() { let release!: () => void; fetchGate = new Promise<void>(resolve => { release = resolve; }); return release; } };
@@ -82,6 +87,43 @@ test('extension evidence uses the independent identity when a displayed headword
   const repeatedId = crypto.randomUUID();
   await h.send({ type: 'LOOKUP', lookupId: repeatedId, word: 'running' });
   assert.equal(h.values[`lookup:${origin}:${repeatedId}`].event.lemma, 'run');
+});
+
+test('hyphenated selections return cards and sync the same canonical spaced identities', async () => {
+  for (const query of ['well-known', 'mother-in-law']) {
+    const stableId = canonicalLearningWordId(query);
+    const h = harness();
+    h.displayEntry({ query, lemma: query, learningTermRef: { language: 'en', kind: 'phrase', stableId } });
+    const lookupId = crypto.randomUUID();
+    const result = await h.send({ type: 'LOOKUP', lookupId, word: query });
+    assert.equal(result.ok, true);
+    assert.equal(result.entry.lemma, query);
+    assert.equal(h.values[`lookup:${origin}:${lookupId}`].event.lemma, stableId);
+    h.offline();
+    assert.equal((await h.send({ type: 'LOOKUP', lookupId: crypto.randomUUID(), word: query })).ok, true);
+    let received = 0;
+    h.onImport(async message => {
+      const events = parseLookupBatch(message.events);
+      assert.ok(events.every(event => event.query === query && event.lemma === stableId));
+      received += events.length;
+      return { ids: events.map(event => event.id) };
+    });
+    h.tabs.push({ id: 10, url: `${origin}/library` });
+    assert.equal((await h.send({ type: 'SYNC' }, h.popup)).pending, 0);
+    assert.equal(received, 2);
+    assert.equal((await h.send({ type: 'LOOKUP', lookupId: crypto.randomUUID(), word: stableId })).ok, false);
+  }
+});
+
+test('legacy cards resolve spaced identities and keep their valid spaced display headword', async () => {
+  const h = harness();
+  h.displayEntry({ query: 'well-known', lemma: 'well known', learningTermRef: undefined });
+  h.identity('well known');
+  const lookupId = crypto.randomUUID();
+  const result = await h.send({ type: 'LOOKUP', lookupId, word: 'well-known' });
+  assert.equal(result.ok, true);
+  assert.equal(result.entry.learningTermRef.kind, 'phrase');
+  assert.equal(h.values[`lookup:${origin}:${lookupId}`].event.lemma, 'well known');
 });
 
 test('web pages cannot access settings or deliver synchronization messages', async () => {

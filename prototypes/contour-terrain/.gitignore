@@ -1,0 +1,7 @@
+# Buildless prototype: these are the editable source files.
+!dist/
+!dist/index.html
+!dist/style.css
+!dist/app.js
+!dist/geometry.js
+!dist/software-renderer.js

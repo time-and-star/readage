@@ -1126,6 +1126,33 @@ textarea::placeholder {
   color: #96613f;
 }
 
+.lookup-flashcard-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px 8px;
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid #e9e5dd;
+  color: #77766c;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.lookup-flashcard-control p { margin: 0; overflow-wrap: anywhere; }
+.lookup-flashcard-control p[role="alert"] { color: #96613f; }
+.lookup-flashcard-control button {
+  min-height: 36px;
+  padding: 4px 6px;
+  color: #385d51;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.lookup-flashcard-control button:disabled { opacity: .5; cursor: wait; }
+.lookup-flashcard-control button:focus-visible { outline: 2px solid #385d51; outline-offset: 2px; }
+.word-card-body .lookup-flashcard-control { margin-top: 12px; font-size: 12px; }
+
 .reading-lookup-card__message {
   margin: 10px 0 4px;
   color: #77766c;
@@ -1146,7 +1173,8 @@ textarea::placeholder {
   .reading-lookup-card__close,
   .reading-lookup-card__speak,
   .reading-lookup-card__more,
-  .reading-lookup-card__text-action {
+  .reading-lookup-card__text-action,
+  .lookup-flashcard-control button {
     min-width: 44px;
     min-height: 44px;
   }
@@ -1168,13 +1196,8 @@ textarea::placeholder {
 }
 .reading-selection-actions button { min-height: 40px; padding: 6px 10px; }
 .reading-selection-actions button:hover { background: #f3e4da; }
-/* Keep touch actions away from the browser's native selection handles. */
-.reading-selection-actions[data-touch-selection="true"] {
-  left: 50%;
-  bottom: max(16px, env(safe-area-inset-bottom, 0px));
-  transform: translateX(-50%);
-  justify-content: center;
-}
+/* Touch and mouse actions share a selection anchor; positioning keeps handles clear. */
+.reading-selection-actions { overflow-y: auto; overscroll-behavior: contain; }
 .reading-selection-actions[data-touch-selection="true"] button { min-height: 44px; }
 .reading-touch-selection-handle {
   position: fixed;
@@ -1243,6 +1266,52 @@ textarea::placeholder {
   border-radius: 4px;
   background: rgb(64 156 223 / 15%);
   box-shadow: 0 1px 3px rgb(40 124 189 / 12%);
+}
+
+.reading-options-menu {
+  max-height: calc(100vh - 6rem - max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px)) - max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px)));
+  max-height: calc(100dvh - 6rem - max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px)) - max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 639px), (max-height: 500px) and (hover: none) and (pointer: coarse) {
+  .library-shell { padding: 20px 20px 32px; }
+  .library-heading { margin-bottom: 16px; }
+  .library-eyebrow { margin-bottom: 6px; }
+  .library-title { font-size: 42px; }
+  .library-title--detail { font-size: 32px; }
+  .library-collections > button { min-height: 42px; padding-bottom: 11px; }
+  .library-toolbar { min-height: 56px; }
+  .library-content { padding-top: 16px; }
+  .library-section-heading { min-height: 28px; }
+  .library-reading-row { min-height: 92px; padding-block: 18px; }
+  .library-row-body h3 { font-size: 23px; }
+  .library-empty { padding: 36px 0 48px; }
+  .reading-content { padding-top: 24px; }
+  .reading-article-header { margin-bottom: 24px; }
+  .speech-feedback__stop {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* Use the WebView's actual safe area: Capacitor's window inset may include a
+   status bar that Android has already excluded from the WebView. Move the body
+   inset into the sticky reader header so scrolled text cannot appear above it. */
+html[data-platform="android"] .reading-page {
+  --reading-top-inset: env(safe-area-inset-top, 0px);
+  margin-top: calc(-1 * var(--reading-top-inset));
+}
+/* Keep any preceding App notification visible instead of pulling the reader
+   over its last line. Once scrolled, the header still covers the top inset. */
+html[data-platform="android"] #root > div > :not(.flex-1) ~ .flex-1 .reading-page {
+  margin-top: 0;
+}
+html[data-platform="android"] .reading-page-header {
+  top: 0;
+  padding-top: var(--reading-top-inset);
+  background: var(--app-paper);
 }
 .word-card-backdrop {
   position: fixed;
@@ -1425,22 +1494,27 @@ textarea::placeholder {
 }
 
 .word-card-body {
-  padding: 28px 32px 40px;
+  padding: 22px 32px 40px;
 }
 
 .word-card-hero {
+  padding-bottom: 12px;
+}
+
+.word-card-hero__title {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  padding-bottom: 24px;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
 }
 
 .word-card-hero__word {
   margin: 0;
   color: #211d19;
-  font: 400 clamp(32px, 6vw, 48px)/1.05 "Gallery Crimson", var(--font-display);
+  min-width: 0;
+  font: 400 clamp(32px, 5vw, 42px)/1.12 "Gallery Crimson", var(--font-display);
   letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
 }
 
 .word-card-meta {
@@ -1480,6 +1554,13 @@ textarea::placeholder {
   background: #f7faf6;
 }
 
+.word-card-hero .word-card-meta { gap: 6px 10px; margin-top: 6px; }
+.word-card-hero .word-card-meta__phonetic { font-size: 13px; color: #82796e; }
+.word-card-hero .word-card-chip { min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: #82796e; font-weight: 400; line-height: 1.5; gap: 10px; }
+.word-card-hero .word-card-chip--accent { color: #95745e; }
+.word-card-hero .word-card-chip--source { color: #7b8775; font-size: 11px; }
+.word-card-hero .word-card-meta > * + .word-card-chip::before { content: ''; width: 3px; height: 3px; flex: 0 0 3px; border-radius: 50%; background: #c9c2b7; }
+
 .word-card-chip--form,
 .word-card-chip--collocation {
   gap: 4px;
@@ -1509,16 +1590,21 @@ textarea::placeholder {
 
 .word-card-speak {
   flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  color: #8d877c;
+  background: transparent;
 }
+.word-card-speak svg { width: 18px; height: 18px; }
+.word-card-speak:hover { color: #385d51; background: #edf1e8; }
 
 .word-card-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 0 24px;
+  gap: 18px;
+  padding: 0 0 14px;
 }
 
 .word-card-action {
@@ -1541,6 +1627,10 @@ textarea::placeholder {
   color: #963f20;
   background: #fff8f4;
 }
+
+.word-card-actions > .word-card-action { min-height: 40px; padding: 0; gap: 6px; border: 0; border-radius: 4px; color: #82796e; background: transparent; font-weight: 400; }
+.word-card-actions > .word-card-action svg { width: 14px; height: 14px; }
+.word-card-actions > .word-card-action:hover { color: #385d51; background: transparent; }
 
 .word-card-translation {
   margin: 0 0 4px;
@@ -1878,7 +1968,7 @@ textarea::placeholder {
   }
 
   .word-card-body {
-    padding: 22px 20px calc(32px + env(safe-area-inset-bottom, 0px));
+    padding: 18px 20px calc(32px + env(safe-area-inset-bottom, 0px));
   }
 
   .word-card-hero__word {
@@ -1901,4 +1991,11 @@ textarea::placeholder {
   .word-card-chip--link {
     transition: none;
   }
+}
+html[data-platform="android"] body {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: max(env(safe-area-inset-bottom), var(--safe-area-inset-bottom, 0px));
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  overscroll-behavior-y: contain;
 }

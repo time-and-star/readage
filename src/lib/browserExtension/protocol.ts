@@ -19,6 +19,14 @@ export function normalizeSelectedWord(value: unknown): string | null {
   return word.length <= 80 && /^[a-z]+(?:['-][a-z]+)*$/.test(word) ? word : null;
 }
 
+/** Dictionary identities can join a selected hyphenated word into one spaced unit. */
+export function normalizeLearningWordId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const wordId = value.trim().replace(/[‘’]/g, "'").toLowerCase();
+  return wordId.length <= 80 && /^[a-z]+(?:['-][a-z]+)*(?: [a-z]+(?:['-][a-z]+)*)*$/.test(wordId)
+    ? wordId : null;
+}
+
 export function normalizeServiceOrigin(value: string): string {
   const url = new URL(value.trim());
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
@@ -41,7 +49,7 @@ export function parseLookupEvent(value: unknown, now = Date.now()): LookupEvent 
   const row = value as LookupEvent;
   if (row.version !== 1 || typeof row.id !== 'string'
     || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(row.id)
-    || normalizeSelectedWord(row.query) !== row.query || normalizeSelectedWord(row.lemma) !== row.lemma
+    || normalizeSelectedWord(row.query) !== row.query || normalizeLearningWordId(row.lemma) !== row.lemma
     || typeof row.sourceId !== 'string' || !/^web:[a-f0-9]{64}$/.test(row.sourceId)
     || typeof row.occurredAt !== 'string' || !Number.isFinite(Date.parse(row.occurredAt))
     || new Date(row.occurredAt).toISOString() !== row.occurredAt

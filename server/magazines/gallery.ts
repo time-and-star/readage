@@ -6,11 +6,11 @@ import { issueFileKey } from './config';
 import { getDataRoot, readJsonFile, type StoredIssuePayload } from './store';
 import { applyMediaEntry, hydrateMagazineMedia } from './mediaUpgrade';
 import { resolveArticleImage } from './assets';
+import { isNonStoryArticleTitle } from '../../src/lib/articleEligibility';
 
 const FILE_CONCURRENCY = 8;
 const CACHE_TTL_MS = 10 * 60_000;
 const LOCAL_IMAGE = /^\/api\/magazines\/assets\/([a-f0-9]{64}\.(?:jpg|png|gif|webp))$/;
-const NON_STORY_TITLE = /^(magazine articles|contents|table of contents|cover|masthead|advertisements?)$/i;
 
 interface MediaManifest {
   version: number;
@@ -62,7 +62,7 @@ async function loadIssueStories(
     `${issueFileKey(issue.sourceId, issue.issueLabel)}.json`), null).catch(() => null);
   const stubs = (Array.isArray(payload?.articles) ? payload.articles : []).filter(stub =>
     stub && typeof stub.id === 'string' && typeof stub.title === 'string'
-    && (stub.wordCount ?? 80) >= 80 && !NON_STORY_TITLE.test(stub.title.trim()));
+    && (stub.wordCount ?? 80) >= 80 && !isNonStoryArticleTitle(stub.title));
   if (!stubs.length) return [];
   let manifest = await readMediaManifest(issue, dataRoot);
   let triedMigration = Boolean(manifest);
@@ -122,7 +122,7 @@ async function scanGallery(dataRoot: string): Promise<MagazineGalleryItem[]> {
   const index = await readJsonFile<MagazineCatalogIndex | null>(path.join(dataRoot, 'index.json'), null);
   if (!index) return [];
   const sourceNames = new Map(index.sources.map(source => [source.id, source.displayName]));
-  const issues = [...index.issues].filter(issue => issue.status === 'ready' && issue.format === 'epub')
+  const issues = [...index.issues].filter(issue => issue.status === 'ready' && (issue.format === 'epub' || (issue.format === 'html' && issue.sourceKind === 'web_articles')))
     .sort((a, b) => (b.publishedAt || b.issueLabel).localeCompare(a.publishedAt || a.issueLabel)
       || a.id.localeCompare(b.id));
   const groups = new Map<string, MagazineGalleryItem[][]>();
@@ -283,7 +283,7 @@ export async function loadMagazineGalleryStream(
   const limit = Number.isSafeInteger(options.limit) ? Math.max(1, Math.min(24, options.limit!)) : 12;
   const root = path.resolve(dataRoot);
   const index = await readJsonFile<MagazineCatalogIndex | null>(path.join(root, 'index.json'), null);
-  const issues = (index?.issues || []).filter(issue => issue.status === 'ready' && issue.format === 'epub');
+  const issues = (index?.issues || []).filter(issue => issue.status === 'ready' && (issue.format === 'epub' || (issue.format === 'html' && issue.sourceKind === 'web_articles')));
   if (!issues.length) return { items: [], nextCursor: null };
   const sourceNames = new Map((index?.sources || []).map(source => [source.id, source.displayName]));
   const bySource = new Map<string, MagazineIssue[]>();
@@ -365,7 +365,7 @@ export async function loadMagazineGalleryStream(
     position[1] += 1;
     const hash = createHash('sha256').update(picture.image.src).digest('hex').slice(0, 24);
     if (state.recent.includes(hash)) continue;
-    items.push(picture);
+    items.push({ ...picture, streamRound: state.round });
     emittedInRound += 1;
     state.recent.push(hash);
     if (state.recent.length > RECENT_STREAM_IMAGES) state.recent.shift();

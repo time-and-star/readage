@@ -1,11 +1,12 @@
 import express, { Router } from 'express';
 import { DictionaryImportError, MDX_MAX_FILE_BYTES, type DictionaryImportInput, type DictionaryImportResult } from './imports';
+import { DISTRIBUTION_MAX_BYTES } from './distributionImports';
 
 /** Authenticate this route before mounting it. Only one upload is buffered at a time. */
 export function createDictionaryImportRouter(runtime: { importDictionary(input: DictionaryImportInput): Promise<DictionaryImportResult> }): Router {
   const router = Router();
   let uploading = false;
-  const body = express.raw({ type: 'application/octet-stream', limit: MDX_MAX_FILE_BYTES });
+  const body = express.raw({ type: 'application/octet-stream', limit: DISTRIBUTION_MAX_BYTES });
   router.post('/import', (req, res, next) => {
     const origin = req.get('Origin');
     let crossOrigin = req.get('Sec-Fetch-Site') === 'cross-site';
@@ -25,7 +26,7 @@ export function createDictionaryImportRouter(runtime: { importDictionary(input: 
       if (error) {
         uploading = false;
         const large = (error as any).type === 'entity.too.large';
-        return res.status(large ? 413 : 400).json({ ok: false, error: { code: large ? 'DICTIONARY_TOO_LARGE' : 'INVALID_IMPORT_BODY', message: large ? 'MDX 文件最大支持 256 MB。' : '词典文件读取失败。' } });
+        return res.status(large ? 413 : 400).json({ ok: false, error: { code: large ? 'DICTIONARY_TOO_LARGE' : 'INVALID_IMPORT_BODY', message: large ? 'MDX 最大支持 256 MB，离线词典包最大支持 512 MB。' : '词典文件读取失败。' } });
       }
       next();
     });

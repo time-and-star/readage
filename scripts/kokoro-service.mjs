@@ -3,12 +3,44 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
+import { loadFrenchKokoro } from './kokoro-french.mjs';
+import { loadJapaneseKokoro, JapaneseTextSplitterStream } from './kokoro-japanese.mjs';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const root = process.env.READGE_DATA_ROOT?.trim()
+  ? path.resolve(process.env.READGE_DATA_ROOT)
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_TEXT = 2000;
 const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
 const SAMPLE_RATE = 24000;
 const MAX_MODEL_TOKENS = 512;
+
+/** Offline inference must never turn a missing cache file into an Internet download. */
+export function offlineKokoroFetch(fetcher) {
+  return (input, options) => {
+    const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
+    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || url.username || url.password) {
+      return Promise.reject(new Error('本地朗读资源未完整安装；离线模式不会下载模型或音色。'));
+    }
+    return fetcher(input, { ...options, redirect: 'error' });
+  };
+}
+
+export function configureOfflineKokoro(transformerEnvironment, offline = process.env.READGE_OFFLINE === '1') {
+  if (!offline) return;
+  transformerEnvironment.allowRemoteModels = false;
+  transformerEnvironment.allowLocalModels = true;
+}
+
+/** Kokoro.js 1.2.1 reads its Node voice files from kokoro-js/voices, without a browser download path. */
+export async function installedKokoroVoices(voices, runtimeDir) {
+  const present = await Promise.all(Object.entries(voices).map(async ([id, details]) => {
+    try {
+      const stat = await fs.stat(path.join(runtimeDir, 'kokoro-js', 'voices', `${id}.bin`));
+      return stat.isFile() && stat.size > 0 && stat.size % 4 === 0 ? [id, details] : null;
+    } catch { return null; }
+  }));
+  return Object.fromEntries(present.filter(Boolean));
+}
 
 export class OverlongSentenceError extends Error {
   constructor() { super('Sentence exceeds the local model token limit.'); }
@@ -38,7 +70,7 @@ export function guardKokoroTokenizer(tokenizer) {
 
 function splitOverlongSentence(text) {
   const midpoint = Math.floor(text.length / 2);
-  const boundaries = Array.from(text.matchAll(/[,;:—]\s*|\s+/g), match => match.index + match[0].length)
+  const boundaries = Array.from(text.matchAll(/[,;:—、。！？]\s*|\s+/g), match => match.index + match[0].length)
     .filter(index => text.slice(0, index).trim() && text.slice(index).trim());
   let index = boundaries.length
     ? boundaries.reduce((best, candidate) => Math.abs(candidate - midpoint) < Math.abs(best - midpoint) ? candidate : best)
@@ -50,7 +82,7 @@ function splitOverlongSentence(text) {
 }
 
 /** Generate whole sentences, splitting only fragments that exceed the phoneme token budget. */
-export function createKokoroSynthesizer(tts, TextSplitterStream) {
+export function createKokoroSynthesizer(tts, TextSplitterStream, generate = tts.generate.bind(tts), splitterForVoice = () => TextSplitterStream) {
   return async ({ input, voice, speed }, signal) => {
     const parts = [];
     let sampleCount = 0;
@@ -61,7 +93,7 @@ export function createKokoroSynthesizer(tts, TextSplitterStream) {
       let audio;
       const began = performance.now();
       try {
-        audio = await tts.generate(text, { voice, speed });
+        audio = await generate(text, { voice, speed });
       } catch (error) {
         generationMs += performance.now() - began;
         if (!(error instanceof OverlongSentenceError)) throw error;
@@ -74,7 +106,8 @@ export function createKokoroSynthesizer(tts, TextSplitterStream) {
       sampleCount += audio.audio.length;
       if (44 + sampleCount * 2 > MAX_AUDIO_BYTES) throw new Error('Audio too large.');
     };
-    const splitter = new TextSplitterStream();
+    const SentenceSplitter = splitterForVoice(voice);
+    const splitter = new SentenceSplitter();
     splitter.push(input);
     splitter.close();
     for await (const sentence of splitter) await generatePart(sentence);
@@ -207,19 +240,34 @@ export async function startKokoroService() {
   const runtimeDir = path.join(root, 'local-data', 'kokoro-runtime', 'node_modules');
   const entry = path.join(runtimeDir, 'kokoro-js', 'dist', 'kokoro.js');
   try { await fs.access(entry); } catch { throw new Error('Run npm run tts:setup before starting local Kokoro.'); }
-  const [{ KokoroTTS, TextSplitterStream }, { env }] = await Promise.all([
+  const offline = process.env.READGE_OFFLINE === '1';
+  if (offline) globalThis.fetch = offlineKokoroFetch(globalThis.fetch.bind(globalThis));
+  const [{ KokoroTTS, TextSplitterStream }, { env, Tensor }] = await Promise.all([
     import(pathToFileURL(entry).href),
     import(pathToFileURL(path.join(runtimeDir, '@huggingface', 'transformers', 'dist', 'transformers.node.mjs')).href),
   ]);
   env.cacheDir = path.join(root, 'local-data', 'kokoro-models');
+  configureOfflineKokoro(env, offline);
   await fs.mkdir(env.cacheDir, { recursive: true });
   const runtime = { ready: false, voices: {}, synthesize: undefined };
   const server = createKokoroHttpServer(runtime);
+  let japanese;
+  const shutdown = () => { japanese?.close(); server.close(); server.closeAllConnections(); process.exit(0); };
+  const onShutdownMessage = message => { if (message?.type === 'readage:shutdown') shutdown(); };
+  process.on('message', onShutdownMessage);
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
+  server.once('close', () => {
+    process.removeListener('message', onShutdownMessage);
+    process.removeListener('SIGINT', shutdown);
+    process.removeListener('SIGTERM', shutdown);
+  });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(8880, '127.0.0.1', resolve);
+    server.listen(Number(process.env.TTS_KOKORO_PORT || 8880), '127.0.0.1', resolve);
   });
-  console.log(`[kokoro] Loading local CPU model (${dtype}). First run downloads the model; subsequent runs use the project cache.`);
+  console.log(offline ? `[kokoro] Loading installed local CPU model (${dtype}); network downloads are disabled.`
+    : `[kokoro] Loading local CPU model (${dtype}). First run downloads the model; subsequent runs use the project cache.`);
   const lastProgress = new Map();
   let tts;
   try {
@@ -232,25 +280,42 @@ export async function startKokoroService() {
             console.log(`[kokoro] ${event.file}: ${step}%`);
           }
         } else if (event.status === 'download' || event.status === 'done') {
-          console.log(`[kokoro] ${event.status}: ${event.file}`);
+          console.log(`[kokoro] ${offline && event.status === 'download' ? 'local cache' : event.status}: ${event.file}`);
         }
       },
     });
-    runtime.voices = tts.voices;
+    runtime.voices = offline ? await installedKokoroVoices(tts.voices, runtimeDir) : tts.voices;
+    if (offline && !runtime.voices.af_heart) throw new Error('本地英语音色 af_heart 未完整安装，离线模式不会补下载。');
     measureKokoroInference(tts);
     tts.tokenizer = guardKokoroTokenizer(tts.tokenizer);
-    runtime.synthesize = createKokoroSynthesizer(tts, TextSplitterStream);
+    let french;
+    const frenchVoice = path.join(root, 'local-data', 'kokoro-french', 'ff_siwis.bin');
+    if (await fs.access(frenchVoice).then(() => true, () => false)) {
+      french = await loadFrenchKokoro(tts, runtimeDir, frenchVoice, Tensor);
+      runtime.voices = { ...runtime.voices, ff_siwis: french.metadata };
+    }
+    const japaneseDirectory = path.join(root, 'local-data', 'kokoro-japanese');
+    if (await fs.access(path.join(japaneseDirectory, 'runtime.json')).then(() => true, () => false)) {
+      japanese = await loadJapaneseKokoro(tts, japaneseDirectory, Tensor);
+      runtime.voices = { ...runtime.voices, jf_alpha: japanese.metadata };
+      server.once('close', () => japanese.close());
+    }
+    runtime.synthesize = createKokoroSynthesizer(tts, TextSplitterStream, (text, options) => {
+      if (options.voice === 'ff_siwis' && french) return french.generate(text, options);
+      if (options.voice === 'jf_alpha' && japanese) return japanese.generate(text, options);
+      return tts.generate(text, options);
+    }, voice => voice === 'jf_alpha' ? JapaneseTextSplitterStream : TextSplitterStream);
     // Confirm native inference and bundled phonemizer work before advertising ready.
     await runtime.synthesize({ input: 'Ready to read.', voice: 'af_heart', speed: 1 }, new AbortController().signal);
+    if (french) await runtime.synthesize({ input: 'Bonjour, nous sommes prêts.', voice: 'ff_siwis', speed: 1 }, new AbortController().signal);
+    if (japanese) await runtime.synthesize({ input: 'こんにちは。日本語を読みます。', voice: 'jf_alpha', speed: 1 }, new AbortController().signal);
     runtime.ready = true;
-    console.log('[kokoro] Ready: http://127.0.0.1:8880 (American: af_heart; British: bf_emma).');
+    console.log(`[kokoro] Ready: http://127.0.0.1:${process.env.TTS_KOKORO_PORT || 8880} (American: af_heart; British: bf_emma${french ? '; French: ff_siwis' : ''}${japanese ? '; Japanese: jf_alpha' : ''}).`);
   } catch (error) {
+    japanese?.close();
     server.close();
     throw error;
   }
-  const shutdown = () => { server.close(); server.closeAllConnections(); process.exit(0); };
-  process.once('SIGINT', shutdown);
-  process.once('SIGTERM', shutdown);
   return server;
 }
 

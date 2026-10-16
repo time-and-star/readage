@@ -5,8 +5,21 @@ import {defineConfig} from 'vite';
 import { VITE_WATCH_IGNORED } from './src/viteWatchConfig';
 
 export default defineConfig(() => {
+  const offline = process.env.VITE_OFFLINE_APP === 'true';
+  const android = process.env.VITE_APP_PLATFORM === 'android';
   return {
-    plugins: [react(), tailwindcss()],
+    ...(android ? { build: {
+      target: 'chrome91', cssTarget: 'chrome91', cssMinify: 'lightningcss' as const,
+      // Layer priorities must be converted after the complete stylesheet has been bundled.
+      cssCodeSplit: false,
+    } } : {}),
+    plugins: [react(), tailwindcss(), ...(offline ? [{
+      name: 'readage-offline-policy',
+      transformIndexHtml() {
+        return [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy',
+          content: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'self'" }, injectTo: 'head-prepend' as const }];
+      },
+    }] : [])],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

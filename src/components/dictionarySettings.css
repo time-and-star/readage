@@ -47,6 +47,7 @@
 .dictionary-settings__import-button { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; border: 1px solid #d8ccbd; background: #fffdf8; color: #7f6755; }
 .dictionary-settings__import-button svg { width: 15px; height: 15px; }
 .dictionary-settings__file-input { display: none; }
+.dictionary-settings__trial-button { border: 0; background: transparent; padding: 6px 0; color: #a75b3d; font-size: 12px; cursor: pointer; }
 .dictionary-settings button:disabled { cursor: default; opacity: .4; }
 .dictionary-settings button:not(:disabled):hover { filter: brightness(.96); }
 .dictionary-settings button:focus-visible, .dictionary-settings input:focus-visible, .dictionary-settings summary:focus-visible { outline: 2px solid #b9603e; outline-offset: 3px; }

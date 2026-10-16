@@ -23,7 +23,7 @@ import { seedCanonicalMemoryBaselines } from '../canonicalMemoryBaseline';
 
 export function useExternalLearningActivity() {
   const store = useMemoryStore();
-  const version = useStoreVersion(store);
+  const version = useStoreActivityVersion(store);
   const ready = useStoreReady(store);
   const [events, setEvents] = useState<LearningEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +62,10 @@ function useStoreVersion(store: MemoryV2Store): number {
     () => store.getSnapshot().version,
     () => store.getSnapshot().version
   );
+}
+
+function useStoreActivityVersion(store: MemoryV2Store): number {
+  return useSyncExternalStore(store.subscribe, () => store.getSnapshot().activityVersion, () => store.getSnapshot().activityVersion);
 }
 
 function useStoreReady(store: MemoryV2Store): boolean {
@@ -128,6 +132,7 @@ export function useMemorySystem() {
     recordVerification,
     ready,
     version,
+    activityVersion: store.getSnapshot().activityVersion,
     storageError: store.getSnapshot().storageError,
   };
 }
@@ -182,12 +187,12 @@ export function useAllWordProficiency() {
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = true) => {
     const token = ++request.current;
     setLoading(true);
     try {
       await store.ensureReady();
-      const result = await store.system.getAllWordProficiency(store.userId);
+      const result = (await store.getLearningSnapshot(force)).proficiencies;
       if (token === request.current) { setProficiencies(result); setError(null); }
     } catch {
       if (token === request.current) setError('词汇学习记录暂时无法读取，请重试。');
@@ -201,7 +206,7 @@ export function useAllWordProficiency() {
       setLoading(true);
       return;
     }
-    void refresh();
+    void refresh(false);
     return () => { request.current += 1; };
   }, [refresh, version, ready]);
 
@@ -220,12 +225,13 @@ export function useDueWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT) {
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = true) => {
     const token = ++request.current;
     setLoading(true);
     try {
       await store.ensureReady();
-      const result = await store.system.getDueWords(store.userId, new Date(), limit);
+      const words = (await store.getLearningSnapshot(force)).dueWords;
+      const result = limit > 0 ? words.slice(0, Math.floor(limit)) : [];
       if (token === request.current) { setDueWords(result); setError(null); }
     } catch {
       if (token === request.current) setError('到期复习记录暂时无法读取，请重试。');
@@ -239,7 +245,7 @@ export function useDueWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT) {
       setLoading(true);
       return;
     }
-    void refresh();
+    void refresh(false);
     return () => { request.current += 1; };
   }, [refresh, version, ready]);
 
@@ -256,12 +262,13 @@ export function useConfirmationWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT)
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = true) => {
     const token = ++request.current;
     setLoading(true);
     try {
       await store.ensureReady();
-      const result = await store.system.getConfirmationWords(store.userId, new Date(), limit, store.timezone);
+      const words = (await store.getLearningSnapshot(force)).confirmationWords;
+      const result = limit > 0 ? words.slice(0, Math.floor(limit)) : [];
       if (token === request.current) { setConfirmationWords(result); setError(null); }
     } catch {
       if (token === request.current) setError('阅读确认记录暂时无法读取，请重试。');
@@ -275,7 +282,7 @@ export function useConfirmationWords(limit: number = DEFAULT_REVIEW_QUEUE_LIMIT)
       setLoading(true);
       return;
     }
-    void refresh();
+    void refresh(false);
     return () => { request.current += 1; };
   }, [refresh, version, ready]);
 
@@ -294,12 +301,12 @@ export function useProficiencyStats() {
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = true) => {
     const token = ++request.current;
     setLoading(true);
     try {
       await store.ensureReady();
-      const result = await store.system.getProficiencyStats(store.userId);
+      const result = (await store.getLearningSnapshot(force)).stats;
       if (token === request.current) { setStats(result); setError(null); }
     } catch {
       if (token === request.current) setError('学习统计暂时无法读取，请重试。');
@@ -313,7 +320,7 @@ export function useProficiencyStats() {
       setLoading(true);
       return;
     }
-    void refresh();
+    void refresh(false);
     return () => { request.current += 1; };
   }, [refresh, version, ready]);
 

@@ -2,6 +2,7 @@ import { useEffect, type RefObject } from 'react';
 import type { Article } from '../types';
 import { classifyArticleParagraph } from './articlePresentation';
 import { readStorage, STORAGE_KEYS, updatePersistentValue } from './storage';
+import { getApplicationStorage } from './localDatabase';
 import { readingContentVersion } from './readingProgress';
 
 export interface ReadingBookmark {
@@ -62,8 +63,7 @@ export function mergeReadingBookmark(previous: unknown, bookmark: ReadingBookmar
 }
 
 function browserStorage(): Storage | undefined {
-  try { return typeof window === 'undefined' ? undefined : window.localStorage; }
-  catch { return undefined; }
+  return getApplicationStorage();
 }
 
 export function readReadingBookmarks(storage = browserStorage()): ReadingBookmarkCollection {

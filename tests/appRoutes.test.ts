@@ -9,8 +9,8 @@ import {
   withAppHistoryIndex,
 } from '../src/lib/appRoutes';
 
-test('parses the landing, recommendation entry, and supported page paths', () => {
-  assert.deepEqual(parseAppPath('/'), { kind: 'landing' });
+test('opens the library at root and parses supported page paths', () => {
+  assert.deepEqual(parseAppPath('/'), { kind: 'library' });
   assert.deepEqual(parseAppPath('/recommend'), { kind: 'recommendation' });
   assert.deepEqual(parseAppPath('/flashcards'), { kind: 'flashcards' });
   assert.deepEqual(parseAppPath('/learning/flashcards'), { kind: 'flashcards' });
@@ -18,6 +18,8 @@ test('parses the landing, recommendation entry, and supported page paths', () =>
   assert.deepEqual(parseAppPath('/assessment'), { kind: 'learning' });
   assert.deepEqual(parseAppPath('/learning'), { kind: 'learning' });
   assert.deepEqual(parseAppPath('/settings/dictionaries'), { kind: 'dictionary-settings' });
+  assert.deepEqual(parseAppPath('/settings/dictionaries/try/fr'), { kind: 'dictionary-trial' });
+  assert.deepEqual(parseAppPath('/settings/dictionaries/try/ja'), { kind: 'dictionary-trial', language: 'ja' });
   assert.deepEqual(parseAppPath('/history'), { kind: 'learning-records' });
 });
 
@@ -37,19 +39,28 @@ test('reading study list and article/book details survive refresh and encoded id
   assert.deepEqual(parseAppPath('/learning/articles/a/b'), { kind: 'learning' });
 });
 
-test('normalizes trailing slashes and falls back unknown paths to landing', () => {
+test('normalizes trailing slashes and falls back unknown paths to library', () => {
   assert.deepEqual(parseAppPath('/library/'), { kind: 'library' });
-  assert.deepEqual(parseAppPath('/not-a-page'), { kind: 'landing' });
-  assert.deepEqual(parseAppPath('/read/'), { kind: 'landing' });
+  assert.deepEqual(parseAppPath('/not-a-page'), { kind: 'library' });
+  assert.deepEqual(parseAppPath('/read/'), { kind: 'library' });
 });
 
 test('builds stable paths for every route kind', () => {
-  assert.equal(buildAppPath({ kind: 'landing' }), '/');
   assert.equal(buildAppPath({ kind: 'recommendation' }), '/recommend');
   assert.equal(buildAppPath({ kind: 'flashcards' }), '/learning/flashcards');
   assert.equal(buildAppPath({ kind: 'library' }), '/library');
   assert.equal(buildAppPath({ kind: 'learning' }), '/learning');
   assert.equal(buildAppPath({ kind: 'dictionary-settings' }), '/settings/dictionaries');
+  assert.equal(buildAppPath({ kind: 'dictionary-trial' }), '/settings/dictionaries/try/fr');
+  assert.equal(buildAppPath({ kind: 'dictionary-trial', language: 'ja' }), '/settings/dictionaries/try/ja');
+});
+
+test('Japanese dictionary trial deep links retain their language after refresh', () => {
+  const route = { kind: 'dictionary-trial' as const, language: 'ja' as const };
+  assert.deepEqual(resolveInitialAppRoute('/settings/dictionaries/try/ja/'), route);
+  assert.deepEqual(parseAppPath(buildAppPath(route)), route);
+  assert.equal(buildAppPath({ kind: 'dictionary-trial', language: 'fr' }), '/settings/dictionaries/try/fr');
+  assert.deepEqual(parseAppPath('/settings/dictionaries/try/de'), { kind: 'library' });
 });
 
 test('dictionary settings deep links survive refresh and trailing slashes', () => {
@@ -69,7 +80,7 @@ test('word-card inner pages and legacy bookmarks survive refresh and canonicaliz
 });
 
 test('keeps deep links and canonicalizes retired test links to learning', () => {
-  assert.deepEqual(resolveInitialAppRoute('/'), { kind: 'landing' });
+  assert.deepEqual(resolveInitialAppRoute('/'), { kind: 'library' });
   assert.deepEqual(resolveInitialAppRoute('/library'), { kind: 'library' });
   for (const path of ['/assessment', '/assessment/']) {
     const route = resolveInitialAppRoute(path);

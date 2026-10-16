@@ -1,0 +1,106 @@
+{
+  "date": "2026-10-14",
+  "browser": "Chromium",
+  "results": [
+    {
+      "name": "P01 默认地形完整加载",
+      "passed": true,
+      "details": {
+        "renderer": "WebGL",
+        "viewport": [
+          1440,
+          1000
+        ],
+        "range": [
+          0,
+          5
+        ]
+      }
+    },
+    {
+      "name": "P02 三种底稿可切换并更新地形",
+      "passed": true
+    },
+    {
+      "name": "P03/P04 图层与等高距切换不改变地形",
+      "passed": true
+    },
+    {
+      "name": "P10 地块选择显示实际标高和坡度，查看不编辑",
+      "passed": true
+    },
+    {
+      "name": "P05 抬高、笔刷反馈和松手停止",
+      "passed": true
+    },
+    {
+      "name": "P09 撤销精确恢复本次编辑前地形",
+      "passed": true
+    },
+    {
+      "name": "P06 降低地形",
+      "passed": true
+    },
+    {
+      "name": "P07 平滑降低相邻格点的整体高差",
+      "passed": true,
+      "details": {
+        "before": 145.70767866397594,
+        "after": 141.22310104112861
+      }
+    },
+    {
+      "name": "P08 整平趋近目标标高",
+      "passed": true,
+      "details": {
+        "target": 1.5,
+        "before": 5.1699134284800525,
+        "after": 2.615678165807284
+      }
+    },
+    {
+      "name": "P11 基准尺寸、平移与指针锚定缩放",
+      "passed": true,
+      "details": {
+        "metrics": {
+          "width": 52,
+          "height": 26,
+          "vertical": 26
+        }
+      }
+    },
+    {
+      "name": "P12 键盘平移、撤销及输入框隔离",
+      "passed": true
+    },
+    {
+      "name": "额外：编辑后立即刷新也保留独立地形",
+      "passed": true
+    },
+    {
+      "name": "P13 390px窄屏不溢出，触摸雕刻、停止与撤销",
+      "passed": true
+    },
+    {
+      "name": "双指缩放不会在编辑模式误画地形",
+      "passed": true
+    },
+    {
+      "name": "P14 触屏等高距、参数和恢复入口可用",
+      "passed": true
+    },
+    {
+      "name": "高侧壁挡住后方地块时，点击不会选中或编辑隐藏地面",
+      "passed": true
+    },
+    {
+      "name": "无WebGL时仍绘制水面、侧壁和深度遮挡，编辑与撤销可用",
+      "passed": true
+    },
+    {
+      "name": "最终单文件通过离线打开与编辑检查，无外部资源依赖",
+      "passed": true
+    }
+  ],
+  "errors": []
+}

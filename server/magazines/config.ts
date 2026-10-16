@@ -16,6 +16,7 @@ const SAFE_ISSUE_LABEL = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/;
 export const MAGAZINE_SOURCES: MagazineSourceMeta[] = [
   {
     id: 'economist',
+    sourceKind: 'issue',
     repoDir: '01_economist',
     displayName: 'The Economist',
     levelHint: 'C1',
@@ -23,6 +24,7 @@ export const MAGAZINE_SOURCES: MagazineSourceMeta[] = [
   },
   {
     id: 'new_yorker',
+    sourceKind: 'issue',
     repoDir: '02_new_yorker',
     displayName: 'The New Yorker',
     levelHint: 'C1',
@@ -30,6 +32,7 @@ export const MAGAZINE_SOURCES: MagazineSourceMeta[] = [
   },
   {
     id: 'atlantic',
+    sourceKind: 'issue',
     repoDir: '04_atlantic',
     displayName: 'The Atlantic',
     levelHint: 'C1',
@@ -37,6 +40,7 @@ export const MAGAZINE_SOURCES: MagazineSourceMeta[] = [
   },
   {
     id: 'wired',
+    sourceKind: 'issue',
     repoDir: '05_wired',
     displayName: 'Wired',
     levelHint: 'B2',
@@ -44,6 +48,7 @@ export const MAGAZINE_SOURCES: MagazineSourceMeta[] = [
   },
   {
     id: 'news_in_levels_a2',
+    sourceKind: 'graded_news',
     provider: 'news_in_levels',
     sourceUrl: 'https://www.newsinlevels.com/level/level-1/',
     displayName: 'News in Levels - Level 1',
@@ -52,11 +57,52 @@ export const MAGAZINE_SOURCES: MagazineSourceMeta[] = [
   },
   {
     id: 'news_in_levels_b1',
+    sourceKind: 'graded_news',
     provider: 'news_in_levels',
     sourceUrl: 'https://www.newsinlevels.com/level/level-2/',
     displayName: 'News in Levels - Level 2',
     levelHint: 'B1',
     topic: 'Graded News',
+  },
+  {
+    id: 'conversation',
+    provider: 'rss_fulltext',
+    sourceKind: 'web_articles',
+    sourceUrl: 'https://theconversation.com/us/articles.atom',
+    imageHosts: ['images.theconversation.com'],
+    displayName: 'The Conversation',
+    levelHint: 'B2',
+    topic: 'Research & Society',
+  },
+  {
+    id: 'jstor_daily',
+    provider: 'rss_fulltext',
+    sourceKind: 'web_articles',
+    sourceUrl: 'https://daily.jstor.org/feed/',
+    imageHosts: ['daily.jstor.org'],
+    displayName: 'JSTOR Daily',
+    levelHint: 'C1',
+    topic: 'History & Culture',
+  },
+  {
+    id: 'science_news_explores',
+    provider: 'rss_fulltext',
+    sourceKind: 'web_articles',
+    sourceUrl: 'https://www.snexplores.org/feed',
+    imageHosts: ['www.snexplores.org'],
+    displayName: 'Science News Explores',
+    levelHint: 'B1',
+    topic: 'Science & Nature',
+  },
+  {
+    id: 'mit_press_reader',
+    provider: 'rss_fulltext',
+    sourceKind: 'web_articles',
+    sourceUrl: 'https://thereader.mitpress.mit.edu/feed/',
+    imageHosts: ['thereader.mitpress.mit.edu'],
+    displayName: 'The MIT Press Reader',
+    levelHint: 'C1',
+    topic: 'Ideas & Philosophy',
   },
 ];
 

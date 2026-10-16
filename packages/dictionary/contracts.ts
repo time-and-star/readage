@@ -109,6 +109,7 @@ export type LookupStatus = 'found' | 'not_found' | 'unavailable' | 'invalid_requ
 export interface SourceLookupResult {
   dictionaryId: string;
   dictionaryName?: string;
+  provenance?: EntryProvenance[];
   status: Exclude<LookupStatus, 'invalid_request'>;
   matches: AdapterMatch[];
   error?: { code: 'SOURCE_UNAVAILABLE'; message: string };

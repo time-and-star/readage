@@ -63,12 +63,14 @@ test('dictionary settings shows compact draggable cards and keeps optional setti
   assert.match(html, /<details[^>]*class="dictionary-settings__metadata"/);
   assert.doesNotMatch(html, /<details[^>]*\bopen(?:=|>)/);
   assert.doesNotMatch(html, /保存设置|还原更改|有未保存的更改|dictionary-settings__save-bar/);
-  assert.match(html, /type="file" accept="\.mdx"/);
+  assert.match(html, /type="file" accept="\.mdx,\.nwdict,\.pack,\.zip"/);
+  assert.match(html, /aria-label="导入词典文件"/);
   assert.match(html, /导入词典<\/button>/);
   const collapsedContent = html.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '');
   assert.match(collapsedContent, /已收录 50 个词条/);
   assert.match(collapsedContent, /仅包含已审核词条/);
-  assert.doesNotMatch(collapsedContent, /默认词典|词条语言|释义语言|数据结构|适配器/);
+  assert.match(collapsedContent, /默认词典优先展示/);
+  assert.doesNotMatch(collapsedContent, /词条语言|释义语言|数据结构|适配器/);
 });
 
 test('corrupt persisted preferences offer a repair action without a routine save footer', () => {

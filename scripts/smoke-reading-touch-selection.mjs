@@ -5,7 +5,7 @@
  * outside this repository, set PLAYWRIGHT_MODULE_PATH to its entry file.
  */
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -54,11 +54,15 @@ createRoot(document.getElementById('root')).render(React.createElement(ReadingSc
 function regressionPlugin() {
   return {
     name: 'reading-touch-regression-harness',
+    enforce: 'pre',
     resolveId(id) {
       if (id === harnessEntry) return virtualId;
     },
-    load(id) {
+    async load(id) {
       if (id === virtualId) return harness;
+      if (id.replaceAll('\\', '/') === path.join(repoRoot, 'src/index.css').replaceAll('\\', '/')) {
+        return (await readFile(path.join(repoRoot, 'src/index.css'), 'utf8')).replace('@import "tailwindcss";', '@import "tailwindcss" source("./");');
+      }
     },
     configureServer(server) {
       server.middlewares.use(async (request, response, next) => {
@@ -97,6 +101,7 @@ try {
     configFile: path.join(repoRoot, 'vite.config.ts'),
     cacheDir: path.join(temporaryDirectory, 'vite-cache'),
     plugins: [regressionPlugin()],
+    optimizeDeps: { entries: ['src/components/ReadingScreen.tsx'] },
     server: { host: '127.0.0.1', port: 0, strictPort: true, hmr: false, watch: null },
     logLevel: 'error',
   });

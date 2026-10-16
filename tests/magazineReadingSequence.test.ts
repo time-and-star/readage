@@ -47,6 +47,21 @@ test('the final article ends at the issue boundary without requesting another ar
   assert.equal(calls, 1);
 });
 
+test('a standalone website article retains its source kind and ends at its own boundary', async () => {
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls++;
+    return jsonResponse({ ok: true, issue: { id: issueId, title: 'A public website article', sourceKind: 'web_articles' }, articles: [stubs[0]] });
+  }) as typeof fetch;
+  const result = await loadMagazineReadingContinuation({ id: stubs[0].id, magazineIssueId: issueId }, { fetchImpl });
+  assert.equal(result.sourceKind, 'web_articles');
+  assert.equal(result.issueTitle, 'A public website article');
+  assert.equal(result.nextArticle, null);
+  assert.equal(result.position, 1);
+  assert.equal(result.total, 1);
+  assert.equal(calls, 1);
+});
+
 test('wrong issue, absent current article, and invalid successor fail instead of switching reading source', async () => {
   for (const fixture of [
     { issue: { id: 'other' }, articles: stubs },

@@ -32,7 +32,7 @@
 .flashcard-sheet__front:disabled { cursor: default; }
 .flashcard-sheet__front:focus-visible { outline: none; }
 .flashcard-sheet__front:focus-visible h2 { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 9px; }
-.flashcard-sheet h2 { max-width: 100%; overflow-wrap: anywhere; font-family: 'Gallery Crimson', var(--font-reading); font-size: clamp(70px, 9vw, 108px); font-style: italic; font-weight: 400; line-height: .98; letter-spacing: -.035em; color: #f0e5cf; text-shadow: 0 2px 18px rgb(4 12 19 / 18%); }
+.flashcard-sheet h2 { max-width: 100%; white-space: nowrap; font-family: 'Gallery Crimson', var(--font-reading); font-size: clamp(70px, 9vw, 108px); font-style: italic; font-weight: 400; line-height: .98; letter-spacing: -.035em; color: #f0e5cf; text-shadow: 0 2px 18px rgb(4 12 19 / 18%); }
 .flashcard-sheet__phonetic { margin-top: 16px; font-family: var(--font-reading); font-size: 13px; letter-spacing: .02em; color: #c1b398; }
 .flashcard-sheet--revealed { min-height: 355px; border-color: #e0d5c2; background: #faf6ec; box-shadow: 0 12px 36px rgb(57 42 18 / 7%); cursor: default; }
 .flashcard-sheet--revealed .flashcard-sheet__hero { padding: 22px 38px 0; }

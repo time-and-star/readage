@@ -190,6 +190,12 @@ export class LocalStorageMemoryStorage implements MemoryStorage {
     }
     return rows;
   }
+  async getAllDailyEvidence(userId: string): Promise<DailyWordEvidence[]> {
+    const prefix = `${STORAGE_PREFIX}:daily:${userId}:`;
+    return storageKeys().filter(key => key.startsWith(prefix))
+      .map(key => readJSON<DailyWordEvidence>(key))
+      .filter((row): row is DailyWordEvidence => Boolean(row && row.userId === userId));
+  }
   // ==================== 原始事件 ====================
 
   async saveRawEvent(event: RawWordEvent): Promise<void> {

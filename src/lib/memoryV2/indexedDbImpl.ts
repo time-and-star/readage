@@ -20,6 +20,10 @@ import { finalizeDailyEvidence, submitFsrsReview } from './fsrsIntegration';
 import { normalizeRmeProfile, projectRmeProfile } from './rmeV4Bridge';
 import { applyReviewOutcome } from '../memoryV4';
 import { eventKey, type WordJournal } from '../browserExtension/replay';
+import { getApplicationStorage, isLocalDatabaseActive } from '../localDatabase';
+import { SqliteMemoryStorage } from './sqliteImpl';
+import { getLocalDateInTimeZone, getSystemTimeZone } from './dateUtils';
+import { repairPassiveReadingRecall } from './passiveRecallRepair';
 
 const DB_NAME = 'english-ai-memory-v2';
 const DB_VERSION = 1;
@@ -88,6 +92,12 @@ export class IndexedDbMemoryStorage implements MemoryStorage {
     return this.withStore(STORE.dailyEvidence, 'readonly', async (store) => {
       const rows = await requestToPromise(store.getAll()) as Array<{ evidence: DailyWordEvidence }>;
       return rows.map(row => row.evidence).filter(row => row.userId === userId && row.wordId === wordId);
+    });
+  }
+  async getAllDailyEvidence(userId: string): Promise<DailyWordEvidence[]> {
+    return this.withStore(STORE.dailyEvidence, 'readonly', async (store) => {
+      const rows = await requestToPromise(store.getAll()) as Array<{ evidence: DailyWordEvidence }>;
+      return rows.map(row => row.evidence).filter(row => row.userId === userId);
     });
   }
   private dbPromise: Promise<IDBDatabase> | null = null;
@@ -716,7 +726,22 @@ function chooseRevision<T extends { rating: number }>(current: T, incoming: T): 
   return current;
 }
 
-function mergeMemoryStates(current: WordMemoryState | null, incoming: WordMemoryState): WordMemoryState {
+function mergeMemoryStates(current: WordMemoryState | null, incoming: WordMemoryState,
+  days: readonly DailyWordEvidence[] = [], timezone = getSystemTimeZone(), now = new Date()): WordMemoryState {
+  const passiveKey = (review: WordMemoryState['fsrsReviews'][number]) => JSON.stringify([
+    review.source ?? 'legacy', review.review, review.rating, review.localDate ?? null,
+  ]);
+  const passiveReviews = [...new Map([
+    ...current?.passiveReadingReviews ?? [], ...incoming.passiveReadingReviews ?? [],
+  ].map(review => [passiveKey(review), review])).values()]
+    .sort((left, right) => left.review.localeCompare(right.review));
+  const repair = (state: WordMemoryState) => repairPassiveReadingRecall(passiveReviews.length
+    ? { ...state, passiveReadingReviews: passiveReviews } : state, days, timezone, now);
+  // A verified exclusion carried by either branch also applies to stale copies.
+  // Repair each original timeline before merging, so its first log still stores
+  // the card before any automatic Good was applied.
+  current = current ? repair(current) : null;
+  incoming = repair(incoming);
   if (!current || sameJson(current, incoming)) return current ?? incoming;
   const timestamp = (state: WordMemoryState) => latestTime(state.lastReview, state.lastAssistedAt, state.rme?.lastExposureAt,
     ...(state.fsrsReviews ?? []).flatMap(review => (review.flashcardRevisions ?? []).map(revision => revision.correctedAt)));
@@ -819,7 +844,57 @@ function mergeMemoryStates(current: WordMemoryState | null, incoming: WordMemory
     }
     merged.rme = projectRmeProfile(profile, merged, new Date());
   }
+  if (passiveReviews.length || current.passiveReadingReviews?.length || incoming.passiveReadingReviews?.length) {
+    merged.passiveReadingReviews = [...new Map([
+      ...current.passiveReadingReviews ?? [], ...incoming.passiveReadingReviews ?? [],
+    ].map(review => [passiveKey(review), review])).values()]
+      .sort((left, right) => left.review.localeCompare(right.review));
+  }
   return merged;
+}
+
+async function getMigrationDailyEvidence(target: LocalStorageMigrationTarget, state: WordMemoryState,
+  timezone = getSystemTimeZone()): Promise<DailyWordEvidence[]> {
+  if (target.getWordDailyEvidence) return target.getWordDailyEvidence(state.userId, state.wordId);
+  const dates = new Set<string>();
+  for (const review of state.fsrsReviews ?? []) {
+    if (review.localDate) dates.add(review.localDate);
+    else if (Number.isFinite(Date.parse(review.review))) dates.add(getLocalDateInTimeZone(new Date(review.review), timezone));
+  }
+  const days = await Promise.all([...dates].map(date => target.getDailyEvidence(state.userId, state.wordId, date)));
+  return days.filter((day): day is DailyWordEvidence => day !== null);
+}
+
+async function repairMigratedWordRecall(target: LocalStorageMigrationTarget, userId: string, wordId: string): Promise<void> {
+  const state = await target.getMemoryState(userId, wordId);
+  const journalKey = `extension-journal:${JSON.stringify([userId, wordId])}`;
+  const journal = await target.getMeta<WordJournal>(journalKey);
+  const baseline = journal?.baselineState ?? null;
+  const sample = state ?? baseline;
+  if (!sample) return;
+  const days = [...await getMigrationDailyEvidence(target, sample), ...journal?.baselineDaily ?? []];
+  const archiveKey = (review: WordMemoryState['fsrsReviews'][number]) => JSON.stringify([
+    review.source ?? 'legacy', review.review, review.rating, review.localDate ?? null,
+  ]);
+  const archive = new Map([...state?.passiveReadingReviews ?? [], ...baseline?.passiveReadingReviews ?? []]
+    .map(review => [archiveKey(review), review]));
+  const repair = (value: WordMemoryState | null) => value ? repairPassiveReadingRecall(archive.size
+    ? { ...value, passiveReadingReviews: [...archive.values()] } : value, days, getSystemTimeZone()) : null;
+  let repairedState = repair(state);
+  for (const review of repairedState?.passiveReadingReviews ?? []) archive.set(archiveKey(review), review);
+  let repairedBaseline = repair(baseline);
+  for (const review of repairedBaseline?.passiveReadingReviews ?? []) archive.set(archiveKey(review), review);
+  repairedState = repair(repairedState);
+  repairedBaseline = repair(repairedBaseline);
+  if (repairedState && !sameJson(state, repairedState)) {
+    await target.saveMemoryState(repairedState);
+    if (!sameJson(await target.getMemoryState(userId, wordId), repairedState)) throw new Error('Repaired recall verification failed');
+  }
+  if (journal && !sameJson(baseline, repairedBaseline)) {
+    const updated = { ...journal, baselineState: repairedBaseline };
+    await target.setMeta(journalKey, updated);
+    if (!sameJson(await target.getMeta(journalKey), updated)) throw new Error('Repaired journal baseline verification failed');
+  }
 }
 
 function mergeVerificationAttempts(current: ReadingVerificationEvidence[], incoming: ReadingVerificationEvidence[]) {
@@ -884,11 +959,13 @@ async function mergeMetadata(target: LocalStorageMigrationTarget, key: string, i
     if (existing.userId !== source.userId || existing.wordId !== source.wordId) throw new Error('Conflicting extension journal identity');
     const daily = new Map(existing.baselineDaily.map(row => [row.localDate, row]));
     for (const row of source.baselineDaily) daily.set(row.localDate, mergeDailyEvidence(daily.get(row.localDate) ?? null, row));
+    const repairDays = [...daily.values(), ...(active ? await getMigrationDailyEvidence(target, active) : [])];
     let baselineState = source.baselineState
-      ? mergeMemoryStates(existing.baselineState, source.baselineState) : existing.baselineState;
-    if (active && ((active.fsrsReviews ?? []).length || active.fsrsCard.reps > 0)) {
+      ? mergeMemoryStates(existing.baselineState, source.baselineState, repairDays)
+      : existing.baselineState ? repairPassiveReadingRecall(existing.baselineState, repairDays, getSystemTimeZone()) : null;
+    if (active && ((active.fsrsReviews ?? []).length || active.fsrsCard.reps > 0 || active.passiveReadingReviews?.length)) {
       const state = { ...active, rme: baselineState?.rme };
-      baselineState = mergeMemoryStates(baselineState, state);
+      baselineState = mergeMemoryStates(baselineState, state, repairDays);
     }
     for (const event of source.events) {
       const prior = existing.events.find(row => eventKey(row) === eventKey(event));
@@ -996,6 +1073,7 @@ async function importAndVerifyItem(
           }
         }
       }
+      await repairMigratedWordRecall(target, sample.userId, sample.wordId);
     }
     return;
   }
@@ -1024,23 +1102,26 @@ async function importAndVerifyItem(
       item.value.localDate
     );
     if (!sameJson(saved, merged)) throw new Error('Daily evidence verification failed');
+    await repairMigratedWordRecall(target, item.value.userId, item.value.wordId);
     return;
   }
 
   if (item.kind === 'state') {
     const current = await target.getMemoryState(item.value.userId, item.value.wordId);
-    const merged = mergeMemoryStates(current, item.value);
+    const days = await getMigrationDailyEvidence(target, item.value);
+    const merged = mergeMemoryStates(current, item.value, days);
     await target.saveMemoryState(merged);
     const saved = await target.getMemoryState(item.value.userId, item.value.wordId);
     if (!sameJson(saved, merged)) throw new Error('Memory state verification failed');
     const journalKey = `extension-journal:${JSON.stringify([item.value.userId, item.value.wordId])}`;
     const journal = await target.getMeta<WordJournal>(journalKey);
-    if (journal && ((item.value.fsrsReviews ?? []).length || item.value.fsrsCard?.reps > 0)) {
+    if (journal && ((item.value.fsrsReviews ?? []).length || item.value.fsrsCard?.reps > 0 || merged.passiveReadingReviews?.length)) {
       // Startup replays extension journals before projecting memory. Carry
       // independent imported recalls into its baseline as well as the state,
       // or that replay would undo this successful recovery.
-      const baseline = { ...item.value, rme: journal.baselineState?.rme };
-      const updated = { ...journal, baselineState: mergeMemoryStates(journal.baselineState, baseline) };
+      const baseline = { ...merged, rme: journal.baselineState?.rme };
+      const updated = { ...journal, baselineState: mergeMemoryStates(journal.baselineState, baseline,
+        [...journal.baselineDaily, ...days]) };
       await target.setMeta(journalKey, updated);
       if (!sameJson(await target.getMeta(journalKey), updated)) throw new Error('Recovered recall baseline verification failed');
     }
@@ -1085,9 +1166,10 @@ function migrationState(
  * Source keys remain intact so a failed run can safely fall back and retry.
  */
 export async function migrateLocalStorageToIndexedDb(
-  target: LocalStorageMigrationTarget
+  target: LocalStorageMigrationTarget,
+  migrationSource: Storage | undefined = typeof localStorage === 'undefined' ? undefined : localStorage,
 ): Promise<LocalStorageMigrationResult> {
-  if (typeof localStorage === 'undefined') {
+  if (!migrationSource) {
     return {
       migrated: false,
       importedKeys: 0,
@@ -1098,7 +1180,7 @@ export async function migrateLocalStorageToIndexedDb(
     };
   }
 
-  const legacyProficiency = localStorage.getItem(LEGACY_PROFICIENCY_KEY) === null
+  const legacyProficiency = migrationSource.getItem(LEGACY_PROFICIENCY_KEY) === null
     ? 'not-found'
     : 'pending-explicit-migration';
   const receiptValue = await target.getMeta<MigrationReceipt>(MIGRATION_RECEIPT_KEY);
@@ -1107,10 +1189,10 @@ export async function migrateLocalStorageToIndexedDb(
   const isIndex = (key: string) => ['raw', 'article', 'daily', 'state', 'task']
     .some(kind => key.startsWith(`${LS_PREFIX}:${kind}-index:`));
   const liveSnapshot: Record<string, string> = {};
-  for (let i = 0; i < localStorage.length; i += 1) {
-    const key = localStorage.key(i);
+  for (let i = 0; i < migrationSource.length; i += 1) {
+    const key = migrationSource.key(i);
     if (!key?.startsWith(`${LS_PREFIX}:`)) continue;
-    const raw = localStorage.getItem(key);
+    const raw = migrationSource.getItem(key);
     if (raw !== null) liveSnapshot[key] = raw;
   }
   // Older versions archived source bytes without checking that new fallback
@@ -1152,7 +1234,7 @@ export async function migrateLocalStorageToIndexedDb(
 
   for (const { key, raw, live } of sources) {
     try {
-      if (live && localStorage.getItem(key) !== raw) throw new Error('Source record changed during migration');
+      if (live && migrationSource.getItem(key) !== raw) throw new Error('Source record changed during migration');
       if (receipt.records[key] === raw) { verifiedKeys += 1; continue; }
       const item = parseMigrationItem(key, JSON.parse(raw));
       if (!item) throw new Error('Unsupported Memory V2 storage record');
@@ -1226,6 +1308,14 @@ export async function archiveMigratedLocalStorage(target: Pick<LocalStorageMigra
 }
 
 export async function createPreferredMemoryStorage(): Promise<MemoryStorage> {
+  if (isLocalDatabaseActive()) {
+    try {
+      const storage = new SqliteMemoryStorage();
+      const migration = await migrateLocalStorageToIndexedDb(storage, getApplicationStorage());
+      if (!migration.usable) throw new MemoryStorageMigrationError();
+      return storage;
+    } catch (error) { throw new MemoryStorageMigrationError(error); }
+  }
   if (typeof indexedDB === 'undefined') {
     return new LocalStorageMemoryStorage();
   }

@@ -4,7 +4,7 @@ import { useMemorySystem } from './memoryV2/hooks';
 
 /** Activity comes from the durable review journal, including recovered writes. */
 export function useFlashcardLearningActivity() {
-  const { memorySystem, userId, ready, version } = useMemorySystem();
+  const { memorySystem, userId, ready, activityVersion } = useMemorySystem();
   const [events, setEvents] = useState<LearningEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,7 +24,7 @@ export function useFlashcardLearningActivity() {
       if (active) setError('词卡学习统计暂未加载，重新连接后会自动恢复。');
     });
     return () => { active = false; };
-  }, [memorySystem, userId, ready, version]);
+  }, [memorySystem, userId, ready, activityVersion]);
 
   return { events, error };
 }

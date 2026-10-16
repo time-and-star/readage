@@ -14,6 +14,7 @@ export function canonicalLearningWordId(surface: string, dictionaryLemma?: strin
 /** Dictionary-backed IDs without shipping the server's dictionary pack to the browser. */
 export class LearningWordIdResolver {
   private cache = new Map<string, Promise<string>>();
+  private settled = new Map<string, string>();
 
   constructor(
     private lookup: LearningLemmaLookup,
@@ -23,6 +24,13 @@ export class LearningWordIdResolver {
 
   clear(): void {
     this.cache.clear();
+    this.settled.clear();
+  }
+
+  /** Display can use confirmed evidence without waiting behind a passive batch. */
+  getResolved(surface: string): string | undefined {
+    const word = toLemma(surface);
+    return word.includes(' ') ? word : this.settled.get(word);
   }
 
   prime(surface: string, dictionaryLemma: string): void {
@@ -36,9 +44,15 @@ export class LearningWordIdResolver {
 
   private remember(word: string, result: Promise<string>): void {
     this.cache.delete(word);
+    this.settled.delete(word);
     this.cache.set(word, result);
+    void result.then(value => {
+      if (this.cache.get(word) === result) this.settled.set(word, value);
+    }, () => undefined);
     while (this.cache.size > this.maximumCacheSize) {
-      this.cache.delete(this.cache.keys().next().value!);
+      const oldest = this.cache.keys().next().value!;
+      this.cache.delete(oldest);
+      this.settled.delete(oldest);
     }
   }
 

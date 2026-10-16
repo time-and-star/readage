@@ -38,6 +38,17 @@ test('V5 gives a high-opportunity article a strong memory signal', () => {
   assert.ok(score.score > low.score);
 });
 
+test('V5 continues rewarding broader coverage after the first few opportunity words', () => {
+  const few = scoreArticleV5(candidate({ opportunityCoverage: 160 }), profile);
+  const many = scoreArticleV5(candidate({ opportunityCoverage: 960 }), profile);
+  const more = scoreArticleV5(candidate({ opportunityCoverage: 1600 }), profile);
+
+  assert.ok(many.features.opportunity > few.features.opportunity);
+  assert.ok(many.score > few.score);
+  assert.ok(more.score > many.score);
+  assert.ok(more.features.opportunity < 1);
+});
+
 test('V5 profile can be derived from existing reading context without raw article text', () => {
   const derived = buildDefaultV5Profile({
     userLevel: 'B2',

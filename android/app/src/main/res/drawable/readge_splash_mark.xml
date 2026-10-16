@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android's unbacked splash icon viewport is 288dp. Keeping the existing
+     transparent brand image in its middle quarter gives a 72dp startup mark.
+     This resource is used only by the launch theme, never by the launcher. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/readge_mark"
+    android:insetLeft="37.5%"
+    android:insetTop="37.5%"
+    android:insetRight="37.5%"
+    android:insetBottom="37.5%" />

@@ -6,7 +6,8 @@ import { createWordCardRequest, fetchWordCard } from '../lib/wordCard';
 import { translateSelection } from '../lib/localTranslation';
 import { observeReadingSelection } from '../lib/observeReadingSelection';
 import { getWordCardSelection, isInWordCardScope } from '../lib/wordCardInteractions';
-import { resolveDictionaryLearningWordId } from '../lib/dictionaryClient';
+import { createDictionaryClient, resolveDictionaryLearningWordId } from '../lib/dictionaryClient';
+import type { LookupResult } from '../../packages/dictionary/contracts';
 import { useMemorySystem } from '../lib/memoryV2/hooks';
 import { saveLookupEvidenceOnce, type LookupEvidenceState } from '../lib/lookupEvidence';
 import { ReadingLookupCard, type LookupAnchor } from './ReadingLookupCard';
@@ -18,17 +19,27 @@ interface Props {
   ancestorCardIds?: string[];
   word: string;
   onSpeak: (text: string) => void;
+  onStopSpeech?: () => void;
+  language?: string;
   children: ReactNode;
 }
 interface SelectionAction { text: string; anchor: LookupAnchor; touch: boolean }
 interface NestedLookup {
   word: string; anchor: LookupAnchor; loading: boolean; result: GrammarExplanation | null;
+  neutralResult?: LookupResult | null;
   error: string | null; recordStatus?: string; retryRecord?: () => void;
 }
 
-export const WordCardInteractions: FC<Props> = ({ scopeId, ancestorCardIds = [], word, onSpeak, children }) => {
+export const WordCardInteractions: FC<Props> = ({ scopeId, ancestorCardIds = [], word, onSpeak, onStopSpeech, language = 'en', children }) => {
   const content = useRef<HTMLDivElement>(null);
   const lookupAbort = useRef<AbortController | null>(null);
+  const nestedSpeechOwned = useRef(false);
+  const stopSpeech = useRef(onStopSpeech);
+  stopSpeech.current = onStopSpeech;
+  const stopNestedSpeech = () => {
+    if (nestedSpeechOwned.current) stopSpeech.current?.();
+    nestedSpeechOwned.current = false;
+  };
   const lookupEvidence = useRef<{ word: string; occurrenceId: string; state: LookupEvidenceState } | null>(null);
   const translationAbort = useRef<AbortController | null>(null);
   const [lookup, setLookup] = useState<NestedLookup | null>(null);
@@ -37,7 +48,7 @@ export const WordCardInteractions: FC<Props> = ({ scopeId, ancestorCardIds = [],
   const { recordExposure, recordClick } = useMemorySystem();
   const scopes = [...ancestorCardIds, scopeId];
 
-  useEffect(() => () => { lookupAbort.current?.abort(); translationAbort.current?.abort(); }, []);
+  useEffect(() => () => { lookupAbort.current?.abort(); translationAbort.current?.abort(); stopNestedSpeech(); }, []);
 
   const select = useCallback((text: string, range: Range, touch: boolean) => {
     const root = content.current;
@@ -68,12 +79,13 @@ export const WordCardInteractions: FC<Props> = ({ scopeId, ancestorCardIds = [],
   }, [scopeId]);
 
   const lookupWord = useCallback(async (value: string, rect: Pick<DOMRect, 'left' | 'top' | 'bottom'>, forceRefresh = false) => {
-    const request = createWordCardRequest(value);
+    const request = language === 'en' ? createWordCardRequest(value) : value.trim() ? { selectedText: value.trim(), contextSentence: '' } : null;
     if (!request) return;
     const evidence = forceRefresh && lookupEvidence.current?.word === request.selectedText ? lookupEvidence.current
       : { word: request.selectedText, occurrenceId: `word-card:${crypto.randomUUID()}`, state: { saved: false } };
     lookupEvidence.current = evidence;
     lookupAbort.current?.abort();
+    stopNestedSpeech();
     const controller = new AbortController();
     lookupAbort.current = controller;
     translationAbort.current?.abort();
@@ -83,6 +95,11 @@ export const WordCardInteractions: FC<Props> = ({ scopeId, ancestorCardIds = [],
     const anchor = { left: rect.left, top: rect.top, bottom: rect.bottom };
     setLookup({ word: request.selectedText, anchor, loading: true, result: null, error: null });
     try {
+      if (language !== 'en') {
+        const neutralResult = await createDictionaryClient().lookup({ text: request.selectedText, language, preferredDefinitionLanguages: ['zh', language, 'en'] }, controller.signal);
+        if (!controller.signal.aborted) setLookup({ word: request.selectedText, anchor, loading: false, result: null, neutralResult, error: null });
+        return;
+      }
       const result = await fetchWordCard(request, { signal: controller.signal, forceRefresh });
       if (controller.signal.aborted) return;
       setLookup({ word: request.selectedText, anchor, loading: false, result, error: null,
@@ -104,7 +121,7 @@ export const WordCardInteractions: FC<Props> = ({ scopeId, ancestorCardIds = [],
       if (!controller.signal.aborted) setLookup({ word: request.selectedText, anchor, loading: false, result: null,
         error: error instanceof Error ? error.message : '查询暂时不可用，请重试。' });
     }
-  }, [word, recordExposure, recordClick]);
+  }, [word, language, recordExposure, recordClick]);
 
   const refreshLookupRef = useRef(() => {});
   refreshLookupRef.current = () => { if (lookup) void lookupWord(lookup.word, lookup.anchor, true); };
@@ -122,13 +139,13 @@ export const WordCardInteractions: FC<Props> = ({ scopeId, ancestorCardIds = [],
     window.getSelection()?.removeAllRanges();
     setTranslation({ text, loading: true, result: null, error: null });
     try {
-      const result = await translateSelection(text, { signal: controller.signal });
+      const result = await translateSelection(text, { signal: controller.signal, sourceLanguage: language });
       if (!controller.signal.aborted) setTranslation({ text, loading: false, result, error: null });
     } catch (error) {
       if (!controller.signal.aborted) setTranslation({ text, loading: false, result: null,
         error: error instanceof Error ? error.message : '翻译暂时不可用，请重试。' });
     }
-  }, []);
+  }, [language]);
 
   const consume = (action: (text: string) => void) => {
     if (!selection) return;
@@ -144,7 +161,7 @@ export const WordCardInteractions: FC<Props> = ({ scopeId, ancestorCardIds = [],
     <div ref={content} className="word-card-interactions">
       {children}
       {translation && <div className="word-card-selected-translation" data-selection-translation="true">
-        <p className="word-card-selected-translation__original" lang="en">{translation.text}</p>
+        <p className="word-card-selected-translation__original" lang={language}>{translation.text}</p>
         <SelectionTranslationNote loading={translation.loading} result={translation.result} error={translation.error} scrollWithinCard
           onRetry={() => { void translate(translation.text); }} />
       </div>}
@@ -153,11 +170,13 @@ export const WordCardInteractions: FC<Props> = ({ scopeId, ancestorCardIds = [],
       onTranslate={() => consume(text => { void translate(text); })}
       onCopy={() => consume(text => { void navigator.clipboard?.writeText(text).catch(() => {}); })}
       onSpeak={() => consume(onSpeak)} onDismiss={() => consume(() => {})} />}
-    {lookup && <ReadingLookupCard open selectedText={lookup.word} result={lookup.result} loading={lookup.loading}
+    {lookup && <ReadingLookupCard open selectedText={lookup.word} result={lookup.result} neutralResult={lookup.neutralResult} loading={lookup.loading}
       anchor={lookup.anchor} error={lookup.error} ancestorCardIds={scopes} returnTo={word}
       recordStatus={lookup.recordStatus} onRetryRecord={lookup.retryRecord}
       onRetry={() => { void lookupWord(lookup.word, lookup.anchor, true); }}
-      onClose={() => { lookupAbort.current?.abort(); setLookup(null); }} onSpeak={onSpeak}
+      onClose={() => { lookupAbort.current?.abort(); stopNestedSpeech(); setLookup(null); }}
+      onSpeak={text => { nestedSpeechOwned.current = true; onSpeak(text); }}
+      onStopSpeech={() => { stopSpeech.current?.(); nestedSpeechOwned.current = false; }}
       onLookupRelated={value => { void lookupWord(value, lookup.anchor); }} />}
   </WordCardInteractionContext.Provider>;
 };

@@ -250,7 +250,7 @@ function alignTranslationsToSourceParagraphs(
 }
 
 type EnrichableArticle = Pick<Article, 'content'> &
-  Partial<Pick<Article, 'paragraphTranslations' | 'levelRating' | 'source' | 'rewriteTargetLevel'>>;
+  Partial<Pick<Article, 'paragraphTranslations' | 'levelRating' | 'source' | 'rewriteTargetLevel' | 'language'>>;
 
 function isUsableTranslation(t: unknown): boolean {
   return (
@@ -289,6 +289,8 @@ export function hasOfficialLevelRating(
  * Whether import still needs work (missing translations and/or official rating).
  */
 export function needsImportEnrichment(article: EnrichableArticle): boolean {
+  // The existing CEFR/rewrite jobs are English-specific; other languages translate on demand.
+  if (article.language && article.language.split('-')[0].toLowerCase() !== 'en') return false;
   if ((article.content?.length ?? 0) === 0) return false;
   return !hasCompleteParagraphTranslations(article) || !hasOfficialLevelRating(article);
 }

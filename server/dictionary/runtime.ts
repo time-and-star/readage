@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { abortable, createDictionaryService } from '../../packages/dictionary/core';
 import type { DictionaryAdapter, DictionaryService, DictionaryServiceConfig, LanguageAdapter, LearningTermRef, LookupResult } from '../../packages/dictionary/contracts';
@@ -7,9 +6,15 @@ import { EcdictAdapter } from '../../packages/dictionary/server/ecdict';
 import { NativeReviewedAdapter } from '../../packages/dictionary/server/nativeReviewed';
 import { ReadAgeAuthoredAdapter } from '../../packages/dictionary/server/readageAuthored';
 import { WordNetAdapter } from '../../packages/dictionary/server/wordnet';
+import { WiktionaryFrenchAdapter } from '../../packages/dictionary/server/wiktionaryFrench';
+import { frenchLanguageAdapter } from '../../packages/dictionary/languages/french';
+import { WiktionaryJapaneseAdapter } from '../../packages/dictionary/server/wiktionaryJapanese';
+import { japaneseLanguageAdapter } from '../../packages/dictionary/languages/japanese';
 import { LearningWordIdResolver } from '../../src/lib/learningWordIds';
 import { DictionarySettingsManager } from './settings';
 import { createDictionaryImporter, discoverImportedDictionaries, DictionaryImportError, type DictionaryImportInput } from './imports';
+import { resolveReleasedDictionaryDirectories } from './releasedResources';
+import { createDistributionImporter, installedDictionaryDirectories } from './distributionImports';
 
 export interface DictionaryRuntimeOptions extends DictionaryServiceConfig {
   dataDir?: string;
@@ -17,6 +22,9 @@ export interface DictionaryRuntimeOptions extends DictionaryServiceConfig {
   manifestPath?: string;
   readageDir?: string;
   wordnetDir?: string;
+  frenchDir?: string;
+  frenchChineseDir?: string;
+  japaneseChineseDir?: string;
   /** Persistence is opt-in for factory users; the application singleton supplies its local file. */
   settingsFile?: string;
   importsDir?: string;
@@ -26,12 +34,16 @@ export interface DictionaryRuntimeOptions extends DictionaryServiceConfig {
 
 /** Application wiring; neither adapters nor core depend on application learning storage. */
 export function createDictionaryRuntime(options: DictionaryRuntimeOptions = {}) {
-  const ecdict = new EcdictAdapter({ dataDir: options.dataDir });
-  const native = options.revisionFile || options.manifestPath
+  const installed = installedDictionaryDirectories(options.importsDir);
+  let ecdict = new EcdictAdapter({ dataDir: installed.dataDir ?? options.dataDir });
+  let native = !installed.readageDir && (options.revisionFile || options.manifestPath)
     ? new NativeReviewedAdapter({ revisionFile: options.revisionFile, manifestPath: options.manifestPath })
-    : new ReadAgeAuthoredAdapter({ dataDir: options.readageDir });
+    : new ReadAgeAuthoredAdapter({ dataDir: installed.readageDir ?? options.readageDir });
   const wordnet = options.wordnetDir ? new WordNetAdapter({ dataDir: options.wordnetDir }) : undefined;
-  const additional = [...(wordnet ? [wordnet] : []), ...discoverImportedDictionaries(options.importsDir), ...(options.additionalDictionaries ?? [])];
+  const french = options.frenchDir ? new WiktionaryFrenchAdapter({ dataDir: options.frenchDir }) : undefined;
+  const frenchChinese = options.frenchChineseDir ? new WiktionaryFrenchAdapter({ dataDir: options.frenchChineseDir, edition: 'zh', morphologyAdapter: french }) : undefined;
+  const japaneseChinese = options.japaneseChineseDir ? new WiktionaryJapaneseAdapter({ dataDir: options.japaneseChineseDir }) : undefined;
+  const additional = [...(wordnet ? [wordnet] : []), ...(french ? [french] : []), ...(frenchChinese ? [frenchChinese] : []), ...(japaneseChinese ? [japaneseChinese] : []), ...discoverImportedDictionaries(options.importsDir), ...(options.additionalDictionaries ?? [])];
   const registeredIds = ['native-reviewed', 'ecdict', ...additional.map(adapter => adapter.metadata.id)];
   const dictionaries = new Map<string, DictionaryAdapter>();
   const languages = new Map<string, LanguageAdapter>();
@@ -45,6 +57,8 @@ export function createDictionaryRuntime(options: DictionaryRuntimeOptions = {}) 
     languages.set(key, adapter);
   }
   addLanguage(englishLanguageAdapter);
+  addLanguage(japaneseLanguageAdapter);
+  if (french || frenchChinese) addLanguage(frenchLanguageAdapter);
   addDictionary(native);
   addDictionary(ecdict);
   for (const language of options.additionalLanguages ?? []) addLanguage(language);
@@ -115,19 +129,31 @@ export function createDictionaryRuntime(options: DictionaryRuntimeOptions = {}) 
       return () => { dictionaries.delete(adapter.metadata.id); };
     }),
   }) : undefined;
+  const distribution = options.importsDir ? createDistributionImporter({ directory: options.importsDir,
+    snapshot: () => ({ ...settings.snapshot(), catalog: service.listSources() }),
+    install: async (adapter, commit) => {
+      await settings.replaceSource(adapter.metadata.id, () => {
+        const previous = dictionaries.get(adapter.metadata.id)!; dictionaries.set(adapter.metadata.id, adapter);
+        return () => { dictionaries.set(adapter.metadata.id, previous); };
+      }, commit);
+      if (adapter instanceof EcdictAdapter) ecdict = adapter;
+      if (adapter instanceof ReadAgeAuthoredAdapter) native = adapter;
+      identities.clear();
+    },
+  }) : undefined;
   async function importDictionary(input: DictionaryImportInput) {
     if (!importer) throw new DictionaryImportError(503, 'DICTIONARY_IMPORT_NOT_CONFIGURED', '词典导入目录未配置。');
+    if (/\.(?:pack|nwdict|zip)$/i.test(input.filename)) return distribution!.import(input);
     return importer.import(input);
   }
-  return { service, settings, ecdict, native, wordnet, resolveLearningTerms, importDictionary };
+  return { service, settings, get ecdict() { return ecdict; }, get native() { return native; }, wordnet, french, frenchChinese, japaneseChinese, resolveLearningTerms, importDictionary };
 }
 
 let runtime: ReturnType<typeof createDictionaryRuntime> | undefined;
 export function getDictionaryRuntime() {
   if (!runtime) {
     const enabledSources = process.env.DICTIONARY_SOURCES?.split(',').map(id => id.trim()).filter(Boolean);
-    const installedWordnet = path.resolve('data/dictionary/imported/wordnet-3.1');
-    const explicitWordnet = process.env.DICTIONARY_WORDNET_DIR?.trim();
+    const releasedDirectories = resolveReleasedDictionaryDirectories();
     runtime = createDictionaryRuntime({
       enabledSources, sourceOrder: process.env.DICTIONARY_SOURCE_ORDER?.split(',').map(id => id.trim()).filter(Boolean),
       defaultSource: process.env.DICTIONARY_DEFAULT_SOURCE?.trim() || enabledSources?.[0],
@@ -135,7 +161,7 @@ export function getDictionaryRuntime() {
       readageDir: process.env.DICTIONARY_READAGE_DIR?.trim() || undefined,
       revisionFile: process.env.DICTIONARY_REVISIONS_FILE?.trim() || undefined,
       manifestPath: process.env.DICTIONARY_REVISION_MANIFEST?.trim() || undefined,
-      wordnetDir: explicitWordnet || (fs.existsSync(path.join(installedWordnet, 'manifest.json')) ? installedWordnet : undefined),
+      ...releasedDirectories,
       settingsFile: process.env.DICTIONARY_SETTINGS_FILE?.trim() || path.resolve('local-data/dictionary/settings.json'),
       importsDir: process.env.DICTIONARY_IMPORTS_DIR?.trim() || path.resolve('local-data/dictionary/imports'),
     });

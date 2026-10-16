@@ -37,6 +37,10 @@ import {
   type RecommendationScore,
 } from './memoryV2/recommendation';
 import type { V5RecommendationProfile } from './recommendationV5';
+import { extractRecommendationLemmas } from './recommendationLearningUnits';
+import { resolveLearningWordIds } from './dictionaryClient';
+import { toLemma } from './proficiency';
+import { DEFAULT_ARTICLE_TARGET_WORD_COUNT } from './recommendationPolicy';
 import {
   emitRecCandidates,
   emitRecCatalogLoaded,
@@ -44,7 +48,6 @@ import {
   emitRecPicked,
   emitRecPoolReady,
   getActiveRecSessionId,
-  normalizeReviewWords,
   reviewHitsInLemmas,
   startRecSession,
 } from './recommendationTelemetry';
@@ -155,7 +158,8 @@ export function pickDailyRankedRecommendation(
   if (topScore === undefined) return null;
   const head = scores
     .slice(0, Math.max(1, exploreTop))
-    .filter((candidate) => candidate.score === topScore);
+    .filter((candidate) => candidate.score === topScore
+      && candidate.reviewWordsCount === scores[0]?.reviewWordsCount);
   const shuffled = seededShuffle(head, `full-catalog-explore:${rotationDate}`);
   return shuffled[0] ?? scores[0] ?? null;
 }
@@ -213,23 +217,18 @@ async function resolveFromFullCatalog(
     index,
     excluded
   );
+  const extraCandidates: ArticleCandidate[] = [];
+  const candidateIds = new Set(candidates.map((candidate) => candidate.article.id));
   // Merge small built-in / history rows that have content but are not in the catalog.
   for (const article of [...library, ...history]) {
     if (!article?.id || excluded.has(article.id)) continue;
-    if (candidates.some((row) => row.article.id === article.id)) continue;
+    if (candidateIds.has(article.id)) continue;
     if (!Array.isArray(article.content) || article.content.length === 0) continue;
     // Tokenize only non-catalog extras (usually ≤5 demo + user pastes).
-    const { getNewLemmas } = await import('./readingExposure');
-    const lemmas = new Set<string>();
-    const exposed = new Set<string>();
-    for (const paragraph of article.content) {
-      for (const lemma of getNewLemmas(paragraph, exposed)) {
-        lemmas.add(lemma);
-        exposed.add(lemma);
-      }
-    }
-    if (lemmas.size === 0) continue;
-    candidates.push({
+    const lemmas = extractRecommendationLemmas(article);
+    if (lemmas.length === 0) continue;
+    candidateIds.add(article.id);
+    extraCandidates.push({
       article: {
         id: article.id,
         title: article.title,
@@ -240,11 +239,24 @@ async function resolveFromFullCatalog(
         estimatedWordCount: getArticleWordCount(article) ?? undefined,
         topic: article.topic,
       },
-      lemmas: Array.from(lemmas),
+      lemmas,
     });
   }
+  if (extraCandidates.length > 0) {
+    const surfaces = [...new Set(extraCandidates.flatMap((candidate) => candidate.lemmas))];
+    // Keep offline ranking usable while retrying dictionary identities next time.
+    const canonicalIds = await resolveLearningWordIds(surfaces).catch(() => surfaces);
+    const canonicalBySurface = new Map(surfaces.map((word, index) => [word, canonicalIds[index]]));
+    for (const candidate of extraCandidates) {
+      candidates.push({
+        ...candidate,
+        lemmas: [...new Set(candidate.lemmas.map((word) => canonicalBySurface.get(word) ?? word))],
+      });
+    }
+  }
 
-  const reviewWords = normalizeReviewWords(request.reviewWords);
+  // Diagnostic payload limits must not truncate the words used for ranking.
+  const reviewWords = [...new Set(request.reviewWords.map(toLemma).filter(Boolean))];
   const recommendationMode = reviewWords.length > 0 ? 'review' : 'normal';
   const boundedCandidates = candidates.filter((candidate) =>
     isRecommendationArticleWithinBounds(candidate.article, profile, {
@@ -316,7 +328,7 @@ async function resolveFromFullCatalog(
   const hydrateStarted = Date.now();
   const loader =
     loadArticleById
-    ?? ((articleId: string) => fetchMagazineArticleById(articleId, { signal }));
+    ?? ((articleId: string) => fetchMagazineArticleById(articleId, { signal, deferMedia: true }));
   const article = await loader(picked.articleId);
   timing.hydrateMs = Date.now() - hydrateStarted;
   if (!article) return null;
@@ -498,12 +510,14 @@ export async function resolveRecommendationArticle(
   // Only spend the interaction budget on AI when the library has no candidate.
   onPhase?.('ai');
   emitRecPhase('ai');
+  const aiReviewWords = [...new Set(reviewWords.map(toLemma).filter(Boolean))]
+    .slice(0, DEFAULT_ARTICLE_TARGET_WORD_COUNT);
   try {
     const response = await aiPost<RecommendedArticleCandidate>(
       {
         intent: 'recommend_article',
         topic,
-        reviewWords,
+        reviewWords: aiReviewWords,
         level: profile.userLevel,
       },
       fetch,
@@ -515,7 +529,7 @@ export async function resolveRecommendationArticle(
       totalMs,
       source: 'ai',
     });
-    const article = buildAiArticle(response.result, topic, reviewWords, profile.userLevel);
+    const article = buildAiArticle(response.result, topic, aiReviewWords, profile.userLevel);
     if (!isUsableRecommendation(article)) {
       throw new Error('AI recommendation is outside the active CEFR or length bounds.');
     }

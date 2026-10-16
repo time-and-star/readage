@@ -3,15 +3,22 @@ import { DictionarySenseGroups } from './DictionarySenseGroups';
 import { DictionaryOriginalContent } from './DictionaryOriginalContent';
 import { WordCardText } from './WordCardText';
 import { ReadAgeEntrySections } from './ReadAgeEntrySections';
+import { dictionaryDisplayName } from '../lib/dictionaryDisplay';
+import { WordCardRelatedButton } from './WordCardRelatedButton';
+import { DictionarySourceProvenance } from './DictionarySourceProvenance';
 
-export function DictionarySourceSections({ sources, onLookupRelated, initiallyExpanded = true }: {
-  sources: readonly DictionarySourceView[]; onLookupRelated?: (word: string) => void; initiallyExpanded?: boolean;
+export function DictionarySourceSections({ sources, onLookupRelated, initiallyExpanded = true, preferAuthored = false }: {
+  sources: readonly DictionarySourceView[]; onLookupRelated?: (word: string) => void; initiallyExpanded?: boolean; preferAuthored?: boolean;
 }) {
+  const authoredSource = preferAuthored ? sources.find(source => source.readageContent) : undefined;
+  const orderedSources = authoredSource ? [authoredSource, ...sources.filter(source => source !== authoredSource)] : sources;
   return <div className="word-card-dictionary-sources" aria-label="各词典释义">
-    {sources.map(({ dictionaryRef, record, originalContent, readageContent }) => <details open={initiallyExpanded} className="word-card-dictionary-source"
-      key={`${dictionaryRef.dictionaryId}:${dictionaryRef.entryId}`} aria-label={dictionaryRef.dictionaryName ?? dictionaryRef.dictionaryId}>
+    {orderedSources.map(source => {
+      const { dictionaryRef, record, originalContent, readageContent } = source;
+      return <details open={source === authoredSource || initiallyExpanded} className="word-card-dictionary-source"
+      key={`${dictionaryRef.dictionaryId}:${dictionaryRef.entryId}`} aria-label={dictionaryDisplayName(dictionaryRef) ?? dictionaryRef.dictionaryId}>
       <summary className="word-card-dictionary-source__header">
-        <span>{dictionaryRef.dictionaryName ?? dictionaryRef.dictionaryId}</span>
+        <span>{dictionaryDisplayName(dictionaryRef) ?? dictionaryRef.dictionaryId}</span>
         <span lang="en">{record.lemma}</span>
       </summary>
       {!readageContent && record.phonetic && <p className="word-card-meta__phonetic">{record.phonetic}</p>}
@@ -26,9 +33,11 @@ export function DictionarySourceSections({ sources, onLookupRelated, initiallyEx
       {!readageContent && record.wordFamily.length > 0 && <div className="word-card-source-extras">
         <span className="word-card-section__eyebrow">相关词</span>
         <div className="word-card-chip-list">{record.wordFamily.map(word => onLookupRelated
-          ? <button key={word} type="button" className="word-card-chip word-card-chip--link" onClick={() => onLookupRelated(word)}>{word}</button>
+          ? <WordCardRelatedButton key={word} word={word} className="word-card-chip word-card-chip--link" onLookup={onLookupRelated} />
           : <span key={word} className="word-card-chip"><WordCardText text={word} /></span>)}</div>
       </div>}
-    </details>)}
+      <DictionarySourceProvenance items={source.provenance ?? record.edit.source} />
+    </details>;
+    })}
   </div>;
 }

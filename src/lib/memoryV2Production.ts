@@ -1,3 +1,4 @@
+import { getApplicationStorage } from './localDatabase';
 /**
  * Memory V2.2 产出能力追踪扩展
  * 补充识别维度之外的主动产出能力评估
@@ -146,7 +147,7 @@ export class ProductionTracker {
 
   private getStorage(): Storage | null {
     if (typeof window === 'undefined') return null;
-    return window.localStorage;
+    return getApplicationStorage() ?? null;
   }
 }
 

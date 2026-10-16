@@ -1,6 +1,6 @@
 import type { ArticleMedia, ArticleSourceDocument } from '../../src/types';
 import { classifyArticleParagraph } from '../../src/lib/articlePresentation';
-import { isSkippableImportTitle, parseEpubBuffer, parseHtmlContent } from '../magazines/parseEpub';
+import { isSkippableImportTitle, parseEpubBuffer, parseHtmlContentWithMedia } from '../magazines/parseEpub';
 import { parsePdfDocument } from '../documents/parsePdfDocument';
 import { parseDocxBuffer } from '../documents/parseDocx';
 import { saveArticleImage } from '../magazines/assets';
@@ -145,7 +145,7 @@ function parsePlainText(text: string, filename: string): ImportedUserArticle[] {
 
   let title = fallbackTitle;
   const first = paragraphs[0];
-  if (first.length <= 120 && wordCount(first) <= 14 && !/[.!?]$/.test(first)) {
+  if (first.length <= 120 && wordCount(first) <= 14 && !/[.!?。！？][」』”’"')\]）】》]*$/u.test(first)) {
     title = first;
   }
   const body = paragraphs.filter((paragraph) => classifyArticleParagraph(paragraph, title) !== 'furniture');
@@ -262,7 +262,7 @@ export async function parseUserImportFile(buffer: Buffer, filename: string, opti
   }
 
   if (looksLikeHtml(text, extension)) {
-    const chapters = parseHtmlContent(text, titleFromFilename(filename), 1);
+    const chapters = await parseHtmlContentWithMedia(text, titleFromFilename(filename), { minWords: 1, saveImage, signal: options.signal });
     const articles = chapters
       .map((chapter) => toArticle(chapter, 1))
       .filter((article): article is ImportedUserArticle => article !== null);

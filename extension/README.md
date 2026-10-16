@@ -13,7 +13,7 @@
 
 ## 安装（Chrome / Edge 桌面版）
 
-1. 在项目根目录运行 `npm run build:extension`。安装目录是 `extension/dist`，本次实现已生成。
+1. 在项目根目录运行 `npm run build:extension`。安装目录是 `extension/dist`。2026-10-16 的 ReadAge 更名当前只更新源码，待用户检测后再生成新插件包；已有目录和 ZIP 仍为旧产物。
 2. Chrome 打开 `chrome://extensions`，Edge 打开 `edge://extensions`。
 3. 开启「开发者模式」，点击「加载已解压的扩展程序」，选择本项目的 **extension/dist** 文件夹。
 4. 将 ReadAge 固定到浏览器工具栏。首次点击「连接 ReadAge」完成授权和检查。本地默认 `http://localhost:3000`；其他地址在「设置」中填写 HTTPS 根地址，再点「保存并授权」。
@@ -22,6 +22,8 @@
 7. 点击「打开 ReadAge」。已暂存的记录自动合并到主应用。主应用打开时，新记录也会自动同步。
 
 更新插件后，在扩展管理页面点「重新加载」，并刷新已打开的网页。主应用也需要部署本次更新；仅安装扩展不能让旧版主应用自动支持同步。
+
+构建同时生成 `public/readge-extension.zip`，可从主应用的 `/readge-extension.zip` 下载。原 `/readage-extension.zip` 地址保留为相同安装包的兼容入口。
 
 ## 数据与同步
 

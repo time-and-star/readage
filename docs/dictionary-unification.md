@@ -24,7 +24,7 @@ npm run dictionary:pack
 
 `data/dictionary/sample-words.json` 固定 50 词名单：十个指定词加上按有效词频升序、同频按字母排序选出的 40 个原形词。没有 `--force` 时不会重新生成已固定名单。
 
-ReadAge 自编词典目前只加载这 50 个已审核词条，审核中的批次不参与查询。开启词典只启用已安装内容，不会扩充覆盖范围；例如 `see` 已收录，字母 `C` 和 `sea` 尚未收录。来源目录用可选的 `entryCount` 和 `description` 显示实际覆盖范围；查词响应的 `dictionarySourceMisses` 说明已启用来源未收录此词，与 `dictionarySourceIssues` 的读取故障分开，正常未命中仍可缓存。
+readge 自编词典目前只加载这 50 个已审核词条，审核中的批次不参与查询。开启词典只启用已安装内容，不会扩充覆盖范围；例如 `see` 已收录，字母 `C` 和 `sea` 尚未收录。来源目录用可选的 `entryCount` 和 `description` 显示实际覆盖范围；查词响应的 `dictionarySourceMisses` 说明已启用来源未收录此词，与 `dictionarySourceIssues` 的读取故障分开，正常未命中仍可缓存。
 
 ## API 与缓存
 
