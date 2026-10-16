@@ -6,7 +6,7 @@
 
 **围绕文章展开的本地阅读与语言学习应用。** 把文章库、上下文查词、选句翻译、朗读和间隔复习连接起来，让一次阅读留下可以继续使用的学习记录。
 
-[下载安装包](https://github.com/time-and-star/readage/releases/latest) · [快速开始](#快速开始) · [功能与学习流程](#功能与学习流程) · [模型声明](#大模型与语音模型声明) · [三端架构](#三端架构) · [开发文档](#开发文档) · [Apache 2.0](LICENSE)
+[下载安装包](https://github.com/time-and-star/readage/releases/latest) · [快速开始](#快速开始) · [文章来源](#文章导入与来源) · [实测速度](#实测速度) · [模型声明](#大模型与语音模型声明) · [致谢](#致谢) · [开发文档](#开发文档) · [Apache 2.0](LICENSE)
 
 ReadAge 以英语学习为主，也提供法语、日语阅读及对应词典和语音接入。应用采用暖纸色阅读界面和橙色启动画面；浏览器、Windows 与 Android 共用界面和学习规则，并通过各自的平台实现处理文件、存储和本机模型。
 
@@ -55,6 +55,36 @@ ReadAge 以英语学习为主，也提供法语、日语阅读及对应词典和
 本机模型和音色属于独立资源，源码克隆不包含全部运行资源。Windows 完整安装包与 Android 完整 APK 按各端构建清单装入离线资源；实际声音来源、速度和听感需要在交付设备上分别验证。
 
 配置与资源说明：[本机翻译](docs/local-translation.md) · [朗读与 TTS](docs/tts.md) · [法语词典](docs/dictionary-french.md) · [日语词典](docs/dictionary-japanese.md)
+
+## 文章导入与来源
+
+| 入口 | 材料从哪里来 |
+| --- | --- |
+| 粘贴文章 / 导入文件 | 用户自行准备的文章、TXT / Markdown / HTML、DOCX、EPUB 和 PDF；可选择英语、法语或日语。 |
+| 外刊期刊目录 | 使用 **[@hehonghui/awesome-english-ebooks](https://github.com/hehonghui/awesome-english-ebooks)** 维护的资源，当前配置包含 The Economist、The New Yorker、The Atlantic 和 Wired。感谢作者与贡献者持续整理、维护外刊资源。 |
+| 网站与全文订阅源 | 配置了 News in Levels、The Conversation、JSTOR Daily、Science News Explores 和 The MIT Press Reader 的相应页面或订阅源，阅读材料保留原有来源信息。 |
+
+本地浏览器和 Windows 可按配置主动更新来源；Android 当前使用已导入或迁移到本机的材料，联网更新入口保持关闭。外刊原文件与个人文章库不随源码或 Release 安装包发布；原文、图片及出版物版权归相应作者和出版方。具体仓库、原站链接与三端入口见 [文章导入来源与致谢](docs/article-sources.md)。
+
+## 实测速度
+
+**手机数据来自 2026-10-16 已安装的 Android 1.0.4 正式包**：vivo V2190A、Exynos 1080、Mali-G78、Android 13；使用本机 CPU、正式翻译模型及 Kokoro int8 美音。测试通过实际 APK 的 WebView 调用原生插件，在独立档案中进行，不向个人文章写入测试材料。电脑数据复用 Ryzen 7 6800H 上已有的固定样例记录。
+
+| 能力与测试条件 | 实测耗时 | 怎样理解 |
+| --- | ---: | --- |
+| Android 翻译：89 字符英语短句，本进程首次翻译 | **6.71 秒** | 包含首次模型准备及原生桥接，应用资源启动校验另计 |
+| Android 翻译：相同 89 字符短句，模型就绪后 | **1.93 秒** | 两次热运行中位数；451 字符英语段落为 **7.50 秒** |
+| Android 朗读：84 字符英语短文，首段缓存未命中 | **7.10 秒** | 原生请求到首个 AudioTrack 输出；同文完整播放后的重播为 **3.03 秒**；这两次不含新引擎加载 |
+| Android 连续朗读：451 字符英语段落 | 首次输出 **11.61 秒** | 完整播放请求约 **40.57 秒**，含约 24.72 秒音频；仍有 **2 次缓冲，合计约 4.01 秒**，不能宣称长文无停顿 |
+| Windows Kokoro fp32：105 / 194 字符英语样例 | **2.10 / 3.52 秒** | 两轮平均音频生成时间，对应约 6.75 / 13.28 秒音频；不等于界面点击到出声 |
+| 本地浏览器 Kokoro fp32：140 字符英语样例 | **2.35 秒** | 模型已就绪、无音频缓存；同样例服务端缓存命中后约 **7.3 毫秒**返回音频，播放初始化另计 |
+| 电脑本机 Hy-MT2：日中翻译既有样例 | 短句约 **2.5 秒** | 1391 字符长选区分三批约 **66 秒**；这是历史单次接口记录 |
+
+**朗读语速可选 0.75×、0.9×、1×、1.1×、1.25×、1.5×。** 上述手机朗读使用 1×；播放语速、音频生成速度、首次等待和缓存返回时间是不同指标。Windows 同机对照中 fp32 比 q8 的生成速度快约 3.2–3.7 倍，但多使用约 284 MiB 进程内存，因此模型选择也要考虑设备内存。
+
+**为什么手机当前走 CPU？** 此前同一台 Exynos 1080 / Mali-G78 的正式翻译模型对照中，优化 CPU 短句约 2.32 秒，更新编译器后的 GPU 约 8.33 秒；GPU 输入 / CPU 生成原型仍受状态传递拖累。正式翻译因此保留 CPU。语音也沿用已交付的 CPU 引擎；尚无同条件的语音 GPU 对照，不能把翻译结果当作语音 GPU 性能结论。
+
+测试日期、模型与缓存状态、逐次数据、CPU / GPU 对照原因、资源和内存成本见 **[实测性能与运行条件](docs/performance.md)**。这些是指定设备与样例的测量，不代表所有手机、所有文章或正式听感已经通过验收。
 
 ## 大模型与语音模型声明
 
@@ -181,7 +211,26 @@ Windows 与网页构建共用 `dist/`，完整交付先打 Windows 包，再构�
 | [词典接口与来源](docs/dictionary-interface-v1.md) | 多源查询、契约和词典服务 |
 | [翻译](docs/local-translation.md) / [朗读](docs/tts.md) | 本机模型、语音与故障排查 |
 | [模型来源与许可声明](docs/ai-models.md) | 大模型与语音模型的用途、来源、版本、许可及三端对应 |
+| [实测性能与运行条件](docs/performance.md) | 翻译耗时、朗读等待与语速、芯片、CPU / GPU 选择和样例数据 |
+| [文章导入来源与致谢](docs/article-sources.md) | 文件导入、外刊资源仓库、网站订阅源及原出版方 |
 | [浏览器插件](extension/README.md) | 安装、选词查词与本地服务连接 |
+
+## 致谢
+
+ReadAge 能在本机连接阅读、翻译与朗读，离不开以下作者、团队和开源社区的工作：
+
+| 作者 / 团队与仓库 | 在本项目中的贡献 |
+| --- | --- |
+| **[@hehonghui/awesome-english-ebooks](https://github.com/hehonghui/awesome-english-ebooks)** | 外刊资源的整理与持续维护；也感谢各期刊原作者、编辑和出版方提供阅读内容 |
+| **腾讯混元团队 [@Tencent-Hunyuan/Hy-MT2](https://github.com/Tencent-Hunyuan/Hy-MT2)**；**[@Tencent/AngelSlim](https://github.com/Tencent/AngelSlim)** | 本机翻译模型及量化方案，让离线句子翻译能够在电脑和手机运行 |
+| **[@hexgrad/kokoro](https://github.com/hexgrad/kokoro)** | Kokoro-82M 语音模型及相关语音工具 |
+| **Supertone / [@supertone-oss-archive/supertonic](https://github.com/supertone-oss-archive/supertonic)** | Supertonic 语音模型与推理实现，当前用于 Android 日语朗读 |
+| **[@ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp)**、**[@k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)**、**[@microsoft/onnxruntime](https://github.com/microsoft/onnxruntime)** | 本机翻译和语音推理运行组件 |
+| **[onnx-community/Kokoro-82M-v1.0-ONNX](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX)**、**[@espeak-ng/espeak-ng](https://github.com/espeak-ng/espeak-ng)**、**[@hexgrad/misaki](https://github.com/hexgrad/misaki)** | 模型转换、发音与多语言前端 |
+| **[DeepSeek / @deepseek-ai](https://github.com/deepseek-ai)**、**[阶跃星辰 / @stepfun-ai](https://github.com/stepfun-ai)**、**[Google Gemini / @googleapis/js-genai](https://github.com/googleapis/js-genai)** | 源码中保留的可选在线模型接口及 SDK；当前 Windows / Android 离线发行配置关闭在线 AI |
+| **[OpenAI / @openai/openai-node](https://github.com/openai/openai-node)** | 在线兼容接口所用 SDK；README 品牌概念封面另使用 GPT Image 生成与优化，见 [图片记录](docs/images/README.md) |
+
+模型与资源保留各自的许可和版权，具体见下方说明及 [模型声明](docs/ai-models.md)。上述致谢不表示相关作者、团队或服务商为本项目提供认证或背书。
 
 ## 许可证与第三方资源
 

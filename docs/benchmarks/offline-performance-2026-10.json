@@ -1,0 +1,474 @@
+{
+  "schema": "readage-public-performance.v1",
+  "compiledOnShanghai": "2026-10-16",
+  "scope": "2026-10-16 actual Android 1.0.4 WebView/native CPU measurements plus explicitly historical desktop and GPU records. No acoustic listening acceptance or full UI acceptance.",
+  "sourceRecords": {
+    "desktopSpeech": {
+      "localRecord": "build/desktop/speech-latency-verification.json",
+      "sha256": "59fad51d4a7bb6787563cd54717de5bdea5dfa273bfd6673c7fad193c3043c0d"
+    },
+    "browserSpeech": {
+      "localRecord": "local-data/tts-diagnostics.json",
+      "sha256": "d34dc2e4abb306e9a428e115adf905acfdcedb9fbf5544013e43a8040585801d"
+    },
+    "phoneTranslation": {
+      "localRecord": "output/android-gpu-2026-10-15/cpu-baseline.stdout.jsonl",
+      "sha256": "6de40d6969b41e75626f2300c6da50be68f9fb6ffe824da56e36e2cc797f7d9d"
+    },
+    "phoneTranslationSummary": {
+      "localRecord": "output/android-gpu-2026-10-15/summary.json",
+      "sha256": "5189606910c2ca5470772779af4b9644754064ebe5516d36c4105436a7397fe4"
+    },
+    "phoneTranslationSamples": {
+      "localRecord": "output/arm-translation-2026-10-14/final/benchmark.json",
+      "sha256": "c103019dc2e86c7b410f6f387dd0d0427d888223a67c999b1660b3151296d8b1"
+    },
+    "phoneSpeechBefore": {
+      "localRecord": "output/android-install-test-2026-10-13/speech-before-report.json",
+      "sha256": "3ba0f9d95f90ee7ece39d65ef763a65e4679cc598b31e978b1a34a8dbf969fc5"
+    },
+    "phoneSpeechAfter": {
+      "localRecord": "output/android-install-test-2026-10-13/speech-after-report.json",
+      "sha256": "87f2d7eb75b41930b433f7ed1135567aabfa361ae4a6d91e03e0f4b55c8f3d3f"
+    },
+    "desktopTranslationRecord": {
+      "localRecord": "docs/local-translation.md",
+      "sha256": "3ff9891d8eeed390f2933cc3b1bd206e432161cd943fd7c00a2ea52091d2267f"
+    },
+    "phoneCpuCurrent": {
+      "localRecord": "output/performance-2026-10-16/phone-cpu-benchmark.json",
+      "sha256": "a8c8cd5ab76026f73dad70d710281da2cfa98f7c5d3f654ed246b3f184dfe9c9"
+    },
+    "phoneUpdate": {
+      "localRecord": "output/performance-2026-10-16/phone-update.json",
+      "sha256": "816f99ffb83c7522eb8cf059564528b3d3289042b98dc63c85f901106c161f16"
+    }
+  },
+  "desktopTranslation": {
+    "measuredOnShanghai": "2026-10-07",
+    "device": "AMD Ryzen 7 6800H workstation",
+    "model": "Hy-MT2-1.8B AngelSlim 1.25bit GGUF, CPU AVX2",
+    "measurement": "Documented application API / client flow samples; approximate elapsed time. Raw timing rows are not available in this public record.",
+    "samples": [
+      {
+        "language": "ja-to-zh",
+        "inputCharacters": 15,
+        "approximateTotalMs": 2500,
+        "runs": 1
+      },
+      {
+        "language": "ja-to-zh",
+        "inputCharacters": 1391,
+        "batchCharacters": [
+          587,
+          595,
+          209
+        ],
+        "outputCharacters": 1308,
+        "approximateTotalMs": 66000,
+        "runs": 1
+      }
+    ]
+  },
+  "desktopSpeech": {
+    "measuredAtUtc": "2026-10-10T16:44:43.944Z",
+    "measuredOnShanghai": "2026-10-11",
+    "device": "AMD Ryzen 7 6800H workstation",
+    "logicalCpus": 16,
+    "model": "Kokoro-82M v1.0 ONNX",
+    "voice": "af_heart",
+    "rate": 1,
+    "threads": "engine default",
+    "measurement": "Two warmed direct synthesis runs per sample and dtype, using the packaged Electron / ONNX runtime. Includes synthesis and audio encoding; excludes initial loading, warmup and UI playback.",
+    "configs": [
+      {
+        "dtype": "q8",
+        "loadMs": 1353.4847,
+        "warmupMs": 1796.3055,
+        "samples": [
+          {
+            "kind": "short-word",
+            "inputCharacters": 5,
+            "averageMs": 1293.5226999999998,
+            "runs": [
+              {
+                "totalMs": 1300.4211,
+                "audioSeconds": 1.325
+              },
+              {
+                "totalMs": 1286.6242999999995,
+                "audioSeconds": 1.325
+              }
+            ]
+          },
+          {
+            "kind": "opening",
+            "inputCharacters": 105,
+            "averageMs": 6664.977199999999,
+            "runs": [
+              {
+                "totalMs": 6834.331300000001,
+                "audioSeconds": 6.625
+              },
+              {
+                "totalMs": 6495.623099999999,
+                "audioSeconds": 6.625
+              }
+            ]
+          },
+          {
+            "kind": "continuation",
+            "inputCharacters": 194,
+            "averageMs": 12937.81455,
+            "runs": [
+              {
+                "totalMs": 12876.3596,
+                "audioSeconds": 13.175
+              },
+              {
+                "totalMs": 12999.269499999999,
+                "audioSeconds": 13.175
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "dtype": "fp32",
+        "loadMs": 1576.4668000000001,
+        "warmupMs": 601.2339,
+        "samples": [
+          {
+            "kind": "short-word",
+            "inputCharacters": 5,
+            "averageMs": 369.1892499999999,
+            "runs": [
+              {
+                "totalMs": 391.93229999999994,
+                "audioSeconds": 1.325
+              },
+              {
+                "totalMs": 346.44619999999986,
+                "audioSeconds": 1.325
+              }
+            ]
+          },
+          {
+            "kind": "opening",
+            "inputCharacters": 105,
+            "averageMs": 2099.7887,
+            "runs": [
+              {
+                "totalMs": 2261.6762,
+                "audioSeconds": 6.75
+              },
+              {
+                "totalMs": 1937.9012000000002,
+                "audioSeconds": 6.75
+              }
+            ]
+          },
+          {
+            "kind": "continuation",
+            "inputCharacters": 194,
+            "averageMs": 3522.845950000001,
+            "runs": [
+              {
+                "totalMs": 3566.8461000000007,
+                "audioSeconds": 13.275
+              },
+              {
+                "totalMs": 3478.845800000001,
+                "audioSeconds": 13.275
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "additionalFp32RssMiB": 283.66796875
+  },
+  "browserSpeech": {
+    "measuredAtUtc": "2026-10-05T03:06:38.432Z",
+    "measuredOnShanghai": "2026-10-05",
+    "device": "AMD Ryzen 7 6800H workstation",
+    "model": "Kokoro fp32, af_heart, rate 1",
+    "measurement": "Single sample per case, warmed local application API until complete audio download. Excludes browser audio device playback.",
+    "loadMs": 1146.6,
+    "warmupMs": 494.5,
+    "samples": [
+      {
+        "label": "140 chars, no audio cache",
+        "inputCharacters": 140,
+        "completeMs": 2345.7
+      },
+      {
+        "label": "140 chars, server cache",
+        "inputCharacters": 140,
+        "completeMs": 7.3
+      },
+      {
+        "label": "old long opening",
+        "inputCharacters": 142,
+        "completeMs": 2177.3
+      },
+      {
+        "label": "shorter opening",
+        "inputCharacters": 51,
+        "completeMs": 813.9
+      }
+    ]
+  },
+  "phoneTranslation": {
+    "measuredOnShanghai": "2026-10-15",
+    "device": "vivo V2190A / Exynos 1080 / Android 13",
+    "model": "Hy-MT2-1.8B official Q4_K_M",
+    "modelSha256": "dc5f44fcf1fa496ee7ad725982c0c8c553a4de00259b53af84c4b89fb0c06699",
+    "backend": "CPU armv8.2 dot-product, four inference threads",
+    "measurement": "Isolated native runner, two warmed samples per prompt, instruction prefix cache hit; excludes model loading and installed-app bridge/UI.",
+    "samples": [
+      {
+        "name": "sentence",
+        "inputCharacters": 89,
+        "medianMs": 2318.79,
+        "runs": [
+          {
+            "wallMs": 2194.97,
+            "modelMs": 0,
+            "inputTokens": 41,
+            "outputTokens": 17,
+            "reusedInstructionTokens": 19
+          },
+          {
+            "wallMs": 2442.61,
+            "modelMs": 0,
+            "inputTokens": 41,
+            "outputTokens": 17,
+            "reusedInstructionTokens": 19
+          }
+        ]
+      },
+      {
+        "name": "paragraph",
+        "inputCharacters": 451,
+        "medianMs": 9246.404999999999,
+        "runs": [
+          {
+            "wallMs": 9103.65,
+            "modelMs": 0,
+            "inputTokens": 104,
+            "outputTokens": 72,
+            "reusedInstructionTokens": 19
+          },
+          {
+            "wallMs": 9389.16,
+            "modelMs": 0,
+            "inputTokens": 104,
+            "outputTokens": 72,
+            "reusedInstructionTokens": 19
+          }
+        ]
+      }
+    ],
+    "peakRssMiB": 1389.37109375,
+    "limitations": "Sequential USB-powered screening, not a sustained-temperature or battery benchmark; no Snapdragon or Dimensity performance claim."
+  },
+  "phoneSpeechHistorical": {
+    "measuredOnShanghai": "2026-10-14",
+    "device": "vivo V2190A / Exynos 1080 / Android 13",
+    "model": "APK正式 Kokoro int8 / Sherpa ONNX CPU",
+    "voice": "af_heart",
+    "rate": 1,
+    "threads": 2,
+    "inputCharacters": 84,
+    "testedApkSha256": "8ccef17d3aab17bcffc40bea458da58b0cd40ce1dde13faafe3fc4cb6e7d3090",
+    "measurement": "Native request accepted to first successful AudioTrack write; process restart retains OS caches and may overlap automatic preparation. Not acoustic first sound or a continuous-reading result.",
+    "before": [
+      {
+        "scenario": "restart-opening",
+        "nativeFirstOutputMs": 12734,
+        "modelLoadMs": 3393,
+        "cacheHit": false
+      },
+      {
+        "scenario": "warm-repeat",
+        "nativeFirstOutputMs": 8976,
+        "modelLoadMs": 0,
+        "cacheHit": false
+      },
+      {
+        "scenario": "prepared-opening",
+        "nativeFirstOutputMs": 183,
+        "modelLoadMs": 0,
+        "cacheHit": true
+      }
+    ],
+    "after": [
+      {
+        "scenario": "restart-opening",
+        "nativeFirstOutputMs": 6963,
+        "modelLoadMs": 2623,
+        "cacheHit": false
+      },
+      {
+        "scenario": "warm-repeat",
+        "nativeFirstOutputMs": 1994,
+        "modelLoadMs": 0,
+        "cacheHit": true
+      },
+      {
+        "scenario": "prepared-opening",
+        "nativeFirstOutputMs": 31,
+        "modelLoadMs": 0,
+        "cacheHit": true
+      },
+      {
+        "scenario": "prepared-replay",
+        "nativeFirstOutputMs": 2012,
+        "modelLoadMs": 0,
+        "cacheHit": true
+      },
+      {
+        "scenario": "complete-opening",
+        "nativeFirstOutputMs": 2001,
+        "modelLoadMs": 0,
+        "cacheHit": true
+      },
+      {
+        "scenario": "completed-replay",
+        "nativeFirstOutputMs": 24,
+        "modelLoadMs": 0,
+        "cacheHit": true
+      }
+    ],
+    "currentRelease": "Historical only: current Android 1.0.4 CPU timings and buffering are recorded separately under phoneCpuCurrent. Listening remains unassessed."
+  },
+  "phoneCpuCurrent": {
+    "measuredAtUtc": "2026-10-16T08:25:50.004Z",
+    "finishedAtUtc": "2026-10-16T08:27:26.994Z",
+    "measuredOnShanghai": "2026-10-16",
+    "device": "vivo V2190A / Exynos 1080 / Mali-G78 / Android 13",
+    "legacySocProperty": "Exynos 9815",
+    "verifiedCpuHardware": "Samsung Technologies, Inc Exynos E1080",
+    "installedVersion": "1.0.4",
+    "installedVersionCode": 5,
+    "installedApkSha256": "9059894f87c028d064e808e524fdb48f157438f4b19a3ba3ab575fb672838942",
+    "sourceId": "553651effb25988552c7de2d552ea14844b05461d6a729f557faa934d050a4c5",
+    "inputId": "f68d982321a2ddc144a16b15cc08c48f02535e75f85ffa07e7bc52f346e50fff",
+    "batteryBefore": {
+      "levelPercent": 63,
+      "temperatureCelsius": 35.4,
+      "usbPowered": true
+    },
+    "batteryAfter": {
+      "levelPercent": 62,
+      "temperatureCelsius": 37.2,
+      "usbPowered": true
+    },
+    "gpuRerun": false,
+    "measurement": "Actual installed APK WebView to formal CPU native plugins in an isolated test profile; no testing in personal articles, no model switch. First AudioTrack write is not acoustic listening acceptance.",
+    "translation": [
+      {
+        "label": "cold-sentence",
+        "inputCharacters": 89,
+        "elapsedMs": 6714.699999999255,
+        "outputCharacters": 28,
+        "backend": "cpu:libggml-cpu-android_armv8.2_2.so"
+      },
+      {
+        "label": "warm-sentence-1",
+        "inputCharacters": 89,
+        "elapsedMs": 2093.0999999996275,
+        "outputCharacters": 28,
+        "backend": "cpu:libggml-cpu-android_armv8.2_2.so"
+      },
+      {
+        "label": "warm-paragraph-1",
+        "inputCharacters": 451,
+        "elapsedMs": 7399.9000000003725,
+        "outputCharacters": 146,
+        "backend": "cpu:libggml-cpu-android_armv8.2_2.so"
+      },
+      {
+        "label": "warm-sentence-2",
+        "inputCharacters": 89,
+        "elapsedMs": 1775.0999999996275,
+        "outputCharacters": 28,
+        "backend": "cpu:libggml-cpu-android_armv8.2_2.so"
+      },
+      {
+        "label": "warm-paragraph-2",
+        "inputCharacters": 451,
+        "elapsedMs": 7607.5999999996275,
+        "outputCharacters": 146,
+        "backend": "cpu:libggml-cpu-android_armv8.2_2.so"
+      }
+    ],
+    "speech": [
+      {
+        "scenario": "uncached-opening",
+        "inputCharacters": 85,
+        "language": "en-US",
+        "voice": "af_heart",
+        "model": "formal Kokoro int8 / Sherpa 1.13.8 CPU two threads",
+        "rate": 1,
+        "nativeFirstOutputMs": 7101,
+        "bridgeToFirstOutputMs": 7104,
+        "engineLoadMs": 0,
+        "openingCacheHit": false,
+        "completedMs": 11729.099999999627,
+        "audioSeconds": 4.570625,
+        "segmentCount": 2,
+        "bufferingEpisodes": 0,
+        "bufferingMs": 0
+      },
+      {
+        "scenario": "completed-replay",
+        "inputCharacters": 85,
+        "language": "en-US",
+        "voice": "af_heart",
+        "model": "formal Kokoro int8 / Sherpa 1.13.8 CPU two threads",
+        "rate": 1,
+        "nativeFirstOutputMs": 3025,
+        "bridgeToFirstOutputMs": 3026.5999999996275,
+        "engineLoadMs": 0,
+        "openingCacheHit": true,
+        "completedMs": 7659.0999999996275,
+        "audioSeconds": 4.568958333333334,
+        "segmentCount": 2,
+        "bufferingEpisodes": 0,
+        "bufferingMs": 0
+      },
+      {
+        "scenario": "continuous-paragraph",
+        "inputCharacters": 451,
+        "language": "en-US",
+        "voice": "af_heart",
+        "model": "formal Kokoro int8 / Sherpa 1.13.8 CPU two threads",
+        "rate": 1,
+        "nativeFirstOutputMs": 11606,
+        "bridgeToFirstOutputMs": 11612.60000000149,
+        "engineLoadMs": 0,
+        "openingCacheHit": false,
+        "completedMs": 40565.10000000149,
+        "audioSeconds": 24.724708333333332,
+        "segmentCount": 7,
+        "bufferingEpisodes": 2,
+        "bufferingMs": 4007.10000000149
+      }
+    ],
+    "updatedPreservingPersonalFiles": true,
+    "personalProfilesUnchangedDuringTests": true,
+    "originalProfileRestored": true,
+    "listening": "not assessed",
+    "limitations": "One first-translation sample and two warmed samples per input; one speech sample per scenario. Long paragraph playback still buffered twice. Uncached speech request did not include new engine loading. No long-term thermal, power, other-device or other-language guarantee."
+  },
+  "playbackRateOptions": [
+    0.75,
+    0.9,
+    1,
+    1.1,
+    1.25,
+    1.5
+  ]
+}
