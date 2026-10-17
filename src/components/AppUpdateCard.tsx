@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import type { UpdateState } from '../lib/appUpdateController';
-import { openAppDownload } from '../lib/appUpdates';
+import { CAN_INSTALL_IN_APP, downloadInstaller, installerStatus, installInstaller, type InstallerStatus } from '../lib/installerUpdates';
 import artwork from '../../website/assets/wisdom.png';
-import { preparePatch, patchStatus, activatePatch, type PatchStatus } from '../lib/webPatches';
 
 interface AppUpdateCardProps {
   available: NonNullable<UpdateState['available']>;
@@ -14,37 +13,37 @@ export const AppUpdateCard: React.FC<AppUpdateCardProps> = ({ available, onDecli
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState(false);
-  const [progress, setProgress] = useState<PatchStatus | null>(null);
-  const [prepared, setPrepared] = useState('');
+  const [installer, setInstaller] = useState<InstallerStatus | null>(null);
   const request = useRef<AbortController | null>(null);
-  const { release, current } = available;
-  const small = !!release.bundle && release.bundle.runtime === current.runtime && release.bundle.revision > Math.max(current.revision || 0, current.rejectedRevision || 0);
+  const { release } = available;
+  const full = CAN_INSTALL_IN_APP && !!release.installer;
+  const installerReady = full && installer?.phase === 'ready' && installer.version === release.version;
   useEffect(() => () => { request.current?.abort(); }, []);
   useEffect(() => {
-    if (!small) return;
+    if (!full) return;
     let active = true;
-    void patchStatus().then(saved => { if (active && !request.current && saved.pendingRevision === release.bundle.revision) setPrepared(saved.pending || ''); });
+    void installerStatus().then(status => { if (active) setInstaller(status); }).catch(() => {});
     return () => { active = false; };
-  }, [small, release.bundle?.revision]);
+  }, [full, release.version]);
   useEffect(() => {
-    if (!opening || !small) return;
-    const timer = window.setInterval(() => { void patchStatus().then(setProgress); }, 750);
+    if (!opening) return;
+    const timer = window.setInterval(() => {
+      if (full) void installerStatus().then(setInstaller).catch(() => {});
+    }, 750);
     return () => window.clearInterval(timer);
-  }, [opening, small]);
+  }, [opening, full]);
   const update = async () => {
     setOpening(true); setError('');
     const controller = new AbortController(); request.current = controller;
     try {
       if (onUpdate) await onUpdate();
-      else if (!small) await openAppDownload();
-      else if (prepared) await activatePatch(prepared);
-      else {
-        const saved = await patchStatus();
-        const result = saved.pending && saved.pendingRevision === release.bundle.revision ? saved : await preparePatch(release.bundle.revision, controller.signal);
-        if (!controller.signal.aborted) { setProgress(result); setPrepared(result.pending || ''); }
+      else if (full) {
+        if (installerReady) await installInstaller(release.version);
+        else setInstaller(await downloadInstaller(release.version, controller.signal));
       }
+      else throw new Error(CAN_INSTALL_IN_APP ? '此版本尚未提供应用内安装包，请稍后重新检查更新。' : '请使用最新版完整安装包更新本机 ReadAge 服务，原学习数据保留。');
     } catch (failure) {
-      setError(controller.signal.aborted ? '下载已取消，当前版本和学习记录保留。' : small ? failure instanceof Error ? failure.message : '小更新失败，请重试。' : '无法打开下载页，请稍后重试。');
+      setError(controller.signal.aborted ? '下载已取消，当前版本和学习记录保留。' : failure instanceof Error ? failure.message : '更新失败，请重试。');
     } finally { if (request.current === controller) request.current = null; setOpening(false); }
   };
   return (
@@ -55,7 +54,7 @@ export const AppUpdateCard: React.FC<AppUpdateCardProps> = ({ available, onDecli
         <div className="app-update-content">
           <header className="app-update-header">
             <h2 id="app-update-title">ReadAge<span>.</span></h2>
-            <span className="app-update-version">v{small ? release.bundle.version : release.version}</span>
+            <span className="app-update-version">v{release.version}</span>
             <button type="button" className="app-update-details" aria-expanded={expanded} aria-controls="app-update-notes" onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : '详情'}</button>
           </header>
           <div id="app-update-notes" className={`app-update-notes${expanded ? '' : ' is-compact'}`} tabIndex={expanded ? 0 : undefined} aria-label="版本更新内容">
@@ -64,12 +63,12 @@ export const AppUpdateCard: React.FC<AppUpdateCardProps> = ({ available, onDecli
         </div>
       </div>
       <div className="app-update-footer">
-        {small && <p role="status" className="app-update-progress">{prepared ? '更新已准备好，保存学习进度后即可切换。' : opening ? `正在准备 ${progress?.completed || 0}/${progress?.total || '…'} · 已下载 ${((progress?.downloadedBytes || 0) / 1024 / 1024).toFixed(1)} MB` : '仅下载变化文件，保留已有模型、词典和学习记录。'}</p>}
-        {!small && release.bundle && <p className="app-update-progress">此版本需要更新应用外壳，请下载安装更新。</p>}
+        {full && <p role="status" className="app-update-progress">{installerReady ? '安装包已校验。安装前会保存学习记录，再打开系统安装器。' : opening ? `正在下载 ${(installer?.downloadedBytes / 1024 / 1024 || 0).toFixed(1)} / ${(installer?.totalBytes / 1024 / 1024 || 0).toFixed(1)} MB` : '在应用内下载最新版完整安装包并校验，原学习数据保留。'}</p>}
+        {!CAN_INSTALL_IN_APP && <p className="app-update-progress">请使用最新版完整安装包更新本机 ReadAge 服务，原学习数据保留。</p>}
         {error && <p role="alert" className="app-update-error">{error}</p>}
         <div className="app-update-actions">
-          <button type="button" onClick={() => { void update(); }} disabled={opening} title={small ? '只更新变化的文件' : '打开官网下载页'}>{opening ? small ? '正在准备…' : '正在打开…' : prepared ? '重启更新' : small ? '下载小更新' : '更新'}</button>
-          <button type="button" disabled={opening && !!prepared} onClick={() => { if (opening && small) request.current?.abort(); else onDecline(); }}>{opening && small && !prepared ? '取消下载' : prepared ? '稍后重启' : '暂不更新'}</button>
+          <button type="button" onClick={() => { void update(); }} disabled={opening} title="使用最新版完整安装包更新">{opening ? installerReady ? '正在启动安装…' : '正在准备…' : installerReady ? '安装更新' : full ? '下载更新' : '更新'}</button>
+          <button type="button" disabled={opening && installerReady} onClick={() => { if (opening && full) request.current?.abort(); else onDecline(); }}>{opening && full && !installerReady ? '取消下载' : installerReady ? '稍后安装' : '暂不更新'}</button>
         </div>
       </div>
     </aside>

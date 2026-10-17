@@ -1,7 +1,6 @@
 import { getApiAuthHeaders } from './apiAuth';
 import { IS_ANDROID, IS_DESKTOP } from './platform/runtime';
 import { nativeAppUpdates } from './platform/nativeAppUpdates';
-import { patchStatus } from './webPatches';
 import { UPDATE_ORIGIN, validateUpdateManifest, type InstalledVersion } from '../../website/update-protocol.mjs';
 
 export const APP_VERSION: InstalledVersion = {
@@ -10,11 +9,9 @@ export const APP_VERSION: InstalledVersion = {
   build: typeof __READAGE_APP_BUILD__ === 'number' ? __READAGE_APP_BUILD__ : 0,
 };
 export async function installedAppVersion(): Promise<InstalledVersion> {
-  const patch = await patchStatus();
   const current = IS_ANDROID ? await nativeAppUpdates.version() : APP_VERSION;
   if (!/^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(current.version) || !Number.isSafeInteger(current.build) || current.build < (IS_ANDROID ? 1 : 0)) throw new Error('无法读取已安装版本。');
-  return { ...current, platform: APP_VERSION.platform, shellVersion: patch.shellVersion || current.version,
-    ...(patch.enabled ? { version: patch.version || current.version, runtime: patch.runtime, revision: patch.revision || 0, rejectedRevision: patch.rejectedRevision || 0 } : {}) };
+  return { ...current, platform: APP_VERSION.platform };
 }
 export async function loadAppUpdates(signal: AbortSignal) {
   signal.throwIfAborted();
@@ -39,5 +36,14 @@ export async function openAppDownload() {
     const link = document.createElement('a');
     link.href = UPDATE_ORIGIN + '/#download'; link.target = '_blank'; link.rel = 'noopener noreferrer';
     link.click();
+  }
+}
+
+/** Explicit About link; ordinary version updates stay in the application. */
+export async function openOfficialWebsite() {
+  if (IS_ANDROID) await nativeAppUpdates.openWebsite();
+  else {
+    const link = document.createElement('a');
+    link.href = UPDATE_ORIGIN; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.click();
   }
 }

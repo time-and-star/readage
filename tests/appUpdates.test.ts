@@ -9,7 +9,7 @@ import { createAppUpdateRouter } from '../server/appUpdateRoutes';
 import { isOfflineApiAllowed } from '../server/offline';
 import { AppUpdateController, UPDATE_PREFERENCES_KEY } from '../src/lib/appUpdateController';
 import { startAppUpdateChecks } from '../src/lib/appUpdateSchedule';
-import { validateUpdateManifest, isNewerRelease, UPDATE_INTERVAL_MS, type InstalledVersion } from '../website/update-protocol.mjs';
+import { validateUpdateManifest, isNewerRelease, updateIdentity, UPDATE_INTERVAL_MS, type InstalledVersion } from '../website/update-protocol.mjs';
 
 const current: InstalledVersion = { platform: 'web', version: '0.1.2', build: 0 };
 const manifest = (version = '0.2.0', build = 6) => validateUpdateManifest({ schemaVersion: 1, releases: Object.fromEntries(['web', 'windows', 'android'].map(platform => [platform, { version, build, publishedAt: '2026-10-17T00:00:00Z', notes: ['更舒适的阅读体验。', '<b>纯文字更新说明</b>'] }])) });
@@ -84,6 +84,21 @@ test('an already applied or rejected patch does not hide a newer full installer'
     assert.equal(isNewerRelease({ ...release, version: '0.1.2', build: 5 }, installed), false, platform);
   }
 });
+test('only full installer versions trigger an offer even with newer legacy patch metadata', async () => {
+  for (const platform of ['web', 'windows', 'android'] as const) {
+    const installed = { platform, version: '0.1.2', build: 5, runtime: 'a'.repeat(64), revision: 0 };
+    const same = manifest('0.1.2',5);
+    (same.releases[platform] as any).bundle = {runtime:installed.runtime,revision:999,version:'9.9.9',bytes:100};
+    const clean=validateUpdateManifest(same);
+    assert.equal('bundle' in clean.releases[platform],false);
+    assert.equal(isNewerRelease(same.releases[platform],installed),false);
+    assert.equal(updateIdentity(platform,same.releases[platform]),platform+':0.1.2:5');
+    const s=setup();const controller=new AppUpdateController({...s.dependencies,current:installed,installed:async()=>installed,load:async()=>clean});
+    await controller.check(true);assert.equal(controller.state.available,null);assert.match(controller.state.notice,/最新版本 v0.1.2/);
+    assert.equal(isNewerRelease(manifest('0.1.5',8).releases[platform],installed),true);
+  }
+});
+
 test('manifest bounds, fields and plain text are validated; server-supplied download URLs are discarded', () => {
   const data = manifest(); (data as any).downloadUrl = 'https://untrusted.example';
   assert.equal('downloadUrl' in validateUpdateManifest(data), false);

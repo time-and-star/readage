@@ -1,5 +1,5 @@
-import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron';
-import { fork } from 'node:child_process';
+import { app, BrowserWindow, dialog, Menu, session, shell, ipcMain } from 'electron';
+import { fork, spawn } from 'node:child_process';
 import { randomUUID, createHash } from 'node:crypto';
 import { createWriteStream, existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -12,6 +12,7 @@ import { availableDesktopPort, createDesktopEnvironment, isDesktopRequestAllowed
 import { deployBundledResources } from './bundled-resources.mjs';
 import { DESKTOP_APP_ID, desktopWindowBranding } from './brand.mjs';
 import { KOKORO_FP32_MODEL_RELATIVE, selectDesktopSpeechDtype } from './speech-config.mjs';
+import { InstallerUpdate } from './installer-update.mjs';
 
 app.setName('ReadAge');
 app.setAppUserModelId(DESKTOP_APP_ID);
@@ -27,6 +28,8 @@ let voice;
 let origin;
 let stopping = false;
 let log;
+let installerUpdates;
+let installerToLaunch;
 const ownChildren = [];
 
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -47,6 +50,15 @@ else {
         return;
       }
       await Promise.all(ownChildren.map(child => stopDesktopChild(child)));
+      if (installerToLaunch) {
+        try {
+          // Recheck after the reader has saved and before invoking a fixed verified EXE.
+          const filename = await installerUpdates.verifiedInstaller(installerToLaunch);
+          const child = spawn(filename, [], { detached: true, stdio: 'ignore', windowsHide: true });
+          await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+          child.unref();
+        } catch (error) { dialog.showErrorBox('安装更新未启动', error.message); }
+      }
       log?.end();
       app.quit();
     })();
@@ -203,6 +215,20 @@ async function start() {
   const environment = createDesktopEnvironment({ appRoot, dataRoot: workspace, settings, port: savedPort, ttsPort, translationPort });
   if (resources) environment.READGE_BUNDLED_RESOURCES = '1';
   secureSession(environment.APP_API_TOKEN);
+  installerUpdates = new InstallerUpdate(path.join(app.getPath('userData'), 'installer-updates'));
+  const trustedUpdateRequest = event => {
+    if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
+      || new URL(event.senderFrame.url).origin !== origin) throw new Error('更新请求来源无效。');
+  };
+  for (const action of ['status', 'download', 'cancel', 'install']) ipcMain.handle('readage-installer-' + action, async (event, version) => {
+    trustedUpdateRequest(event);
+    if (action === 'status') return installerUpdates.status();
+    if (action === 'cancel') return installerUpdates.cancel();
+    if (typeof version !== 'string' || !/^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(version)) throw new Error('更新版本无效。');
+    if (action === 'download') return installerUpdates.download(version);
+    await installerUpdates.verifiedInstaller(version); installerToLaunch = version;
+    setImmediate(() => app.quit()); return { ok: true };
+  });
   updateProgress('正在启动本机阅读服务…');
   backend = startDesktopServer({ appRoot, dataRoot: workspace, environment });
   monitorChild(backend.child, 'server');
@@ -221,7 +247,8 @@ async function start() {
     { label: '视图', submenu: [{ role: 'reload', label: '重新加载' }, { role: 'resetZoom', label: '实际大小' }, { role: 'zoomIn', label: '放大' }, { role: 'zoomOut', label: '缩小' }, { role: 'togglefullscreen', label: '全屏' }] },
   ]));
   window = new BrowserWindow({ ...windowBranding, width: 1320, height: 900, minWidth: 760, minHeight: 580, show: false,
-    backgroundColor: '#faf9f6', webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true } });
+    backgroundColor: '#faf9f6', webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true,
+      preload: path.join(appRoot, 'desktop/update-preload.cjs') } });
   const openExternalLink = value => {
     try { const url = new URL(value); if (url.protocol === 'https:' || url.protocol === 'http:') { void shell.openExternal(url.href); } } catch { }
   };

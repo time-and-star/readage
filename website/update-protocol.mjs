@@ -1,6 +1,7 @@
 /** @typedef {'web'|'windows'|'android'} AppPlatform */
 /** @typedef {{revision:number,runtime:string,version:string,bytes:number}} UpdateBundle */
-/** @typedef {{version:string,build:number,publishedAt:string,notes:string[],bundle?:UpdateBundle}} UpdateRelease */
+/** @typedef {{filename:string,sha256:string,bytes:number}} UpdateInstaller */
+/** @typedef {{version:string,build:number,publishedAt:string,notes:string[],bundle?:UpdateBundle,installer?:UpdateInstaller}} UpdateRelease */
 /** @typedef {{schemaVersion:1,releases:Record<AppPlatform,UpdateRelease>}} UpdateManifest */
 /** @typedef {{platform:AppPlatform,version:string,build:number,runtime?:string,revision?:number,rejectedRevision?:number,shellVersion?:string}} InstalledVersion */
 export const UPDATE_ORIGIN = 'https://readage.xyz';
@@ -22,22 +23,23 @@ export function validateUpdateManifest(value) {
       || !Array.isArray(release.notes) || release.notes.length < 1 || release.notes.length > 20
       || release.notes.some(note => typeof note !== 'string' || !note.trim() || note.length > 500 || /[\x00-\x08\x0b-\x1f]/.test(note))) throw new Error('官网更新信息不完整，请稍后重试。');
     releases[platform] = { version: release.version, build: release.build, publishedAt: release.publishedAt, notes: release.notes.map(note => note.trim()) };
-    if (release.bundle !== undefined) {
-      const b = release.bundle;
-      if (!b || !Number.isSafeInteger(b.revision) || b.revision < 1 || !/^[a-f0-9]{64}$/.test(b.runtime)
-        || typeof b.version !== 'string' || !versionPattern.test(b.version) || !Number.isSafeInteger(b.bytes) || b.bytes < 0 || b.bytes > 512 * 1024 * 1024) throw new Error('小更新信息无效。');
-      releases[platform].bundle = { revision: b.revision, runtime: b.runtime, version: b.version, bytes: b.bytes };
+    if (release.installer !== undefined) {
+      const file = release.installer;
+      const expected = platform === 'windows' ? `ReadAge-${release.version}-windows-x64-setup.exe` : platform === 'android' ? `ReadAge-${release.version}-android.apk` : '';
+      if (!expected || !file || file.filename !== expected || !/^[a-f0-9]{64}$/.test(file.sha256)
+        || !Number.isSafeInteger(file.bytes) || file.bytes < 1 || file.bytes > 4 * 1024 ** 3) throw new Error('安装包信息无效。');
+      releases[platform].installer = { filename: expected, sha256: file.sha256, bytes: file.bytes };
     }
+    // Legacy bundle metadata is ignored: releases now advertise complete installers only.
   }
   return { schemaVersion: 1, releases };
 }
 /** @param {UpdateRelease} release @param {InstalledVersion} current */
 export function isNewerRelease(release, current) {
-  if (release.bundle && release.bundle.runtime === current.runtime && release.bundle.revision > Math.max(current.revision || 0, current.rejectedRevision || 0)) return true;
   if (current.platform === 'android') return release.build > current.build;
   const next = release.version.split('.').map(Number), installed = (current.shellVersion || current.version).split('.').map(Number);
   for (let i = 0; i < 3; i++) if (next[i] !== installed[i]) return next[i] > installed[i];
   return false;
 }
 /** @param {AppPlatform} platform @param {UpdateRelease} release */
-export const updateIdentity = (platform, release) => `${platform}:${release.version}:${release.build}${release.bundle ? ':' + release.bundle.revision : ''}`;
+export const updateIdentity = (platform, release) => `${platform}:${release.version}:${release.build}`;

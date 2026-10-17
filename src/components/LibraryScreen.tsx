@@ -115,6 +115,9 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   const [catalogRefreshKey, setCatalogRefreshKey] = useState(0);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<MagazineSyncStatus | null>(null);
+  const [startingSync, setStartingSync] = useState(false);
+  const syncRequestPending = useRef(false);
+  const syncBusy = startingSync || Boolean(syncStatus?.running);
   const [loadingCatalog, setLoadingCatalog] = useState(initialView.tab === 'magazines');
   const [loadingCatalogArticles, setLoadingCatalogArticles] = useState(false);
   const [loadingIssue, setLoadingIssue] = useState(Boolean(initialView.selectedIssue && initialView.tab === 'magazines'));
@@ -354,6 +357,9 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   }, [syncStatus?.running, loadCatalog]);
 
   const handleSync = async () => {
+    if (!CAN_MANUALLY_SYNC_MAGAZINES || syncRequestPending.current || syncStatus?.running) return;
+    syncRequestPending.current = true;
+    setStartingSync(true);
     setError(null);
     try {
       const res = await fetch('/api/magazines/sync', {
@@ -386,6 +392,9 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     } catch (e) {
       retryAction.current = () => { void handleSync(); };
       setError(e instanceof Error ? e.message : '同步失败');
+    } finally {
+      syncRequestPending.current = false;
+      setStartingSync(false);
     }
   };
 
@@ -425,6 +434,11 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     if (initialView.selectedIssue && initialView.tab === 'magazines') void openIssue(initialView.selectedIssue, true);
     return () => { issueRequest.current += 1; catalogRequest.current += 1; };
   }, []);
+
+  useEffect(() => {
+    // A direct source update can also replace the issue currently being viewed.
+    if (catalogRefreshKey > 0 && selectedIssue) void openIssue(selectedIssue, true);
+  }, [catalogRefreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openMagazineArticle = async (stub: MagazineArticleStub) => {
     setLoadingArticleId(stub.id);
@@ -555,11 +569,15 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                 {fileProgress.completed ? '再读一遍' : fileProgress.started ? '继续阅读' : '开始阅读'}<ArrowUpRight size={15} aria-hidden="true" />
               </button>
             )}
-              <button type="button" className="library-text-action" onClick={() => onInsertArticle({ intent: 'updates',
-                kind: tab === 'magazines' ? 'magazine' : activeImportFile?.articles[0].distribution?.kind,
-                sourceId: tab === 'magazines' ? activeSourceId || undefined : undefined,
-                resourceId: tab === 'mine' ? activeImportFile?.articles[0].distribution?.resourceId : undefined,
-              })}><RefreshCw size={15} aria-hidden="true" />{tab === 'magazines' ? activeSourceId ? sourceUpdateLabel : '更新外刊目录' : '更新'}</button>
+              {tab === 'magazines' ? CAN_MANUALLY_SYNC_MAGAZINES && (
+                <button type="button" className="library-text-action" disabled={syncBusy} aria-busy={syncBusy} onClick={() => void handleSync()}>
+                  {syncBusy ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : <RefreshCw size={15} aria-hidden="true" />}
+                  {syncBusy ? '正在更新外刊…' : activeSourceId ? sourceUpdateLabel : '更新外刊目录'}
+                </button>
+              ) : <button type="button" className="library-text-action" onClick={() => onInsertArticle({ intent: 'updates',
+                kind: activeImportFile?.articles[0].distribution?.kind,
+                resourceId: activeImportFile?.articles[0].distribution?.resourceId,
+              })}><RefreshCw size={15} aria-hidden="true" />更新</button>}
               <button type="button" onClick={() => onInsertArticle({ intent: 'import' })} className="library-primary"><FilePlus2 size={15} aria-hidden="true" />导入</button>
             </div>
           </div>
@@ -662,16 +680,15 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
             ))}</div>
           )}
         </main>
-        {CAN_MANUALLY_SYNC_MAGAZINES && tab === 'magazines' && magLayer !== 'articles' && <footer className="library-catalog-footer">
-          {syncStatus?.running && <p className="library-sync-progress" role="status"><Loader2 size={13} className="animate-spin" aria-hidden="true" />{syncStatus.progress || '正在更新外刊…'}</p>}
+        {CAN_MANUALLY_SYNC_MAGAZINES && tab === 'magazines' && <footer className="library-catalog-footer">
+          {syncBusy && <p className="library-sync-progress" role="status"><Loader2 size={13} className="animate-spin" aria-hidden="true" />{startingSync ? '正在启动外刊更新…' : syncStatus?.progress || '正在更新外刊…'}</p>}
           {syncStatus?.lastResult?.errors?.length && !syncStatus.running ? <p className="library-failed" role="alert">{syncStatus.lastResult.errors[0]}</p> : null}
           <details className="library-sync-details"><summary><span>更新详情{syncDate && <span className="library-sync-date">{syncDate}</span>}</span><ChevronDown size={13} aria-hidden="true" /></summary>
             <div className="library-sync-content">
               {syncStatus?.lastResult?.errors?.length && !syncStatus.running ? <ul className="library-failed" aria-label="外刊更新失败详情">{syncStatus.lastResult.errors.map((message, index) => <li key={`${index}:${message}`}>{message}</li>)}</ul> : null}
               {syncCounts && !syncStatus?.running && <p>新增 {syncCounts.imported} {syncCountUnit} · 已有 {syncCounts.skipped} {syncCountUnit}{syncCounts.failed > 0 && ` · 失败 ${syncCounts.failed} ${syncCountUnit}`}</p>}
               <button type="button" className="library-text-action" onClick={() => onInsertArticle({ intent: 'local' })}><FilePlus2 size={13} aria-hidden="true" />导入本地 EPUB / PDF 杂志文件</button>
-              <button type="button" className="library-text-action" disabled={Boolean(syncStatus?.running)} onClick={() => void handleSync()}><RefreshCw size={13} aria-hidden="true" />{syncStatus?.running ? '原来源更新中…' : '直接从原来源更新（备用）'}</button>
-              <p>上方更新和导入连接 ReadAge 官网。{IS_OFFLINE_APP ? '资料导入后保存在我的书架，可离线阅读。' : '外刊内容用于个人学习，请支持原刊订阅。'}</p>
+              <p>更新直接下载并整理外刊，完成后在当前目录阅读；“导入”可从 ReadAge 官网选择其他资料。{IS_OFFLINE_APP ? '已下载内容可离线阅读。' : '外刊内容用于个人学习，请支持原刊订阅。'}</p>
             </div>
           </details>
         </footer>}

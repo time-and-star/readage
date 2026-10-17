@@ -67,8 +67,7 @@ export class AppUpdateController {
       const release = manifest.releases[current.platform];
       if (isNewerRelease(release, current)) {
         this.emit({ current, available: this.manualRequested || this.preferences.declined !== updateIdentity(current.platform, release) ? { current, release } : null });
-      } else this.emit({ current, available: null, notice: this.manualRequested ? release.bundle?.runtime === current.runtime && current.rejectedRevision
-        ? '上次小更新未能正常使用，已保留可用版本。请等待后续修复更新。' : `当前已是最新版本 v${current.version}` : null });
+      } else this.emit({ current, available: null, notice: this.manualRequested ? `当前已是最新版本 v${current.version}` : null });
     } catch {
       if (generation === this.generation && this.manualRequested) this.emit({ notice: '暂时无法检查更新，请确认网络后重试。' });
     } finally {

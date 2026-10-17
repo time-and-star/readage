@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { readBundledResourceManifest, resourceFileHash } from '../desktop/bundled-resources.mjs';
 import { icoFrames, peIconGroups, matchingBrandIcon } from '../desktop/icon-resources.mjs';
 import { verifyDesktopDictionaryBundle } from './desktop-bundle-dictionaries.mjs';
+import { verifyDesktopInstallLayout } from '../desktop/install-layout.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const supplied = process.argv.includes('--directory') ? process.argv[process.argv.indexOf('--directory') + 1] : undefined;
 const directory = supplied ? path.resolve(supplied) : path.join(root, 'build/desktop/win-unpacked');
@@ -12,6 +13,7 @@ const resources = path.join(directory, 'resources');
 const asar = createRequire(import.meta.url)('@electron/asar');
 try {
   const names = asar.listPackage(path.join(resources, 'app.asar'));
+  const installLayout = await verifyDesktopInstallLayout(directory, names);
   if (names.some(filename => /(^|[\\/])\.env(?:\.|$)|(^|[\\/])local-data[\\/]|(^|[\\/])data[\\/]magazines[\\/]/i.test(filename))) throw new Error('Private files found in the application archive.');
   for (const filename of ['desktop/main.mjs', 'desktop/brand.mjs', 'desktop/speech-config.mjs', 'desktop/data-migration.mjs', 'desktop/bundled-resources.mjs', 'desktop/runtime.mjs', 'scripts/kokoro-service.mjs', 'scripts/kokoro-japanese.mjs', 'scripts/hymt2-service.mjs', 'dist/server.mjs', 'dist/index.html']) {
     const installed = asar.extractFile(path.join(resources, 'app.asar'), filename);
@@ -41,7 +43,7 @@ try {
     if (await resourceFileHash(path.join(resourceDirectory, 'licenses', source.name)) !== source.sha256) throw new Error(`Packaged notice/source mismatch: ${source.name}`);
   }
   const dictionaries = await verifyDesktopDictionaryBundle(path.join(resources, 'released-dictionaries'));
-  const result = { ok: true, directory, bundleId: manifest.bundleId, files: manifest.files.length, totalBytes: manifest.totalBytes,
+  const result = { ok: true, directory, installLayout, bundleId: manifest.bundleId, files: manifest.files.length, totalBytes: manifest.totalBytes,
     privateFilesExcluded: true, currentCodeVerified: true, compiledReaderAssetsVerified: readerAssets.length,
     modelRuntimeAndLicenseChecksumsVerified: true,
     releasedDictionaryBundleId: dictionaries.bundleId, releasedDictionariesVerified: dictionaries.dictionaries.length,

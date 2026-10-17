@@ -1,0 +1,31 @@
+import { IS_ANDROID, IS_DESKTOP } from './platform/runtime';
+import { nativeAppUpdates } from './platform/nativeAppUpdates';
+
+export interface InstallerStatus { phase: 'idle' | 'downloading' | 'ready'; version?: string; downloadedBytes: number; totalBytes: number }
+interface InstallerBridge {
+  status(): Promise<InstallerStatus>;
+  download(version: string): Promise<InstallerStatus>;
+  cancel(): Promise<void>;
+  install(version: string): Promise<void>;
+}
+declare global { interface Window { readageInstaller?: InstallerBridge } }
+function bridge(): InstallerBridge {
+  if (IS_ANDROID) return { status: () => nativeAppUpdates.installerStatus(), download: version => nativeAppUpdates.downloadInstaller({ version }),
+    cancel: () => nativeAppUpdates.cancelInstaller(), install: version => nativeAppUpdates.installInstaller({ version }) };
+  if (IS_DESKTOP && window.readageInstaller) return window.readageInstaller;
+  throw new Error('此版本需要更新本机服务。请使用已下载的安装包更新 ReadAge，学习数据会保留。');
+}
+export const CAN_INSTALL_IN_APP = IS_ANDROID || IS_DESKTOP;
+export const installerStatus = () => bridge().status();
+export async function downloadInstaller(version: string, signal: AbortSignal) {
+  signal.throwIfAborted(); const native = bridge();
+  const cancel = () => { void native.cancel().catch(() => {}); };
+  signal.addEventListener('abort', cancel, { once: true });
+  try { const result = await native.download(version); signal.throwIfAborted(); return result; }
+  finally { signal.removeEventListener('abort', cancel); }
+}
+export async function installInstaller(version: string) {
+  const [{ flushPendingPersistentWrites }, { flushLocalDatabaseWrites }] = await Promise.all([import('./storage'), import('./localDatabase')]);
+  await flushPendingPersistentWrites(); await flushLocalDatabaseWrites();
+  await bridge().install(version);
+}

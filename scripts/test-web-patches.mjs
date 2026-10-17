@@ -39,3 +39,5 @@ run('javac',['-encoding','UTF-8','-cp',jsonJar,'-d',classes,source+'WebPatchEngi
 run('java',['-cp',[classes,jsonJar].join(path.delimiter),'cn.readage.app.WebPatchEngineTest',fixture]);
 await compileAndroidUpdateApi(classes);
 console.log('Android activity / bridge source API compilation passed. Fixtures: '+fixture);
+run('javac',['-encoding','UTF-8','-cp',jsonJar,'-d',classes,source+'NativeAppUpdateHttp.java',source+'NativeInstallerUpdate.java','tests/android-document-host/NativeInstallerUpdateTest.java']);
+run('java',['-cp',[classes,jsonJar].join(path.delimiter),'cn.readage.app.NativeInstallerUpdateTest',path.join(fixture,'installer-checks')]);

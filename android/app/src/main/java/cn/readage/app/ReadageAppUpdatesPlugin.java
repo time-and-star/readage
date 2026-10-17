@@ -2,7 +2,12 @@ package cn.readage.app;
 
 import android.content.Intent;
 import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.provider.Settings;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import java.util.Arrays;
 import com.getcapacitor.*;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.net.HttpURLConnection;
@@ -10,7 +15,11 @@ import java.util.concurrent.*;
 
 @CapacitorPlugin(name = "ReadageAppUpdates")
 public class ReadageAppUpdatesPlugin extends Plugin {
-    private volatile WebPatchEngine.Cancel patchCancel;
+    private NativeInstallerUpdate installer;
+    private synchronized NativeInstallerUpdate installer() {
+        if (installer == null) installer = new NativeInstallerUpdate(new File(getContext().getCacheDir(), "installer-updates"), url -> (HttpURLConnection)url.openConnection());
+        return installer;
+    }
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ConcurrentHashMap<String, NativeAppUpdateHttp.Request> requests = new ConcurrentHashMap<>();
     @PluginMethod public void version(PluginCall call) {
@@ -40,36 +49,47 @@ public class ReadageAppUpdatesPlugin extends Plugin {
             call.resolve();
         } catch (Exception error) { call.reject("无法打开官网下载页", error); }
     }
-    private WebPatchEngine patches() throws Exception {
-        WebPatchEngine engine = ((MainActivity)getActivity()).webPatches();
-        if (engine == null) throw new Exception("当前安装版需要先升级一次，才能接收小更新。");
-        return engine;
+    @PluginMethod public void openWebsite(PluginCall call) {
+        try { getContext().startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://readage.xyz")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); call.resolve(); }
+        catch (Exception error) { call.reject("无法打开 ReadAge 官网。", error); }
     }
-    @PluginMethod public void patchStatus(PluginCall call) {
-        try { call.resolve(JSObject.fromJSONObject(patches().status())); }
-        catch (Exception error) { JSObject result = new JSObject(); result.put("enabled", false); call.resolve(result); }
+    @PluginMethod public void installerStatus(PluginCall call) {
+        try { call.resolve(JSObject.fromJSONObject(installer().status())); } catch (Exception error) { call.reject(error.getMessage(), error); }
     }
-    @PluginMethod public void preparePatch(PluginCall call) {
-        if (patchCancel != null) { call.reject("正在准备更新。"); return; }
-        WebPatchEngine.Cancel cancel = new WebPatchEngine.Cancel(); patchCancel = cancel;
-        Long revision = call.getLong("revision");
-        worker.execute(() -> {
-            try { if (revision == null || revision < 1) throw new Exception("更新版本无效。"); call.resolve(JSObject.fromJSONObject(patches().prepare(revision, cancel))); }
-            catch (Exception error) { call.reject(error.getMessage(), error); }
-            finally { if (patchCancel == cancel) patchCancel = null; }
-        });
+    @PluginMethod public void downloadInstaller(PluginCall call) {
+        try {
+            NativeAppUpdateHttp.Request active = installer().reserve();
+            worker.execute(() -> { try { call.resolve(JSObject.fromJSONObject(installer().download(call.getString("version", ""), active))); } catch (Exception error) { call.reject(error.getMessage(), error); } });
+        } catch (Exception error) { call.reject(error.getMessage(), error); }
     }
-    @PluginMethod public void cancelPatch(PluginCall call) { WebPatchEngine.Cancel cancel = patchCancel; if (cancel != null) cancel.cancel(); call.resolve(); }
-    @PluginMethod public void activatePatch(PluginCall call) {
+    @PluginMethod public void cancelInstaller(PluginCall call) { installer().cancel(); call.resolve(); }
+    @PluginMethod public void installInstaller(PluginCall call) {
         worker.execute(() -> {
             try {
-                patches().activate(call.getString("id", "")); call.resolve();
-                getActivity().runOnUiThread(() -> ((MainActivity)getActivity()).activateWebPatch());
+                File file = installer().verified(call.getString("version", ""));
+                PackageManager manager = getContext().getPackageManager();
+                PackageInfo next = manager.getPackageArchiveInfo(file.getAbsolutePath(), PackageManager.GET_SIGNING_CERTIFICATES);
+                PackageInfo current = manager.getPackageInfo(getContext().getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES);
+                if (next == null || !current.packageName.equals(next.packageName) || next.getLongVersionCode() <= current.getLongVersionCode()
+                    || next.getLongVersionCode() != installer().expectedBuild() || !next.versionName.equals(call.getString("version", ""))
+                    || next.signingInfo == null || !Arrays.equals(current.signingInfo.getApkContentsSigners(), next.signingInfo.getApkContentsSigners())) throw new Exception("安装包身份或签名不匹配，更新已停止。");
+                if (!manager.canRequestPackageInstalls()) {
+                    getActivity().startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName())));
+                    call.reject("请允许 ReadAge 安装应用更新，然后返回点击“安装更新”。"); return;
+                }
+                Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", file);
+                Intent intent = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(intent); call.resolve();
             } catch (Exception error) { call.reject(error.getMessage(), error); }
         });
     }
-    @PluginMethod public void patchReady(PluginCall call) {
-        worker.execute(() -> { try { patches().ready(call.getString("id", "")); call.resolve(); } catch (Exception error) { call.reject(error.getMessage(), error); } });
+    // Inert legacy bridge: updates now use the full APK downloader and system installer.
+    @PluginMethod public void patchStatus(PluginCall call) {
+        JSObject result = new JSObject(); result.put("enabled", false); call.resolve(result);
     }
-    @Override protected void handleOnDestroy() { requests.values().forEach(NativeAppUpdateHttp.Request::cancel); if(patchCancel!=null)patchCancel.cancel(); worker.shutdownNow(); }
+    @PluginMethod public void preparePatch(PluginCall call) { call.reject("小更新已停用，请使用最新版完整安装包更新。"); }
+    @PluginMethod public void activatePatch(PluginCall call) { call.reject("小更新已停用，请使用最新版完整安装包更新。"); }
+    @PluginMethod public void cancelPatch(PluginCall call) { call.resolve(); }
+    @PluginMethod public void patchReady(PluginCall call) { call.resolve(); }
+    @Override protected void handleOnDestroy() { requests.values().forEach(NativeAppUpdateHttp.Request::cancel); if(installer!=null)installer.cancel(); worker.shutdownNow(); }
 }

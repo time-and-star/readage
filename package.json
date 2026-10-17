@@ -2,7 +2,7 @@
     "name": "readge",
     "private": true,
     "license": "Apache-2.0",
-    "version": "0.1.4",
+    "version": "0.1.6",
     "type": "module",
     "scripts": {
         "start:local": "node scripts/start-local.mjs",

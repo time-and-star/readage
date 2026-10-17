@@ -2,43 +2,19 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PatchStore } from './patchStore.mjs';
-import { UPDATE_ORIGIN } from '../website/update-protocol.mjs';
 
-export async function openPatchStore(fetcher: typeof fetch) {
-  if (process.env.NODE_ENV !== 'production') return null;
-  const root = process.env.READGE_APP_ROOT || process.cwd();
-  let shell;
-  try { shell = JSON.parse(await fs.readFile(path.join(root, 'dist/readage-shell.json'), 'utf8')); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
-  if (!['web', 'windows'].includes(shell.platform) || !/^[a-f0-9]{64}$/.test(shell.runtime) || !shell.publicKey) throw new Error('安装版小更新配置无效。');
-  try {
-    return await new PatchStore({ directory: path.join(process.env.READGE_DATA_ROOT || process.cwd(), 'local-data/app-updates'),
-      baseDirectory: path.join(root, 'dist'), shell, origin: UPDATE_ORIGIN, fetcher }).initialize();
-  } catch (error) {
-    console.error('[updates] local update state unavailable; using bundled app:', error instanceof Error ? error.message : error);
-    return null;
-  }
+export async function openPatchStore(_fetcher: typeof fetch): Promise<PatchStore | null> {
+  // Always run installed assets. Leave historical caches and learning data untouched.
+  return null;
 }
-/** Mutations stay behind the same local API authorization as update checks. */
-export function createPatchRouter(store: PatchStore | null) {
-  const router = express.Router(); let operation: AbortController | undefined;
-  router.post('/status', async (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(store ? await store.status() : { enabled: false }); });
-  router.post('/cancel', (_req, res) => { operation?.abort(); res.json({ ok: true }); });
-  router.post('/prepare', async (req, res) => {
-    if (!store) return res.status(409).json({ error: { message: '当前版本需要先安装一次新版，才能接收小更新。' } });
-    if (operation) return res.status(409).json({ error: { message: '正在准备更新。' } });
-    const controller = new AbortController(); operation = controller;
-    const timeout = setTimeout(() => controller.abort(), 10 * 60_000);
-    const disconnected = () => { if (!res.writableFinished) controller.abort(); }; res.once('close', disconnected);
-    try { res.json(await store.prepare(req.body?.revision, controller.signal)); }
-    catch (error) { if (!res.destroyed) res.status(400).json({ error: { message: error instanceof Error ? error.message : '小更新准备失败。' } }); }
-    finally { clearTimeout(timeout); res.removeListener('close', disconnected); if (operation === controller) operation = undefined; }
+/** Legacy endpoints remain inert behind the existing local API authorization. */
+export function createPatchRouter(_store: PatchStore | null) {
+  const router = express.Router();
+  router.post('/status', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({ enabled: false }); });
+  router.post(['/cancel', '/ready'], (_req, res) => { res.json({ ok: true }); });
+  router.post(['/prepare', '/activate'], (_req, res) => {
+    res.status(410).json({ error: { message: '小更新已停用，请使用最新版完整安装包更新。' } });
   });
-  router.post('/activate', async (req, res) => {
-    try { if (!store) throw new Error('当前版本不支持小更新。'); res.json(await store.activate(req.body?.id)); }
-    catch (error) { res.status(400).json({ error: { message: error instanceof Error ? error.message : '更新尚未准备好。' } }); }
-  });
-  router.post('/ready', async (req, res) => { await store?.ready(req.body?.id); res.json({ ok: true }); });
   return router;
 }
 
@@ -60,7 +36,7 @@ export function patchIndex(store: PatchStore | null, base: string): express.Requ
       const current = store?.activeDirectory || base;
       const html = await fs.readFile(path.join(current, 'index.html'), 'utf8');
       res.setHeader('Cache-Control', 'no-store');
-      res.type('html').send(html.replace('</head>', `<script src="/__readage-update-watch.js?id=${store?.state.active || ''}"></script></head>`));
+      res.type('html').send(store ? html.replace('</head>', `<script src="/__readage-update-watch.js?id=${store.state.active || ''}"></script></head>`) : html);
     } catch (error) { next(error); }
   };
 }

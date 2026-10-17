@@ -111,15 +111,15 @@ test('failure to persist activation never switches the live entry', async t => {
   await fs.unlink(path.join(f.directory,'state.json'));await fs.mkdir(path.join(f.directory,'state.json'));
   await assert.rejects(store.activate(prepared.pending));assert.equal(store.activeDirectory,f.base);assert.equal(store.state.trial,false);
 });
-test('patch revision detects same-shell updates and dismissal identity separates successive patches', () => {
+test('retired patch revisions never advertise updates or change full-installer dismissal identity', () => {
   const release = { version: '1.0.0', build: 6, bundle: { runtime, revision: 2, version: '1.0.2', bytes: 20 } };
   const current = { platform: 'android', version: '1.0.1', build: 6, runtime, revision: 1 };
-  assert.equal(isNewerRelease(release, current), true); assert.equal(isNewerRelease(release, { ...current, revision: 2 }), false);
+  assert.equal(isNewerRelease(release, current), false); assert.equal(isNewerRelease(release, { ...current, revision: 2 }), false);
   assert.equal(isNewerRelease({ ...release, build: 7 }, { ...current, revision: 2 }), true, 'new full APK remains discoverable even when its compatible patch is already installed');
   assert.equal(isNewerRelease({ ...release, version: '2.0.0' }, { ...current, platform: 'windows', revision: 2, shellVersion: '1.0.0' }), true, 'new full Windows version remains discoverable after a compatible patch');
   assert.equal(isNewerRelease(release, { ...current, rejectedRevision: 2 }), false, 'failed patch is not offered again');
   assert.equal(isNewerRelease(release, { ...current, runtime: 'b'.repeat(64) }), false);
-  assert.notEqual(updateIdentity('android', release), updateIdentity('android', { ...release, bundle: { ...release.bundle, revision: 3 } }));
+  assert.equal(updateIdentity('android', release), updateIdentity('android', { ...release, bundle: { ...release.bundle, revision: 3 } }));
   const manifest = { schemaVersion: 1, releases: Object.fromEntries(['web','windows','android'].map(p => [p, { ...release, publishedAt: '2026-10-17T00:00:00Z', notes: ['change'] }])) };
-  assert.equal(validateUpdateManifest(manifest).releases.android.bundle.revision, 2);
+  assert.equal('bundle' in validateUpdateManifest(manifest).releases.android, false);
 });

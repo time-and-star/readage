@@ -20,6 +20,9 @@ summary:focus-visible{outline:none;border-color:#fff;box-shadow:0 2px 0 #faf6eb}
 .download-options a+a::before{content:"";position:absolute;left:0;top:16px;height:12px;border-left:1px solid #faf6eb55}
 .download-options a{position:relative}
 .download-options a:hover,.download-options a:focus-visible{color:#fff;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:6px}
+.download-note{grid-column:1/-1;margin:12px 0 0;font-size:12px;line-height:1.9;letter-spacing:0;color:#faf6ebbf;text-wrap:pretty}
+.download-options .download-note a{display:inline;min-height:0;padding:0;font:inherit;letter-spacing:0;white-space:normal;text-decoration:underline;text-underline-offset:3px}
+.download-options .download-note a::before{content:none}
 @media(max-width:600px){.landing{background-position:46% center;background-image:linear-gradient(180deg,rgba(12,18,17,.48),rgba(12,18,17,.63)),url("./assets/wisdom.png")}.content{padding-bottom:0}h1{font-size:clamp(60px,19vw,114px);margin-bottom:34px}.github-link{top:15px;right:16px}.github-link img{width:22px;height:22px}summary{font-size:15px}.download-options{top:calc(100% + 16px)}.download-options a{font-size:13px;padding-inline:5px}}
 @media(max-height:450px) and (min-width:601px){h1{font-size:100px;margin-bottom:20px}.landing{padding-block:25px}}
 @media(max-height:450px){.content{padding-bottom:72px}}

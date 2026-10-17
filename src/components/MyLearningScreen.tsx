@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { ArrowUpRight, BookOpen, ChevronDown, ChevronRight, Database, Puzzle, RefreshCw } from 'lucide-react';
+import { ArrowUpRight, BookOpen, ChevronDown, ChevronRight, Database, Globe, Puzzle, RefreshCw } from 'lucide-react';
+import { openOfficialWebsite } from '../lib/appUpdates';
 import { ArticleProgressRow, WeakPointMetric } from '../types';
 import type { WordProficiencyView } from '../lib/memoryV2';
 import { AppPageHeader } from './AppPageHeader';
@@ -333,7 +334,15 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
               </span>
               <ChevronRight size={16} className="learning-setting-arrow" aria-hidden="true" />
             </button>}
-            {onOpenDictionarySettings && (
+              <button type="button" onClick={() => { void openOfficialWebsite(); }} className="learning-setting-row">
+                <Globe size={20} className="learning-setting-icon" aria-hidden="true" />
+                <span className="learning-setting-copy">
+                  <span className="learning-setting-title">关于我们</span>
+                  <span className="learning-setting-description">访问 ReadAge 官网</span>
+                </span>
+                <ArrowUpRight size={16} className="learning-setting-arrow" aria-hidden="true" />
+              </button>
+              {onOpenDictionarySettings && (
               <button type="button" onClick={onOpenDictionarySettings} className="learning-setting-row">
                 <BookOpen size={20} className="learning-setting-icon" aria-hidden="true" />
                 <span className="learning-setting-copy">
