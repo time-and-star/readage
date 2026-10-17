@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "NodeNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["app.js", "preview.mjs", "server.mjs", "guestbook.mjs", "captcha.mjs", "library.mjs"]
+}

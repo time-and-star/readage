@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#1c211f" />
+    <meta name="description" content="ReadAge 下载：Windows 与 Android。" />
+    <title>ReadAge</title>
+    <link rel="canonical" href="https://readage.xyz/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="ReadAge" />
+    <meta property="og:description" content="ReadAge 下载：Windows 与 Android。" />
+    <meta property="og:url" content="https://readage.xyz/" />
+    <meta property="og:image" content="https://readage.xyz/assets/wisdom.png" />
+    <link rel="icon" type="image/png" href="./assets/icon.png" />
+    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./bookshelf.css" />
+    <script src="./app.js" type="module"></script>
+  </head>
+  <body>
+    <main class="landing">
+      <button class="menu-toggle" id="menu-toggle" type="button" aria-label="打开菜单" aria-controls="site-menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg></button>
+      <a class="github-link" href="https://github.com/time-and-star/readage" target="_blank" rel="noopener noreferrer" aria-label="GitHub 源码仓库" title="GitHub"><img src="./assets/github.svg" width="24" height="24" alt="" /></a>
+      <div class="content">
+        <h1>ReadAge</h1>
+        <details class="downloads" id="downloads">
+          <summary>下载</summary>
+          <div class="download-options" aria-label="选择下载版本">
+            <a href="https://github.com/time-and-star/readage/releases/download/v0.1.2/ReadAge-0.1.2-windows-x64-setup.exe" title="Windows x64 · v0.1.2 · 1.28 GB；本机翻译要求 AVX2，安装程序暂未代码签名">Windows <span class="download-version">v0.1.2</span></a>
+            <a href="https://github.com/time-and-star/readage/releases/download/v0.1.2/ReadAge-1.0.4-android.apk" title="Android 12+ · v1.0.4 · 1.74 GB；完整离线包，当前使用调试签名">Android <span class="download-version">v1.0.4</span></a>
+          </div>
+        </details>
+      </div>
+    </main>
+
+    <dialog class="site-menu" id="site-menu" aria-labelledby="menu-title">
+      <div class="panel-top"><h2 id="menu-title" class="menu-wordmark">ReadAge</h2><button class="close-panel" type="button" data-close aria-label="关闭菜单">×</button></div>
+      <nav class="menu-items" aria-label="站点菜单">
+        <button type="button" data-open="thanks-panel"><span>01</span>致谢<small>Credits</small></button>
+        <button type="button" data-open="guestbook-panel"><span>02</span>留言板<small>Guestbook</small></button>
+        <button type="button" data-open="library-panel"><span>03</span>资料库<small>Library</small></button>
+      </nav>
+    </dialog>
+
+    <dialog class="content-panel" id="thanks-panel" aria-labelledby="thanks-title">
+      <div class="panel-top"><span class="panel-index">01 / CREDITS</span><button class="close-panel" type="button" data-close aria-label="关闭致谢">×</button></div>
+      <h2 id="thanks-title">致谢</h2>
+      <p class="panel-intro">ReadAge 的每一次前进，都有开源与创作者的光。</p>
+      <dl class="credits-list">
+        <div><dt><a href="https://openai.com/codex/" target="_blank" rel="noopener noreferrer">OpenAI · Codex</a></dt><dd>感谢 Codex 为 ReadAge 的开发、调试与持续迭代提供帮助。</dd></div>
+        <div><dt><a href="https://github.com/Tencent-Hunyuan/Hy-MT2" target="_blank" rel="noopener noreferrer"><strong>腾讯混元团队</strong></a></dt><dd>感谢 Hy-MT2 本机翻译模型，以及 <a href="https://github.com/Tencent/AngelSlim" target="_blank" rel="noopener noreferrer">AngelSlim</a> 的量化工作，让离线翻译可以在电脑与手机运行。</dd></div>
+        <div><dt><a href="https://github.com/hehonghui/awesome-english-ebooks" target="_blank" rel="noopener noreferrer"><strong>@hehonghui/awesome-english-ebooks</strong></a></dt><dd>感谢外刊资源的整理与持续维护，也感谢原作者、编辑与出版方提供阅读内容。</dd></div>
+        <div><dt><a href="https://github.com/hexgrad/kokoro" target="_blank" rel="noopener noreferrer">Kokoro</a> · <a href="https://github.com/supertone-oss-archive/supertonic" target="_blank" rel="noopener noreferrer">Supertone</a></dt><dd>感谢语音模型作者，让文字能以声音被再次遇见。</dd></div>
+        <div><dt>本机推理与语言工具</dt><dd>感谢 <a href="https://github.com/ggml-org/llama.cpp" target="_blank" rel="noopener noreferrer">llama.cpp</a>、<a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank" rel="noopener noreferrer">Sherpa ONNX</a>、<a href="https://github.com/microsoft/onnxruntime" target="_blank" rel="noopener noreferrer">ONNX Runtime</a>，以及模型转换、发音与多语言前端的贡献者。</dd></div>
+      </dl>
+      <p class="panel-footnote">模型与内容保留各自的许可和版权。以上致谢不表示认证或背书。<a href="https://github.com/time-and-star/readage#致谢" target="_blank" rel="noopener noreferrer">完整致谢见 README</a>。</p>
+    </dialog>
+
+    <dialog class="content-panel guestbook-panel" id="guestbook-panel" aria-labelledby="guestbook-title">
+      <div class="panel-top"><span class="panel-index">02 / GUESTBOOK</span><button class="close-panel" type="button" data-close aria-label="关闭留言板">×</button></div>
+      <h2 id="guestbook-title">留言板</h2>
+      <p class="panel-intro">留下建议，或说声你好。</p>
+      <p class="guestbook-note">无需登录 · Cookie 识别访客 · 留言公开展示</p>
+      <form id="guestbook-form">
+        <label for="guest-name">称呼 <span>可不填</span></label>
+        <input id="guest-name" name="name" type="text" maxlength="24" autocomplete="nickname" placeholder="怎么称呼你？" />
+        <div class="label-row"><label for="guest-content">留言</label><span id="content-count">0 / 1000</span></div>
+        <textarea id="guest-content" name="content" rows="4" maxlength="1000" required placeholder="关于阅读、使用体验，或任何想分享的事。"></textarea>
+        <div class="verification-top"><label for="guest-answer">发布验证</label><button id="refresh-captcha" class="text-action" type="button">换一张</button></div>
+        <div class="verification-row"><img id="captcha-image" width="200" height="64" alt="四位数字验证码，看不清时可换一张" hidden /><input id="guest-answer" name="answer" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required autocomplete="off" aria-label="输入图中的四位数字" placeholder="四位数字" /></div>
+        <div class="publish-row"><p id="guestbook-status" role="status" aria-live="polite"></p><button id="publish-comment" class="publish-button" type="submit" disabled>发布留言</button></div>
+      </form>
+      <section class="comment-section" aria-labelledby="comments-title"><div class="comments-heading"><h3 id="comments-title">最新留言</h3><button id="reload-comments" class="text-action" type="button">刷新</button></div><div id="comment-list" aria-busy="false"><p class="empty-comments">正在读取留言…</p></div><button id="load-more-comments" class="text-action load-more" type="button" hidden>查看更多</button></section>
+    </dialog>
+    <dialog class="content-panel" id="library-panel" aria-labelledby="library-title">
+      <div class="panel-top"><span class="panel-index">03 / LIBRARY</span><button class="close-panel" type="button" data-close aria-label="关闭资料库">×</button></div>
+      <h2 id="library-title">选一本，慢慢读。</h2>
+      <div class="library-filters"><label><input id="library-search" type="search" aria-label="搜索书籍" placeholder="搜索中文或英文书名、作者" /></label><label><select id="library-category" aria-label="书籍分类"><option value="">全部分类</option></select></label><button id="library-refresh" type="button" class="text-action">刷新</button></div>
+      <p id="library-status" role="status"></p><div id="library-list" class="ra-book-grid"></div>
+      <details class="library-admin"><summary>资料管理</summary><p class="guestbook-note">管理密钥只在本页内存使用。更新同一本书时填写原资料编号，旧文件仍保留。</p>
+        <form id="library-upload"><label>管理密钥<input id="library-token" type="password" required autocomplete="off" /></label><label>书名<input id="library-book-title" maxlength="160" required /></label><label>资料编号（新书可留空）<input id="library-book-id" placeholder="book:…" pattern="book:[a-zA-Z0-9_-]{1,80}" /></label><label>语言<select id="library-language"><option value="en">英语</option><option value="fr">法语</option><option value="ja">日语</option></select></label><label>文件 · EPUB 128MB，其他格式 64MB<input id="library-file" type="file" accept=".epub,.pdf,.docx,.html,.txt,.md" required /></label><div class="publish-row"><button type="submit" class="publish-button" id="library-publish">上传书籍</button></div></form><p id="library-admin-status" role="status"></p>
+      </details>
+    </dialog>
+  </body>
+</html>

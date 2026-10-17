@@ -32,7 +32,7 @@ public final class NativeDocumentParser {
     private static JSONObject parse(Context context, File source, String filename, int offset, int limit, boolean magazine) throws Exception {
         if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("文件准备已取消。");
         if (!source.isFile() || source.length() < 1) throw new IOException("文件是空的或已经失效，请重新选择。");
-        if (source.length() > NativeFileStore.MAX_FILE) throw new IOException("文件超过 64MB，请拆分后再导入。");
+        if (source.length() > NativeFileStore.documentMaxBytes(filename)) throw new IOException("文件超过导入上限：EPUB 最大 128MB，其他格式最大 64MB。");
         if (offset < 0 || limit < 1 || limit > 80) throw new IOException("请输入有效的章节起点，每批最多 80 篇 / 页。");
         String name = filename == null ? "Imported file" : filename.replaceAll("[\\\\/\\x00-\\x1f]", "_");
         String extension = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT) : "";

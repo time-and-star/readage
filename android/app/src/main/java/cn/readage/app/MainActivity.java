@@ -5,12 +5,49 @@ import android.content.res.Configuration;
 import android.graphics.drawable.ColorDrawable;
 import android.view.Window;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.ServerPath;
+import java.io.File;
+import android.os.Handler;
+import android.os.Looper;
 import androidx.activity.OnBackPressedCallback;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 public class MainActivity extends BridgeActivity {
     private boolean startupVisible = true;
+    private WebPatchEngine webPatches;
+    private final Handler patchHandler = new Handler(Looper.getMainLooper());
+    private final Runnable patchTimeout = () -> {
+        try { if (webPatches != null && webPatches.rollback()) showActivePatch(); }
+        catch (Exception error) { android.util.Log.e("ReadAgeUpdate", "Rollback failed; data retained", error); }
+    };
+
+    @Override protected void load() {
+        try {
+            webPatches = new WebPatchEngine(new File(getNoBackupFilesDir(), "web-updates"), name -> getAssets().open(name), WebPatchEngine::officialDownload);
+            webPatches.boot();
+            String active = webPatches.activePath();
+            if (active != null) bridgeBuilder.setServerPath(new ServerPath(ServerPath.PathType.BASE_PATH, active));
+        } catch (Exception error) {
+            webPatches = null;
+            android.util.Log.e("ReadAgeUpdate", "Using bundled web assets; data retained", error);
+        }
+        super.load();
+    }
+    WebPatchEngine webPatches() { return webPatches; }
+    void showActivePatch() throws Exception {
+        String active = webPatches.activePath();
+        if (active == null) bridge.setServerAssetPath("public"); else bridge.setServerBasePath(active);
+    }
+    void activateWebPatch() {
+        patchHandler.removeCallbacks(patchTimeout);
+        patchHandler.postDelayed(patchTimeout, 120_000);
+        patchHandler.postDelayed(() -> { try { showActivePatch(); } catch (Exception error) { patchTimeout.run(); } }, 120);
+    }
+    @Override public void onDestroy() {
+        patchHandler.removeCallbacksAndMessages(null);
+        super.onDestroy();
+    }
 
     @Override public void onCreate(Bundle state) {
         registerPlugin(ReadageDatabasePlugin.class);
@@ -21,6 +58,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ReadageBundledSpeechPlugin.class);
         registerPlugin(ReadageMagazinesPlugin.class);
         registerPlugin(ReadageStartupAppearancePlugin.class);
+        registerPlugin(ReadageAppUpdatesPlugin.class);
         super.onCreate(state);
         applyStartupAppearance();
         bridge.setWebViewClient(new ReadageWebViewClient(bridge));

@@ -6,8 +6,9 @@ import { parseDocxBuffer } from '../documents/parseDocx';
 import { saveArticleImage } from '../magazines/assets';
 import { createHash } from 'node:crypto';
 
-/** Same byte budget as a magazine issue download. */
-export const USER_IMPORT_MAX_BYTES = 64 * 1024 * 1024;
+import { documentMaxBytes, documentSizeError, EPUB_DOCUMENT_MAX_BYTES } from '../../src/lib/documentLimits';
+/** HTTP body ceiling; the parser enforces each format's own budget. */
+export const USER_IMPORT_MAX_BYTES = EPUB_DOCUMENT_MAX_BYTES;
 /** Keep a whole issue, but stop before one file can fill browser storage. */
 export const USER_IMPORT_MAX_ARTICLES = 80;
 
@@ -181,8 +182,8 @@ export async function parseUserImportFile(buffer: Buffer, filename: string, opti
   if (!buffer.length) {
     throw new UserImportError('EMPTY_FILE', '文件是空的。');
   }
-  if (buffer.length > USER_IMPORT_MAX_BYTES) {
-    throw new UserImportError('FILE_TOO_LARGE', '文件超过 64MB，和杂志导入的大小上限相同。');
+  if (buffer.length > documentMaxBytes(filename)) {
+    throw new UserImportError('FILE_TOO_LARGE', documentSizeError(filename));
   }
 
   const extension = extensionOf(filename);

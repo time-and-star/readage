@@ -1,5 +1,6 @@
 import type { Article, ArticleMedia, ArticleSourceDocument } from '../types';
 import { getApiAuthHeaders } from './apiAuth';
+import { documentMaxBytes, documentSizeError } from './documentLimits';
 
 export const FILE_IMPORT_MAX_BYTES = 64 * 1024 * 1024;
 export const FILE_IMPORT_BATCH_SIZE = 80;
@@ -41,7 +42,7 @@ export async function requestUserFileBatch(file: File, offset: number, options: 
 } = {}): Promise<ImportedFileBatch> {
   const limit = options.limit ?? FILE_IMPORT_BATCH_SIZE;
   if (!file.size) throw new Error('文件是空的。');
-  if (file.size > FILE_IMPORT_MAX_BYTES) throw new Error('文件超过 64MB，请拆分后再导入。');
+  if (file.size > documentMaxBytes(file.name)) throw new Error(documentSizeError(file.name));
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > FILE_IMPORT_BATCH_SIZE) {
     throw new Error('请输入有效的章节起点。');
   }

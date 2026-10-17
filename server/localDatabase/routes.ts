@@ -1,7 +1,7 @@
 import express, { type Request } from 'express';
 import { LocalLearningDatabase, LocalDatabaseConflict, validateArticleMetadataChange } from './store';
 import { LOCAL_DATA_HEADER, LOCAL_QUERY_KEY_LIMIT, MEMORY_TABLES, type LocalCommitChange, type LocalTable } from '../../src/lib/localDatabaseProtocol';
-import { createFullBackup, restoreFullBackup } from './bundle';
+import { createFullBackup, restoreFullBackup, prepareFullBackup } from './bundle';
 
 const loopback = (host: string) => ['localhost', '127.0.0.1', '::1', '[::1]', '::ffff:127.0.0.1'].includes(host);
 export function localDatabaseEnabled(host: string, env = process.env) {
@@ -36,6 +36,13 @@ export function createLocalDataRouter(options: { host: string; filename?: string
       if (!Buffer.isBuffer(req.body) || !Number.isSafeInteger(revision)) throw new Error('完整备份格式无效。');
       const result = await restoreFullBackup(db(), id, revision, req.body, options.dataRoot);
       res.json(result);
+    } catch (error) { sendError(res, error); }
+  });
+  router.post('/prepare-bundle', express.raw({ type: 'application/zip', limit: '512mb' }), async (req, res) => {
+    try {
+      db().profile(String(req.query.profileId ?? ''));
+      if (!Buffer.isBuffer(req.body)) throw new Error('完整备份格式无效。');
+      res.json(await prepareFullBackup(req.body, options.dataRoot));
     } catch (error) { sendError(res, error); }
   });
   router.use(express.json({ limit: '64mb' }));

@@ -1,4 +1,7 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useAppUpdates } from './lib/useAppUpdates';
+import { AppUpdateCard, AppUpdateNotice } from './components/AppUpdateCard';
+import type { LibraryEntry } from './lib/contentLibraryEntry';
 import {
   Article,
   LearningEvent,
@@ -195,6 +198,7 @@ function logRecommendationSource(
 }
 
 export default function App() {
+  const appUpdates = useAppUpdates();
   const builtInLibrary = LIBRARY_ARTICLES;
   const [route, setRoute] = useState<AppRoute>(getInitialAppRoute);
   const [magazinePool, setMagazinePool] = useState<Article[]>(() =>
@@ -270,6 +274,7 @@ export default function App() {
     new Set(history.filter((article) => article.status === 'Completed').map((article) => article.id))
   );
   const [showEnterArticle, setShowEnterArticle] = useState(false);
+  const [articleImportEntry, setArticleImportEntry] = useState<LibraryEntry>({ intent: 'import' });
   const [fileImportNotice, setFileImportNotice] = useState<string | null>(null);
   const importQueueSnapshot = useArticleImportQueue();
 
@@ -1378,6 +1383,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] font-sans flex flex-col overflow-x-clip safe-px">
+      {appUpdates.available && <AppUpdateCard key={`${appUpdates.available.release.version}:${appUpdates.available.release.build}:${appUpdates.available.release.bundle?.revision || 0}`} available={appUpdates.available} onDecline={appUpdates.decline} />}
+      {appUpdates.notice && <AppUpdateNotice message={appUpdates.notice} onClose={appUpdates.clearNotice} />}
       {isRecommending && (
         <div className="bg-[#FEF3C7] border-b border-[#FDE68A] text-center text-xs text-[#92400E] py-2 px-3 font-medium flex items-center justify-center gap-3 flex-wrap">
           <span className="min-w-0">
@@ -1503,7 +1510,7 @@ export default function App() {
                 source: article.source === 'magazine' ? 'magazine' : 'history',
               })
             }
-            onInsertArticle={() => setShowEnterArticle(true)}
+            onInsertArticle={entry => { setArticleImportEntry(entry || { intent: 'import' }); setShowEnterArticle(true); }}
             onBack={goBackOrLibrary}
             navigation={appNavigation}
           />
@@ -1621,6 +1628,9 @@ export default function App() {
 
         {route.kind === 'learning' && (
           <MyLearningScreen
+            onCheckUpdates={appUpdates.check}
+            updateChecking={appUpdates.checking}
+            appVersion={appUpdates.current.version}
             onBack={goBackOrLibrary}
             navigation={appNavigation}
             onOpenRecommendedReading={openRecommendationEntry}
@@ -1684,7 +1694,7 @@ export default function App() {
       </div>
 
       {showEnterArticle && (
-        <PageLoadBoundary onClose={() => setShowEnterArticle(false)}><Suspense fallback={<ArticleImportLoading onClose={() => setShowEnterArticle(false)} />}><EnterArticleModal
+        <PageLoadBoundary onClose={() => setShowEnterArticle(false)}><Suspense fallback={<ArticleImportLoading onClose={() => setShowEnterArticle(false)} />}><EnterArticleModal history={history} entry={articleImportEntry}
           onClose={() => setShowEnterArticle(false)}
           onSubmitCustomArticles={handleAddImportedArticles}
         /></Suspense></PageLoadBoundary>

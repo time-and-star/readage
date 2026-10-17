@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releases": {
+    "web": { "version": "0.1.2", "build": 0, "publishedAt": "2026-10-16T00:00:00Z", "notes": ["ReadAge 品牌名称与界面更新。", "保留本机学习档案与离线阅读能力。"] },
+    "windows": { "version": "0.1.2", "build": 0, "publishedAt": "2026-10-16T00:00:00Z", "notes": ["ReadAge 名称、图标与 Windows 安装包更新。", "安装包包含离线词典、翻译及朗读资源。"] },
+    "android": { "version": "1.0.4", "build": 5, "publishedAt": "2026-10-16T00:00:00Z", "notes": ["ReadAge Android 正式安装包更新。", "提供本机词典、翻译、朗读与离线阅读能力。"] }
+  }
+}

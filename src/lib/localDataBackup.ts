@@ -462,12 +462,70 @@ export function downloadLocalDataBackup(backup: LocalDataBackup, filename?: stri
 }
 
 export async function readBackupFile(file: File): Promise<unknown> {
+  if (file.size > 64 * 1024 * 1024) throw new Error('学习记录快照超过 64 MiB。');
   const text = await file.text();
   try {
     return JSON.parse(text) as unknown;
   } catch {
     throw new Error('无法解析备份文件（需要 JSON）。');
   }
+}
+
+/** File preparation validates ZIP assets but never changes the current profile. */
+export async function readMergeBackupFile(file: File): Promise<LocalDataBackup> {
+  if (!/\.zip$/i.test(file.name)) return validateLocalDataBackup(await readBackupFile(file));
+  if (file.size > 512 * 1024 * 1024) throw new Error('完整备份超过 512 MiB。');
+  const state = getLocalDatabaseSnapshot();
+  if (!state || usesNativeLocalDatabase()) throw new Error('请使用本机应用的备份文件入口。');
+  const response = await fetch(`${LOCAL_DATA_API}/prepare-bundle?profileId=${encodeURIComponent(state.profile.id)}`,
+    { method: 'POST', headers: { ...localDatabaseHeaders(), 'Content-Type': 'application/zip' }, body: file });
+  if (!response.ok) throw new Error((await response.json()).error || '完整备份读取失败。');
+  return validateLocalDataBackup(await response.json());
+}
+
+export async function readNativeMergeBackup(handle: string, full: boolean): Promise<LocalDataBackup> {
+  if (!usesNativeLocalDatabase()) throw new Error('手机文件接口不可用于电脑档案。');
+  const { nativeFiles } = await import('./platform/nativeFiles');
+  return validateLocalDataBackup(full ? await nativeFiles.prepareBundle({ handle })
+    : await nativeFiles.prepareSnapshot({ handle }));
+}
+
+/** Revision check covers the entire snapshot/merge/commit; other writers cannot be overwritten. */
+export async function mergeLocalDataBackup(raw: unknown): Promise<void> {
+  return mergeLocalDataBackupBatch([raw]);
+}
+
+/** Prepare every selected source before committing once, so a later conflict cannot partially merge the batch. */
+export async function mergeLocalDataBackupBatch(sources: readonly unknown[]): Promise<void> {
+  if (!sources.length) throw new Error('请先导入并选择备份。');
+  const incoming = sources.map(validateLocalDataBackup);
+  await flushPendingPersistentWrites(); await flushLocalDatabaseWrites();
+  await withBackupLocks(async () => {
+    const { mergeLocalDataBackups } = await import('./backupMerge');
+    if (isLocalDatabaseActive()) {
+      const current = await localDatabaseRequest<{ revision: number }>('query', { table: 'meta', key: '__merge_revision__' });
+      const snapshot = await localDatabaseRequest<LocalDataBackup>('snapshot');
+      let merged = snapshot;
+      for (const backup of incoming) merged = await mergeLocalDataBackups(merged, backup);
+      const stable = (value: any): any => Array.isArray(value) ? value.map(stable) : value && typeof value === 'object'
+        ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
+      if (JSON.stringify(stable({ settings: snapshot.localStorage, stores: snapshot.indexedDb?.stores }))
+        === JSON.stringify(stable({ settings: merged.localStorage, stores: merged.indexedDb?.stores }))) return;
+      await localDatabaseRequest('restore', { revision: current.revision, backup: merged });
+      return;
+    }
+    const previousLocal = collectAppLocalStorage(), previousMemory = await dumpMemoryIndexedDb();
+    if (!previousMemory) throw new Error('当前浏览器无法安全合并词汇库，请使用本机应用。');
+    let merged: LocalDataBackup = { format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION,
+      exportedAt: new Date().toISOString(), localStorage: previousLocal, indexedDb: previousMemory };
+    for (const backup of incoming) merged = await mergeLocalDataBackups(merged, backup);
+    try {
+      await restoreMemoryIndexedDb(merged.indexedDb!);
+      applyAppLocalStorage(merged.localStorage);
+    } catch (error) {
+      await restoreMemoryIndexedDb(previousMemory); applyAppLocalStorage(previousLocal); throw error;
+    }
+  });
 }
 
 /** Complete desktop backup includes only assets referenced by this profile's articles. */

@@ -191,6 +191,8 @@ export interface Article {
   importBatchTitle?: string;
   /** File kind used by the shelf card. */
   importBatchFormat?: 'epub' | 'pdf' | 'docx' | 'html' | 'text';
+  /** Immutable server edition; revisions never replace existing learning identities. */
+  distribution?: { resourceId: string; version: string; serverUrl: string; title: string; kind?: 'book' | 'magazine'; totalCount?: number };
   /**
    * Chinese translation per paragraph, aligned with `content` indices.
    * Filled by the import module in the background after store.

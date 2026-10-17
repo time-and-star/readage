@@ -1,5 +1,6 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { FILE_IMPORT_BATCH_SIZE, FILE_IMPORT_MAX_BYTES, FILE_IMPORT_TIMEOUT_MS, type ImportedFileBatch } from '../userFileImport';
+import { FILE_IMPORT_BATCH_SIZE, FILE_IMPORT_TIMEOUT_MS, type ImportedFileBatch } from '../userFileImport';
+import { documentMaxBytes, documentSizeError } from '../documentLimits';
 import type { DictionaryImportOptions, DictionaryImportSnapshot } from '../dictionarySettingsClient';
 
 export interface NativePickedFile {
@@ -13,6 +14,7 @@ export interface NativePickedFile {
   path?: string;
 }
 interface NativeFilesPlugin {
+  remoteLibrary(options: { operation: 'catalog' | 'file'; serverUrl: string; requestId: string; sha256?: string; bytes?: number; filename?: string }): Promise<unknown>;
   pickFile(options: { kind: 'document' | 'backup' | 'dictionary' }): Promise<NativePickedFile | { cancelled: true }>;
   readText(options: { handle: string }): Promise<{ text: string }>;
   parseDocument(options: { handle: string; filename: string; offset: number; limit: number; requestId?: string }): Promise<ImportedFileBatch>;
@@ -26,6 +28,8 @@ interface NativeFilesPlugin {
   exportSnapshot(options: { profileId: string; filename?: string; previous?: boolean }): Promise<{ saved?: true; cancelled?: true }>;
   saveText(options: { text: string; filename: string; mimeType: 'text/csv' }): Promise<{ saved?: true; cancelled?: true }>;
   restoreBundle(options: { handle: string; profileId: string; revision: number }): Promise<{ revision: number; settings: Record<string, string> }>;
+  prepareBundle(options: { handle: string }): Promise<import('../localDataBackup').LocalDataBackup>;
+  prepareSnapshot(options: { handle: string }): Promise<import('../localDataBackup').LocalDataBackup>;
   restoreSnapshot(options: { handle: string; profileId: string; revision: number }): Promise<{ revision: number; settings: Record<string, string> }>;
   installDictionary(options: { handle: string }): Promise<{ dictionaryId: string; entryCount: number; contentVersion: string }>;
   importMdx(options: { handle: string; filename: string; language: string; name?: string }): Promise<{ dictionaryId: string; name: string; entryCount: number; contentVersion: string; transactionToken?: string }>;
@@ -56,7 +60,7 @@ export async function requestNativeDocumentBatch(file: NativePickedFile, offset:
 } = {}): Promise<ImportedFileBatch> {
   const limit = options.limit ?? FILE_IMPORT_BATCH_SIZE;
   if (!/^[a-f\d]{64}$/.test(file.handle) || file.sha256 !== file.handle || !Number.isSafeInteger(file.bytes) || file.bytes < 1) throw new Error('手机返回的文件信息无效。');
-  if (file.bytes > FILE_IMPORT_MAX_BYTES) throw new Error('文件超过 64MB，请拆分后再导入。');
+  if (file.bytes > documentMaxBytes(file.name)) throw new Error(documentSizeError(file.name));
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > FILE_IMPORT_BATCH_SIZE) throw new Error('请输入有效的章节起点。');
   options.signal?.throwIfAborted();
   let timer: ReturnType<typeof setTimeout> | undefined;

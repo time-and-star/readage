@@ -5,7 +5,7 @@ import { build } from 'esbuild';
 test('bootstrap and hydrated App startup exclude the reader, recommendation resolver and NLP model', async () => {
   const result = await build({ entryPoints: ['src/main.tsx'], bundle: true, platform: 'browser',
     format: 'esm', splitting: true, outdir: 'tmp/app-startup-bundle-regression',
-    write: false, metafile: true, minify: true, loader: { '.css': 'empty' } });
+    write: false, metafile: true, minify: true, loader: { '.css': 'empty', '.png': 'file' } });
   const outputs = result.metafile!.outputs;
   const startup = new Set<string>();
   const visit = (file: string) => {

@@ -58,6 +58,23 @@ test('the shared word-card sections preserve dictionary order and definition lan
   assert.doesNotMatch(html, /word-memory|学习记录已保存/);
 });
 
+test('Japanese and French examples put only their number in the narrow grid column', () => {
+  for (const language of ['ja', 'fr']) {
+    const text = language === 'ja' ? '図書館で本を読みます。' : 'Je lis un livre.';
+    const entry = { ...result.sources[0].matches[0].entry, language,
+      content: { kind: 'structured' as const, senses: [{ id: 'read', definitions: [], translations: [], examples: [
+        { id: 'one', text: { language, text }, translations: [{ language: 'zh', text: '我在读书。' }, { language: 'en', text: 'I read.' }] },
+        { id: 'two', text: { language, text }, translations: [] },
+      ] }] } };
+    const html = renderToStaticMarkup(React.createElement(NeutralDictionarySections, {
+      result: { ...result, request: { text: entry.headword, language }, sources: [{ ...result.sources[0], matches: [{ entry, matchKind: 'exact' }] }] }, onLookupRelated() {},
+    }));
+    assert.match(html, /<li><span class="word-card-example__index">1<\/span><div class="word-card-example__body">/);
+    assert.match(html, /<li><span class="word-card-example__index">2<\/span><div class="word-card-example__body">/);
+    assert.ok(html.includes(`<p lang="${language}">${text}</p><p lang="zh" class="word-card-sense__translation">我在读书。</p><p lang="en" class="word-card-sense__translation">I read.</p></div></li>`));
+  }
+});
+
 test('a missing entry and a failed source remain distinct inside the original word-card layout', () => {
   const failure: LookupResult = { ...result, sources: [result.sources[0],
     { dictionaryId: 'offline', dictionaryName: 'Offline dictionary', status: 'unavailable', matches: [] },

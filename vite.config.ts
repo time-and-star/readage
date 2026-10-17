@@ -1,13 +1,20 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import fs from 'node:fs';
 import {defineConfig} from 'vite';
 import { VITE_WATCH_IGNORED } from './src/viteWatchConfig';
 
 export default defineConfig(() => {
   const offline = process.env.VITE_OFFLINE_APP === 'true';
   const android = process.env.VITE_APP_PLATFORM === 'android';
+  const packageVersion = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
+  const androidVersion = fs.readFileSync(new URL('./android/app/build.gradle', import.meta.url), 'utf8');
+  const version = android ? androidVersion.match(/versionName\s+"([^"]+)"/)?.[1] : packageVersion;
+  const build = android ? Number(androidVersion.match(/versionCode\s+(\d+)/)?.[1]) : 0;
+  if (!version || !Number.isSafeInteger(build)) throw new Error('无法读取应用版本。');
   return {
+    define: { __READAGE_APP_VERSION__: JSON.stringify(version), __READAGE_APP_BUILD__: JSON.stringify(build) },
     ...(android ? { build: {
       target: 'chrome91', cssTarget: 'chrome91', cssMinify: 'lightningcss' as const,
       // Layer priorities must be converted after the complete stylesheet has been bundled.

@@ -13,6 +13,8 @@ import org.json.*;
 /** App-private, content-addressed resources. No picker URI is persisted as an article URL. */
 final class NativeFileStore {
     static final long MAX_FILE = 64L * 1024 * 1024, MAX_BUNDLE = 512L * 1024 * 1024;
+    static final long MAX_EPUB = 128L * 1024 * 1024;
+    static long documentMaxBytes(String name) { return name != null && name.toLowerCase(Locale.ROOT).endsWith(".epub") ? MAX_EPUB : MAX_FILE; }
     final File root, imports, dictionaries;
     NativeFileStore(Context context) throws IOException {
         root = new File(context.getFilesDir(), "readage");

@@ -46,7 +46,7 @@ test('My Learning renders real metric labels and honest empty states', () => {
   assert.match(html, /主动调用 AI/);
   assert.match(html, /推荐诊断/);
   assert.match(html, /不使用这些功能时，不会为了统计阅读而上传整篇文章/);
-  assert.match(html, /导出备份/);
+  assert.match(html, /导出当前备份/);
   assert.match(html, /导入备份/);
   assert.match(html, /导出词汇表/);
   assert.match(html, /<details[^>]*>/);
@@ -60,9 +60,13 @@ test('My Learning renders real metric labels and honest empty states', () => {
 
 test('My Learning keeps the overview concise and secondary explanations collapsed', () => {
   const html = renderToStaticMarkup(React.createElement(MyLearningScreen, baseProps));
-  const defaultContent = html.replace(/<details\b[^>]*>([\s\S]*?)<\/details>/g, (_details, contents: string) => (
-    contents.match(/<summary\b[^>]*>[\s\S]*?<\/summary>/)?.[0] ?? ''
-  ));
+  // Details now contain nested sections and another collapsed tools disclosure.
+  let depth = 0;
+  const defaultContent = html.split(/(<\/?details\b[^>]*>)/).filter(part => {
+    if (part.startsWith('<details')) { depth++; return false; }
+    if (part.startsWith('</details')) { depth--; return false; }
+    return depth === 0;
+  }).join('') + Array.from(html.matchAll(/<summary\b[^>]*>[\s\S]*?<\/summary>/g), match => match[0]).join('');
 
   assert.match(defaultContent, /学习概览/);
   assert.match(defaultContent, /已学习<\/dt><dd><strong[^>]*>24<\/strong> 词/);
@@ -75,7 +79,7 @@ test('My Learning keeps the overview concise and secondary explanations collapse
   assert.match(defaultContent, /词典设置/);
   assert.match(defaultContent, /数据与备份/);
   assert.match(defaultContent, /安装查词插件/);
-  assert.doesNotMatch(defaultContent, /导出词汇表|导出备份|导入备份|学习数据保存在本机浏览器/);
+  assert.doesNotMatch(defaultContent, /导出词汇表|导出备份|学习数据保存在本机浏览器/);
   assert.doesNotMatch(defaultContent, /较熟悉|学习中|近 7 天|熟悉度|CSV|JSON/);
   assert.doesNotMatch(html, /A little|My learning|复习，让词汇留下来|在新的语境中/);
   assert.match(html, /<summary[^>]*>[\s\S]*?<span>学习详情<\/span>[\s\S]*?<\/summary>/);
@@ -93,17 +97,18 @@ test('My Learning places reading and flashcards in one adjacent learning entry g
 
 test('My Learning consolidates settings and utilities below learning content', () => {
   const html = renderToStaticMarkup(React.createElement(MyLearningScreen, baseProps));
-  const utilities = html.match(/<section[^>]*aria-labelledby="learning-tools-heading"[\s\S]*?<\/section>/)?.[0] ?? '';
+  const utilities = html.slice(html.indexOf('<section class="learning-settings"'));
 
   assert.ok(html.indexOf('词卡学习') < html.indexOf('学习详情'));
   assert.ok(html.indexOf('学习详情') < html.indexOf('设置与工具'));
   assert.ok(html.indexOf('设置与工具') < html.indexOf('词典设置'));
   assert.match(utilities, /<button[^>]*>[\s\S]*?词典设置[\s\S]*?<\/button>/);
   assert.match(utilities, /<a href="\/extension-setup.html"[^>]*>[\s\S]*?安装查词插件[\s\S]*?<\/a>/);
-  assert.match(utilities, /<details[^>]*><summary[^>]*>[\s\S]*?数据与备份[\s\S]*?<\/summary>[\s\S]*导出词汇表[\s\S]*导出备份[\s\S]*导入备份/);
+  assert.match(utilities, /<details[^>]*><summary[^>]*>[\s\S]*?数据与备份[\s\S]*?<\/summary>[\s\S]*导入备份[\s\S]*导出当前备份[\s\S]*其他工具[\s\S]*导出词汇表/);
   assert.match(utilities, /aria-label="选择学习备份文件"/);
   assert.match(utilities, /CSV 文件可用 Excel 打开/);
-  assert.match(utilities, /导入前会确认覆盖当前记录/);
+  assert.match(utilities, /导入只加入下方列表，不会覆盖当前学习记录/);
+  assert.match(utilities, /恢复前会确认覆盖当前记录/);
   assert.match(utilities, /阅读数据说明[\s\S]*词汇学习证据[\s\S]*主动调用 AI/);
   assert.doesNotMatch(html.slice(0, html.indexOf('设置与工具')), /导出词汇表|导出备份|导入备份|安装查词插件|阅读数据说明/);
 });

@@ -1,14 +1,6 @@
 {
   "name": "ReadAge 自编词典",
-  "format": "readage-authored-pack.v1",
-  "entryCount": 17974,
-  "senseCount": 30538,
-  "pendingCount": 0,
-  "encoding": "gzip-blocks",
-  "dataBytes": 47668171,
-  "dataSha256": "0bf09d42332055eb84b5d4a1e580973312b94d0ec81dfa668b789755ce4de859",
-  "indexSha256": "2236a15986178f32ea55cb7097b55eb0c469ad41b8cd2bf5340a9a94723ba9c4",
-  "sourceHash": "0ae65833b3033cfecddd19eddd1e1f431b89359d0f4aa3d478915cad69de8567",
+  "sourceHash": "3647524a370eb8dc6efb5d14565b6bd88d565cdee1109e2d0309a5d1ca863726",
   "scripts": [
     "assets/js/core/util.js",
     "assets/js/core/storage.js",
@@ -526,5 +518,13 @@
     "assets/js/data/registry.js"
   ],
   "source": "ReadAge 项目自编词条，按 index.html 的当前数据脚本完整装配。",
+  "format": "readage-authored-pack.v1",
+  "entryCount": 17974,
+  "senseCount": 30538,
+  "pendingCount": 0,
+  "encoding": "gzip-blocks",
+  "dataBytes": 47831036,
+  "dataSha256": "3a4af4f9e42e2d94dda09831066a9f88a49d5157e846b779c75d37e0c3ca6c48",
+  "indexSha256": "eff0df6ca8d9c80f73a2c733384dcf5d420ce6a4368161dd6574d25e8dcc99a9",
   "contentCorrectionsVersion": "2026-10-09.1"
 }

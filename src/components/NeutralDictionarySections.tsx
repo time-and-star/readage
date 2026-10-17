@@ -49,9 +49,12 @@ const NeutralEntry: React.FC<{
             {sense.translations.map((translation, i) => <p key={i} lang={translation.language} className="word-card-sense__translation">{translation.text}</p>)}
             {!!sense.labels?.length && <p className="word-card-copy">{sense.labels.join(' · ')}</p>}
             {!!sense.examples.length && <ol className="word-card-examples">
-              {sense.examples.map(example => <li key={example.id}>
-                <p lang={example.text.language}>{example.text.text}</p>
-                {example.translations?.map((translation, i) => <p key={i} lang={translation.language} className="word-card-sense__translation">{translation.text}</p>)}
+              {sense.examples.map((example, exampleIndex) => <li key={example.id}>
+                <span className="word-card-example__index">{exampleIndex + 1}</span>
+                <div className="word-card-example__body">
+                  <p lang={example.text.language}>{example.text.text}</p>
+                  {example.translations?.map((translation, i) => <p key={i} lang={translation.language} className="word-card-sense__translation">{translation.text}</p>)}
+                </div>
               </li>)}
             </ol>}
           </div>

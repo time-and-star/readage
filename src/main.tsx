@@ -1,9 +1,15 @@
-import {StrictMode} from 'react';
+import {StrictMode, useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
 import { initializeLocalDatabase } from './lib/localDatabase';
 import { IS_ANDROID, IS_DESKTOP } from './lib/platform/runtime';
 import { showStartupScreen } from './lib/startupScreen';
 import './index.css';
+import { patchStatus, patchReady } from './lib/webPatches';
+
+function UpdateHealth({ id }: { id: string | undefined }) {
+  useEffect(() => { if (id) void patchReady(id).catch(() => { /* A failed acknowledgement leaves rollback enabled. */ }); }, [id]);
+  return null;
+}
 
 let starting = false;
 async function start() {
@@ -16,6 +22,7 @@ async function start() {
   });
   startup.phase(IS_ANDROID ? 'resources' : 'profile');
   try {
+    const update = await patchStatus();
     if (IS_ANDROID) {
       const { initializeAndroidPlatform } = await import('./lib/platform/android');
       await initializeAndroidPlatform();
@@ -36,7 +43,7 @@ async function start() {
       import('./App.tsx'), import('./lib/memoryV2/MemoryProvider'),
     ]);
     startup.dispose();
-    createRoot(element).render(<StrictMode><MemoryProvider><App /></MemoryProvider></StrictMode>);
+    createRoot(element).render(<StrictMode><MemoryProvider><App /><UpdateHealth id={update.id} /></MemoryProvider></StrictMode>);
   } catch (error) {
     startup.fail(error);
   } finally {

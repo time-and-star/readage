@@ -68,6 +68,8 @@ async function packageBuild(workspace, platform, platformBuild) {
 
 for (const [label, relative, affected] of [
   ['shared reader', 'src/reader.ts', ['web', 'desktop', 'android']],
+  ['shared website artwork', 'website/assets/wisdom.png', ['web', 'desktop', 'android']],
+  ['shared update protocol', 'website/update-protocol.mjs', ['web', 'desktop', 'android']],
   ['Node server', 'server.ts', ['web', 'desktop']],
   ['desktop shell', 'desktop/main.mjs', ['desktop']],
   ['Android Java', 'android/app/src/main/java/cn/readage/app/MainActivity.java', ['android']],
@@ -90,6 +92,7 @@ test('personal data, environment files, tests and generated outputs do not inval
   const before = inputIds(await captureSources(workspace));
   for (const relative of [
     'local-data/learning.sqlite', '.env.local', 'src/.env.test',
+    'website/.data/guestbook.sqlite', 'website/releases.json', 'website/index.html',
     'tests/reader.test.ts', 'desktop/main.test.mjs', 'src/node_modules/module/index.js',
     'dist/assets/reader.js', 'dist-android/assets/reader.js',
     'build/desktop/readge-setup.exe',

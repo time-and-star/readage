@@ -15,7 +15,7 @@ export const SelectionTranslationNote: React.FC<Props> = ({ loading, error, resu
   useLayoutEffect(() => {
     const element = note.current;
     if (element && scrollWithinCard) {
-      const card = element.closest<HTMLElement>('.reading-lookup-card, .word-card-dialog');
+      const card = element.closest<HTMLElement>('.reading-lookup-card, .word-card-body, .word-card-dialog');
       if (card) {
         const offset = element.getBoundingClientRect().bottom - card.getBoundingClientRect().bottom + 12;
         if (offset > 0) card.scrollTop += offset;

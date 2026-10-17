@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { androidApplicationIdentity, verifyAndroidIconSources } from './android-icon-policy.mjs';
 import { readPreviousAndroidPackage, assertAndroidPackageVersion } from './android-package-version.mjs';
 import { androidToolchainEnvironment } from './android-toolchain.mjs';
+import { writeUpdateShell } from './update-shell.mjs';
 import { prepareAndroidRuntime } from './prepare-android-runtime.mjs';
 import { prepareAndroidCss } from './android-css-compat.mjs';
 import { captureSources, platformInputId, recordBuild, recordAndroidSync, recordPackage, assertSourcesUnchanged, assertBuildCurrent, assertAndroidSyncCurrent } from './platform-build-info.mjs';
@@ -70,6 +71,7 @@ for (const [source, relative] of resources) {
   fs.copyFileSync(filename, output);
 }
 run(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'scripts/prepare-android-dictionaries.ts']);
+await writeUpdateShell(root, 'android', 'dist-android', before);
 run(process.execPath, ['node_modules/@capacitor/cli/bin/capacitor', 'sync', 'android']);
 await prepareAndroidRuntime();
 const build = await recordBuild(root, 'android', before);

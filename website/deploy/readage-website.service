@@ -1,0 +1,35 @@
+[Unit]
+Description=ReadAge public website
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=readage
+Group=readage
+WorkingDirectory=/srv/readage/current/website
+EnvironmentFile=/etc/readage/website.env
+ExecStart=/opt/readage-node/bin/node preview.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/readage
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LimitNOFILE=8192
+TasksMax=64
+MemoryMax=768M
+CPUQuota=160%
+
+[Install]
+WantedBy=multi-user.target

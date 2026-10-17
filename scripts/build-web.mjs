@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { captureSources, recordBuild } from './platform-build-info.mjs';
+import { writeUpdateShell } from './update-shell.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const environment = { ...process.env, VITE_APP_PLATFORM: 'web' };
@@ -29,5 +30,6 @@ try {
   for (const filename of ['LICENSE', 'NOTICE']) {
     await fs.copyFile(path.join(root, filename), path.join(root, 'dist/licenses', filename));
   }
+  await writeUpdateShell(root, 'web', 'dist', before);
   await recordBuild(root, 'web', before);
 } catch (error) { console.error(error.message); process.exitCode = 1; }

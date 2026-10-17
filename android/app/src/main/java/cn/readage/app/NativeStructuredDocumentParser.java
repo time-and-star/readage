@@ -41,7 +41,8 @@ public final class NativeStructuredDocumentParser {
 
     /** Both imports share HTML splitting and cleaning; only magazines use the 80-word cutoff and legacy identity metadata. */
     public static JSONObject parse(File source, String filename, String sourceId, int offset, int limit, ImageSink sink, boolean magazine) throws Exception {
-        if (source == null || !source.isFile() || source.length() > MAX_COMPRESSED) throw new IOException("结构化文档超过 64 MiB 或已不存在。");
+        long maximum = filename != null && filename.toLowerCase(Locale.ROOT).endsWith(".epub") ? 128L * 1024 * 1024 : MAX_COMPRESSED;
+        if (source == null || !source.isFile() || source.length() > maximum) throw new IOException("结构化文档超过上限或已不存在：EPUB 最大 128MB，DOCX 最大 64MB。");
         if (filename == null || sourceId == null || offset < 0 || limit < 1 || limit > 80 || sink == null) throw new IOException("文档导入参数无效，每批最多 80 篇。");
         String lower = filename.toLowerCase(Locale.ROOT);
         String format = lower.endsWith(".epub") ? "epub" : lower.endsWith(".docx") ? "docx" : "";
@@ -64,7 +65,7 @@ public final class NativeStructuredDocumentParser {
                     long length = archive.entries.get(image.path).getSize();
                     if (length > 16L * 1024 * 1024) throw new IOException("文档单张插图超过 16MB。");
                     selectedBytes += length;
-                    if (selectedBytes > MAX_COMPRESSED) throw new IOException("本批文档插图超过 64MB，请减少每批篇数。");
+                    if (selectedBytes > maximum) throw new IOException("本批文档插图超过允许上限，请减少每批篇数。");
                 }
             }
             JSONArray selected = new JSONArray();

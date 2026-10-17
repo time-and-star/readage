@@ -92,7 +92,14 @@ function readBounded(file: JSZip.JSZipObject): Promise<Buffer> {
   });
 }
 export async function restoreFullBackup(database: LocalLearningDatabase, profileId: string, revision: number, bytes: Buffer, dataRoot = getDataRoot()) {
-  database.profile(profileId); checkZipSizes(bytes);
+  database.profile(profileId);
+  const backup = await prepareFullBackup(bytes, dataRoot);
+  return database.restore(profileId, revision, backup);
+}
+
+/** Verify and stage immutable attachments without replacing any learning profile. */
+export async function prepareFullBackup(bytes: Buffer, dataRoot = getDataRoot()) {
+  checkZipSizes(bytes);
   // SHA-256 checks below validate records and referenced assets; avoid eager decompression.
   const zip = await JSZip.loadAsync(bytes);
   if (!zip.file('manifest.json') || !zip.file('learning.json')) throw new Error('完整备份缺少数据或清单。');
@@ -126,5 +133,5 @@ export async function restoreFullBackup(database: LocalLearningDatabase, profile
       await writeFileAtomic(item.location.file, item.bytes);
     }
   }
-  return database.restore(profileId, revision, backup);
+  return backup;
 }

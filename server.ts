@@ -1,4 +1,7 @@
 import { createLocalDataRouter } from './server/localDatabase/routes';
+import { createLibraryRouter } from './server/libraryRoutes';
+import { createAppUpdateRouter } from './server/appUpdateRoutes';
+import { openPatchStore, createPatchRouter, patchIndex, patchWatchdog } from './server/patchRoutes';
 import { createOfflineFetch, createOfflineApiBoundary } from './server/offline';
 import { configureMagazineNetwork } from './server/magazines/network';
 import express from 'express';
@@ -67,10 +70,13 @@ dotenv.config();
 
 const offline = process.env.READGE_OFFLINE === '1';
 const manualMagazineSync = process.env.READGE_MAGAZINE_MANUAL_SYNC === '1';
+const libraryNetworkFetch = globalThis.fetch.bind(globalThis);
 configureMagazineNetwork(globalThis.fetch.bind(globalThis), { offline, manualSyncEnabled: manualMagazineSync });
 if (offline) globalThis.fetch = createOfflineFetch(globalThis.fetch.bind(globalThis));
 
 const app = express();
+const patchStore = await openPatchStore(libraryNetworkFetch);
+app.use(patchWatchdog(patchStore));
 if (offline) {
   app.use((_req, res, next) => {
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'self'");
@@ -119,6 +125,9 @@ app.use('/api/local-data', localData.router);
 
 /** Large tutor/import payloads are capped before expensive processing. */
 app.use(express.json({ limit: '2mb' }));
+app.use('/api/library', requireSensitiveApiAccess, createLibraryRouter(libraryNetworkFetch));
+app.use('/api/app-updates', requireSensitiveApiAccess, createAppUpdateRouter(libraryNetworkFetch));
+app.use('/api/app-updates', requireSensitiveApiAccess, createPatchRouter(patchStore));
 app.use('/api/tts', createTtsRouter(requireSensitiveApiAccess));
 app.use('/api/translation', createLocalTranslationRouter(requireSensitiveApiAccess, { startupStatus: localTranslationStartup.status }));
 app.use('/api/magazines/sync', requireSensitiveApiAccess);
@@ -175,7 +184,7 @@ const importFileBody: express.RequestHandler = (req, res, next) => {
       error: {
         code: status === 413 ? 'FILE_TOO_LARGE' : 'IMPORT_FAILED',
         message: status === 413
-          ? '文件超过 64MB，和杂志导入的大小上限相同。'
+          ? '文件超过导入上限：EPUB 最大 128MB，其他格式最大 64MB。'
           : '文件无法读取。',
       },
     });
@@ -1307,6 +1316,7 @@ async function setupServer() {
   process.once('SIGINT', stopLocalTranslation);
   process.once('SIGTERM', stopLocalTranslation);
   httpServer.once('close', () => {
+    patchStore?.close();
     process.removeListener('message', onLocalShutdown);
     process.removeListener('SIGINT', stopLocalTranslation);
     process.removeListener('SIGTERM', stopLocalTranslation);
@@ -1339,16 +1349,17 @@ async function setupServer() {
     });
   } else {
     const distPath = path.join(process.env.READGE_APP_ROOT || process.cwd(), 'dist');
-    const particlesPath = path.join(distPath, 'lab', 'particles');
+    const particlesPath = () => path.join(patchStore?.activeDirectory || distPath, 'lab', 'particles');
     // Particle lab (vocab proficiency + recommendation pipeline visualizer)
     app.use(
       '/lab/particles',
-      express.static(particlesPath, { index: 'index.html', fallthrough: true })
+      (req, res, next) => express.static(particlesPath(), { index: 'index.html', fallthrough: true })(req, res, next)
     );
     app.get(['/lab/particles', '/lab/particles/'], (_req, res) => {
-      res.sendFile(path.join(particlesPath, 'index.html'));
+      res.sendFile(path.join(particlesPath(), 'index.html'));
     });
-    app.use(express.static(distPath));
+    app.get(['/', '/index.html'], patchIndex(patchStore, distPath));
+    app.use((req, res, next) => express.static(patchStore?.activeDirectory || distPath, { index: false })(req, res, next));
     app.get('*', (req, res, next) => {
       if (req.originalUrl.startsWith('/api/')) {
         return res.status(404).json({
@@ -1357,9 +1368,9 @@ async function setupServer() {
         });
       }
       if (req.originalUrl.startsWith('/lab/particles')) {
-        return res.sendFile(path.join(particlesPath, 'index.html'));
+        return res.sendFile(path.join(particlesPath(), 'index.html'));
       }
-      return res.sendFile(path.join(distPath, 'index.html'));
+      return patchIndex(patchStore, distPath)(req, res, next);
     });
   }
 

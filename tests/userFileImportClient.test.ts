@@ -45,6 +45,15 @@ test('explicit cancellation settles before a late result and a new request remai
   assert.equal((await requestUserFileBatch(file, 0, { fetcher: async () => response(batch()) })).offset, 0);
 });
 
+test('large illustrated EPUB requests reach transport while PDF remains bounded to 64MiB', async () => {
+  const large = { name: 'illustrated.epub', size: 80 * 1024 * 1024 } as File;
+  let calls = 0;
+  await requestUserFileBatch(large, 0, { fetcher: async () => { calls++; return response({ ...batch(), format: 'epub' }); } });
+  await assert.rejects(requestUserFileBatch({ ...large, name: 'book.pdf' } as File, 0), /64MB/);
+  await assert.rejects(requestUserFileBatch({ ...large, size: 128 * 1024 * 1024 + 1 } as File, 0), /128MB/);
+  assert.equal(calls, 1);
+});
+
 test('preflight rejects oversized or empty files without making a request', async () => {
   const fetcher = async () => assert.fail('Invalid file must not upload.');
   await assert.rejects(requestUserFileBatch(new File([], 'empty.txt'), 0, { fetcher }), /空/);

@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily ReadAge backup
+
+[Timer]
+OnCalendar=*-*-* 03:20:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

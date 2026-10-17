@@ -1,0 +1,10 @@
+[Unit]
+Description=Consistent ReadAge database and content backup
+After=readage-website.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/readage-backup
+UMask=0077
+Nice=10
+IOSchedulingClass=idle

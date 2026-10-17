@@ -11,6 +11,16 @@ function chapter(offset = 0, count = 2): ImportedFileBatch {
       media: [{ src: `/api/import/images/${'a'.repeat(64)}.png`, alt: 'Harbor', afterParagraphIndex: 0 }] }] };
 }
 
+test('native client accepts illustrated EPUB metadata above 64MiB and keeps other file limits', async () => {
+  let calls = 0;
+  const plugin = { async parseDocument() { calls++; return chapter(); } };
+  const file = { ...picked, bytes: 80 * 1024 * 1024 };
+  await requestNativeDocumentBatch(file, 0, { plugin });
+  await assert.rejects(requestNativeDocumentBatch({ ...file, name: 'book.pdf' }, 0, { plugin }), /64MB/);
+  await assert.rejects(requestNativeDocumentBatch({ ...file, bytes: 128 * 1024 * 1024 + 1 }, 0, { plugin }), /128MB/);
+  assert.equal(calls, 1);
+});
+
 test('native chapter batches use the original private handle and preserve text/media with stable desktop IDs', async () => {
   const calls: unknown[] = [];
   const plugin = { async parseDocument(request: unknown) { calls.push(request); return chapter(); } };

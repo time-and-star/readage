@@ -22,9 +22,9 @@ public class ReadageFilesPlugin extends Plugin {
     private final ExecutorService documents = Executors.newSingleThreadExecutor();
     private final ConcurrentHashMap<String, ParseOperation> parses = new ConcurrentHashMap<>();
     private static final class ParseOperation {
-        final PluginCall call;final AtomicBoolean settled=new AtomicBoolean();volatile Future<?> future;
+        final PluginCall call;final AtomicBoolean settled=new AtomicBoolean();volatile Future<?> future;volatile java.net.HttpURLConnection connection;
         ParseOperation(PluginCall call){this.call=call;}
-        void cancel(){if(settled.compareAndSet(false,true))call.reject("文件准备已取消。");if(future!=null)future.cancel(true);}
+        void cancel(){if(settled.compareAndSet(false,true))call.reject("文件准备已取消。");if(connection!=null)connection.disconnect();if(future!=null)future.cancel(true);}
     }
     private volatile boolean pickerOpen = false;
     private volatile File pendingExport;
@@ -72,7 +72,7 @@ public class ReadageFilesPlugin extends Plugin {
             }
             if (name == null) name = "Imported file";
             name = name.replaceAll("[\\\\/\\x00-\\x1f]", "_"); if (name.length() > 180) name = name.substring(0, 180);
-            String kind = call.getString("kind", "document"); long max = "document".equals(kind) ? NativeFileStore.MAX_FILE : NativeFileStore.MAX_BUNDLE;
+            String kind = call.getString("kind", "document"); long max = "document".equals(kind) ? NativeFileStore.documentMaxBytes(name) : NativeFileStore.MAX_BUNDLE;
             File tmp = File.createTempFile("picked-", ".tmp", resources.imports); long length;
             try {
                 try (InputStream in = getContext().getContentResolver().openInputStream(uri); FileOutputStream out = new FileOutputStream(tmp)) {
@@ -127,6 +127,49 @@ public class ReadageFilesPlugin extends Plugin {
             return null;
         });
         operation.future=task;documents.execute(task);
+    }
+    @PluginMethod public void remoteLibrary(PluginCall call) {
+        String id=call.getString("requestId", "");
+        if(!id.matches("[a-zA-Z0-9-]{1,128}")){call.reject("下载请求标识无效。");return;}
+        ParseOperation operation=new ParseOperation(call);
+        if(parses.putIfAbsent(id,operation)!=null){call.reject("下载请求已存在。");return;}
+        FutureTask<Void> task=new FutureTask<>(()->{
+            File temporary=null;
+            try {
+                if(operation.settled.get())return null;
+                String kind=call.getString("operation", ""), origin=call.getString("serverUrl", "");
+                NativeLibraryHttp.Cancellation cancellation=new NativeLibraryHttp.Cancellation(){
+                    public void connection(java.net.HttpURLConnection value){operation.connection=value;if(value!=null&&operation.settled.get())value.disconnect();}
+                    public boolean cancelled(){return operation.settled.get();}
+                };
+                NativeLibraryHttp.ConnectionFactory factory=url->(java.net.HttpURLConnection)url.openConnection();
+                JSObject result;
+                if(kind.equals("catalog")){
+                    ByteArrayOutputStream out=new ByteArrayOutputStream();
+                    NativeLibraryHttp.transfer(NativeLibraryHttp.url(origin,null),out,2L*1024*1024,-1,null,cancellation,factory);
+                    result=JSObject.fromJSONObject(NativeFileStore.parseJson(out.toByteArray()));
+                }else if(kind.equals("file")){
+                    String sha=call.getString("sha256", ""), name=call.getString("filename", "");
+                    long max=NativeFileStore.documentMaxBytes(name);
+                    long expected=NativeFileStore.integer(call.getData().opt("bytes"),1,max);
+                    java.net.URL url=NativeLibraryHttp.url(origin,sha);
+                    if(name.length()>180||!name.matches("(?i)[^/\\\\\\x00-\\x1f]+\\.(epub|pdf|docx|html?|xhtml|txt|md|text)"))throw new IOException("资料文件名无效。");
+                    NativeFileStore resources=store(); File target=new File(resources.imports,sha);
+                    if(!target.isFile()||target.length()!=expected||!NativeFileStore.hash(target).equals(sha)){
+                        temporary=File.createTempFile("download-", ".tmp", resources.imports);
+                        try(FileOutputStream out=new FileOutputStream(temporary)){
+                            NativeLibraryHttp.transfer(url,out,max,expected,sha,cancellation,factory);out.getFD().sync();
+                        }
+                        if(operation.settled.get())throw new InterruptedIOException("资料下载已取消。");
+                        NativeFileStore.move(temporary,target);
+                    }
+                    result=new JSObject().put("handle",sha).put("sha256",sha).put("bytes",expected).put("name",name);
+                }else throw new IOException("资料请求无效。");
+                if(operation.settled.compareAndSet(false,true))call.resolve(result);
+            }catch(Exception error){if(operation.settled.compareAndSet(false,true))call.reject(error.getMessage(),error);}
+            finally{if(temporary!=null)temporary.delete();parses.remove(id,operation);}
+            return null;
+        });operation.future=task;documents.execute(task);
     }
     @PluginMethod public void cancelDocument(PluginCall call) {
         ParseOperation operation=parses.remove(call.getString("requestId",""));if(operation!=null)operation.cancel();
@@ -301,6 +344,12 @@ public class ReadageFilesPlugin extends Plugin {
         });
     }
     @PluginMethod public void restoreBundle(PluginCall call) {
+        readBundle(call, false);
+    }
+    @PluginMethod public void prepareBundle(PluginCall call) {
+        readBundle(call, true);
+    }
+    private void readBundle(PluginCall call, boolean prepareOnly) {
         run(call, () -> {
             NativeFileStore resources = store(); File staging = new File(getContext().getCacheDir(), "restore-" + UUID.randomUUID());
             try {
@@ -309,6 +358,7 @@ public class ReadageFilesPlugin extends Plugin {
                 // Publish verified immutable files first; restore itself validates records and commits in one SQLite transaction.
                 // Failed restores can leave unreferenced immutable files, but cannot replace the active profile or old attachments.
                 for (String url : NativeFileStore.references(backup)) { String entry = NativeFileStore.assetEntry(url); if (entry != null) resources.publish(entries.get(entry), resources.asset(url)); }
+                if (prepareOnly) return JSObject.fromJSONObject(backup);
                 long revision = NativeFileStore.integer(call.getData(), "revision", 0, 9007199254740991L);
                 return JSObject.fromJSONObject(LocalDatabaseStore.get(getContext()).restore(call.getString("profileId"), revision, backup));
             } finally { NativeFileStore.cleanStaging(staging); }
@@ -320,6 +370,10 @@ public class ReadageFilesPlugin extends Plugin {
             long revision = NativeFileStore.integer(call.getData(), "revision", 0, 9007199254740991L);
             return JSObject.fromJSONObject(LocalDatabaseStore.get(getContext()).restore(call.getString("profileId"), revision, backup));
         });
+    }
+    @PluginMethod public void prepareSnapshot(PluginCall call) {
+        run(call, () -> JSObject.fromJSONObject(LocalDatabaseStore.validateBackup(
+            NativeFileStore.json(store().handle(call.getString("handle")), NativeFileStore.MAX_FILE))));
     }
     @PluginMethod public void installDictionary(PluginCall call) {
         run(call, () -> { ReadageDictionaryStore dictionary = ReadageDictionaryStore.get(getContext()); return JSObject.fromJSONObject(dictionary.install(store().handle(call.getString("handle")))); });

@@ -284,12 +284,12 @@ export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions 
         savedImages.set(key, (async () => {
           const declaredSize = (zip.files[key] as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize;
           if (declaredSize && (declaredSize > 12 * 1024 * 1024
-            || imageBytes + declaredSize > 64 * 1024 * 1024)) return null;
+            || imageBytes + declaredSize > 128 * 1024 * 1024)) return null;
           const data = await zip.files[key].async('nodebuffer');
           options.signal?.throwIfAborted();
           imageBytes += data.length;
           // Bound extracted media independently of the compressed EPUB size.
-          if (data.length > 12 * 1024 * 1024 || imageBytes > 64 * 1024 * 1024) return null;
+          if (data.length > 12 * 1024 * 1024 || imageBytes > 128 * 1024 * 1024) return null;
           return saveImage(data);
         })());
       }

@@ -537,7 +537,7 @@ export interface LocalStorageMigrationTarget {
   getRawEventsByDateRange?(userId: string, wordId: string, startDate: string, endDate: string): Promise<RawWordEvent[]>;
 }
 
-type MigrationItem =
+export type MigrationItem =
   | { kind: 'meta'; key: string; value: unknown }
   | { kind: 'raw'; value: RawWordEvent[] }
   | { kind: 'article'; value: ArticleWordEvidence }
@@ -584,7 +584,7 @@ function hasStrings(value: unknown, fields: string[]): value is Record<string, u
   return isRecord(value) && fields.every((field) => typeof value[field] === 'string');
 }
 
-function parseMigrationItem(key: string, value: unknown): MigrationItem | null {
+export function parseMigrationItem(key: string, value: unknown): MigrationItem | null {
   if (key.startsWith(`${LS_PREFIX}:meta:extension-journal-index:`)) {
     if (!Array.isArray(value) || !value.every(word => typeof word === 'string')) throw new Error('Invalid extension journal index');
     return { kind: 'meta', key: key.slice(`${LS_PREFIX}:meta:`.length), value };
@@ -981,7 +981,7 @@ async function mergeMetadata(target: LocalStorageMigrationTarget, key: string, i
   throw new Error('Unsupported memory metadata');
 }
 
-async function importAndVerifyItem(
+export async function importAndVerifyItem(
   target: LocalStorageMigrationTarget,
   item: MigrationItem,
   preferIncoming = true,

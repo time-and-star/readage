@@ -52,3 +52,6 @@ data/dictionary/imported/
 
 public/readage-extension.zip
 public/readge-extension.zip
+
+# Independent website databases, hosted files and private signing key.
+website/.data/

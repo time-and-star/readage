@@ -272,6 +272,22 @@ public class NativeStructuredDocumentParserTest {
         assertTrue(sink.images.isEmpty());
     }
 
+    @Test public void illustratedEpubOver64MiBParsesButDocxKeepsItsLimit() throws Exception {
+        File source = zip(epubEntries());
+        byte[] padding = new byte[40 * 1024 * 1024];
+        try (ZipOutputStream output = new ZipOutputStream(new FileOutputStream(source))) {
+            Map<String, byte[]> entries = epubEntries(); entries.put("padding-one.bin", padding); entries.put("padding-two.bin", padding);
+            for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
+                ZipEntry item = new ZipEntry(entry.getKey()); java.util.zip.CRC32 crc = new java.util.zip.CRC32(); crc.update(entry.getValue());
+                item.setMethod(ZipEntry.STORED); item.setSize(entry.getValue().length); item.setCompressedSize(entry.getValue().length); item.setCrc(crc.getValue());
+                output.putNextEntry(item); output.write(entry.getValue()); output.closeEntry();
+            }
+        }
+        assertTrue(source.length() > 64L * 1024 * 1024);
+        assertTrue(NativeStructuredDocumentParser.parse(source, "illustrated.epub", SOURCE_ID, 0, 10, new Sink()).getJSONArray("articles").length() > 0);
+        try { NativeStructuredDocumentParser.parse(source, "large.docx", SOURCE_ID, 0, 10, new Sink()); fail("Oversized DOCX accepted"); } catch (IOException expected) {}
+    }
+
     @Test public void emptyDocumentsAndInvalidPaginationDoNotProduceEmptyArticles() throws Exception {
         rejects(docxEntries(document("<w:p><w:r><w:t>  </w:t></w:r></w:p>")), "empty.docx");
         File source = zip(epubEntries());
