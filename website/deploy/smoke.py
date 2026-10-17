@@ -56,7 +56,19 @@ with (base / 'library-files' / largest['sha256']).open('rb') as stream: original
 check('largest EPUB remains available with exact Range bytes', status == 206 and part == original and headers.get('Content-Range', '').endswith('/' + str(largest['bytes'])), largest['bytes'])
 
 status, _, body = request('/api/updates/latest')
-check('update manifest retains published versions', status == 200 and json.loads(body)['releases']['windows']['version'] == '0.1.2')
+manifest = json.loads(body)
+check('update manifest matches delivered complete packages', status == 200 and manifest['releases']['windows']['version'] == '0.1.4'
+      and manifest['releases']['android']['version'] == '1.0.6' and manifest['releases']['android']['build'] == 7)
+status, _, body = request('/downloads/SHA256SUMS.txt')
+check('published installer checksums', status == 200 and b'ReadAge-0.1.4-windows-x64-setup.exe' in body and b'ReadAge-1.0.6-android.apk' in body)
+for filename in ['ReadAge-0.1.4-windows-x64-setup.exe', 'ReadAge-1.0.6-android.apk']:
+    status, headers, body = request('/downloads/' + filename, method='HEAD')
+    check('complete installer HEAD ' + filename, status == 200 and not body and int(headers.get('Content-Length', 0)) > 1_000_000_000)
+    time.sleep(1)
+    status, _, body = request('/downloads/' + filename, headers={'Range': 'bytes=0-1023'})
+    with (Path('/var/lib/readage-downloads') / filename).open('rb') as stream: original = stream.read(1024)
+    check('installer resumable exact Range ' + filename, status == 206 and body == original)
+    time.sleep(1)
 status, headers, body = request('/api/guestbook/session')
 cookie = headers.get('Set-Cookie', '')
 check('guestbook form, PNG captcha and secure cookie', status == 200 and json.loads(body)['challenge']['image'].startswith('data:image/png;base64,') and all(flag in cookie for flag in ['HttpOnly', 'SameSite=Lax', 'Secure']))

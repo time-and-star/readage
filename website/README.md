@@ -1,6 +1,6 @@
 # ReadAge 产品介绍与下载页
 
-2026-10-17：用户已授权官网源码、部署配置和验收脚本，以及 506 本书 / 16 条杂志、资料数据库、空留言数据库及 Cookie 密钥迁移至指定服务器。公网部署与防护正在执行，最新范围及状态见 [本轮部署记录](../docs/website-deployment-2026-10-17.md)；下文“尚未部署”段落保留为历史。部署配置位于 `deploy/`，学习应用及更新签名私钥不部署。
+2026-10-17：官网已上线 `https://readage.xyz`，HTTPS、限流、服务隔离与每日备份已生效；506 本书及原有杂志迁移、全部历史文件校验通过。用户后续授权当前源码三端重建，官网下载已更新为 Windows 0.1.4 / Android 1.0.6（build 7）完整包，实际公开下载和完整摘要通过，未安装新版。最终限定验收与运维见 [本轮部署记录](../docs/website-deployment-2026-10-17.md)；下文“尚未部署 / 待重建”段落保留历史阶段。部署配置位于 `deploy/`，学习应用服务、学习档案和更新签名私钥不部署。
 
 独立官网，前端无需构建，留言与资料分发使用独立 Node.js / SQLite 服务。全屏保留用户指定的画作与蒙版、Georgia 衬线字标、下载和官方 GitHub 图标。下载显示 Windows v0.1.2 / Android v1.0.4，不提供浏览器源码选项。左上三横杠菜单进入致谢、留言板和资料库，正文不占据原首页。官网不访问学习档案，也没有外部字体或 CDN 依赖。
 
@@ -22,14 +22,14 @@ GitHub 图标来自 [GitHub Primer / Octicons](https://github.com/primer/octicon
 
 ## 下载维护
 
-链接固定为实际已发布的 v0.1.2 Release，不能将未发布的本地修改标为可下载版本。2026-10-16 通过 GitHub Release API 只读核对：
+2026-10-17 官网下载已改为正式服务器上的 Windows v0.1.4 / Android v1.0.6（build 7）完整包，已完成三端重建和服务器逐字节 SHA-256 核对，公开下载 HEAD 返回 200；校验清单为 `https://readage.xyz/downloads/SHA256SUMS.txt`。GitHub 仍保留 v0.1.2 历史 Release，本轮不创建新的 GitHub Release。不能把未实际上传的本地修改标为可下载版本。
 
 | 文件 | 字节数 |
 | --- | ---: |
-| ReadAge-0.1.2-windows-x64-setup.exe | 1,275,446,400 |
-| ReadAge-1.0.4-android.apk | 1,737,617,017 |
+| ReadAge-0.1.4-windows-x64-setup.exe | 1,278,530,940 |
+| ReadAge-1.0.6-android.apk | 1,740,885,298 |
 
-页面直接显示每个安装包的版本号，十进制 GB 大小和运行条件放在链接 title 中。按用户要求移除浏览器源码下载；GitHub 入口仍保留。本地浏览器产品本身不变，仅调整独立官网的分发选项。新 Release 发布后同步修改 `index.html` 中的直链、可见版本号、title 版本与大小、运行条件，并对照 Release 的 SHA256SUMS。下载由 GitHub 提供，官网不复制大体积安装包。
+页面直接显示每个安装包的版本号，十进制 GB 大小和运行条件放在链接 title 中。保留 GitHub 源码入口，沿用用户要求的两项安装包下载。后续必须先实际上传完整包并校验可下载，再同步 `index.html`、`releases.json` 和 SHA256SUMS。服务器安装包位于独立只读目录 `/var/lib/readage-downloads/`，NGINX 仅开放约定文件名并提供 HEAD / Range / ETag，带限流和并发保护；该目录不放管理密钥、SSH 私钥或学习档案。
 
 ## 资料分发与未来上线
 
