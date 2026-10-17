@@ -1,12 +1,20 @@
-### 发布进行中：2026-10-17 完整包0.1.6 / Android1.0.8（U25）
+### 最新交付：2026-10-17 完整包0.1.6 / Android1.0.8与官网下载镜像提示（U25）
 
-用户明确授权构建并上传GitHub和官网。Windows0.1.6完整EXE、Android1.0.8 / 9完整APK已生成；Android已同步并编译原生。两端正式模型、四套词典、图标与代码核对通过，APK原签名保持，Windows打包版隔离首次 / 重开及正式资源检查通过；不等同设备安装或听感验收。1,505项应用、107项桌面 / 官网 / 版本构建相关回归、主项目和官网类型通过。本地官网桌面 / 360px镜像提示与无横向溢出已检查。
+用户授权构建并上传GitHub和官网。三端构建完成、Android资源及原生同步完成，严格产物核对通过；Windows开发dist被后续web构建替换属预期，独立完整安装包对应当前源码。sourceId：`e8703c07409cb3dc9de639b85f6a4039459ded59f9a41723bdd0b7ef1e4ec1cd`。官网与GitHub最新版已发布，四项GitHub资产的大小 / SHA256、源码标签与最新版本身份均已核对。GitHub：https://github.com/time-and-star/readage/releases/tag/v0.1.6 。
 
-官网下载区在Windows / Android链接后添加用户指定的新加坡服务器说明与SourceForge镜像入口，固定URL、新窗口打开。当前上传工作进行中，待远端摘要和下载接口核对后发布；SourceForge本轮仅添加入口，不代表该站已上传同版文件。网页生产构建 / 严格核对与最终公网结果将在本节后续补齐。用户日常应用未更新、手机未安装。
+官网下载区在Windows / Android链接之后显示“服务器在新加坡，网速若慢请使用SourceForge镜像”，固定链接 https://sourceforge.net/projects/readage/ ，新窗口打开。实际本地和公网桌面 / 360px无横溢，公网新版本、完整安装包HEAD200 / 首尾64KiB精确206、摘要清单、版本API无bundle和旧补丁410通过。SourceForge本轮仅添加入口，未上传镜像文件。
 
-产物 `build/desktop/ReadAge-0.1.6-windows-x64-setup.exe`（1,277,318,782字节，SHA256 `a27289f657944b1d67b7cc3954daf60c460f2ba684fd3790b85a44fdc37161e3`）；`android/app/build/outputs/apk/debug/app-debug.apk`（1,740,885,790字节，SHA256 `b4b4467246f76c9da23c8bbf0df49b231d9e38254a4febd0fc5459f55c7ebefc`）。证据 `output/full-release-0.1.6/`。
+1,505项应用、107项桌面 / 官网 / 版本与构建相关回归，主项目 / 官网类型通过；Windows完整包内模型、四套词典、图标、代码和安装路径门禁通过，打包版隔离首次 / 重开 / 数据标记保留通过。Android273项正式运行资产、四套词典、16张图标及原签名通过；web真实生产HTTP、隔离SQLite及完整更新入口规则通过。正式声音仅资源 / 合成检查，未重验听感。
 
- 跨端修改与交付
+| 端 | 源码对应 | 测试 | 构建 | 安装包 | 安装 | 设备验收 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 本地浏览器 | 完整包更新策略对应；官网镜像提示已发布 | 共用 / 类型 / 生产HTTP、官网桌面及360px通过 | web0.1.6完成 | 不适用 | 不适用 | 官网限定流程通过；完整学习界面未重验 |
+| Windows | 完整包下载、保存与系统安装桥已对应 | 回归、包内正式资源、隔离首次 / 重开通过 | 完成，独立包严格核对通过 | `build/desktop/ReadAge-0.1.6-windows-x64-setup.exe`，官网与GitHub已发布 | 本轮未安装 | 待新包安装与设备验收 |
+| Android | 共用更新 / 原生完整包与APK资源加载对应 | 回归、签名、正式资源和图标通过 | 1.0.8 / 9前端、同步与原生完成 | `android/app/build/outputs/apk/debug/app-debug.apk`，官网与GitHub已发布 | 本轮未安装 | 待设备验收 |
+
+Windows包1,277,318,782字节，SHA256 `a27289f657944b1d67b7cc3954daf60c460f2ba684fd3790b85a44fdc37161e3`；Android包1,740,885,790字节，SHA256 `b4b4467246f76c9da23c8bbf0df49b231d9e38254a4febd0fc5459f55c7ebefc`。原签名及应用标识不变，学习档案和历史包不删除；Windows仍未Authenticode签名，Android沿用既有调试签名。
+
+证据 `output/full-release-0.1.6/`。官网切换前已备份五份公开源文件及SHA清单，备份 `/srv/readage/update-backups/20261017T144307Z-full-0.1.6`；没有部署或覆盖书库 / 留言数据库、用户学习档案或私钥。SSH暂存连接重置后先只读确认文件状态，再仅执行激活，无重复构建。后续线上 / GitHub结果以本节最新状态为准，下文是历史阶段。
 
 ## 最新状态：2026-10-17 仅保留最新版完整安装包更新（U22–U24）
 

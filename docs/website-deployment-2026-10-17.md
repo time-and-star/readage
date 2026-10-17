@@ -1,5 +1,20 @@
 # 官网部署与安全防护：2026-10-17
 
+## 最新完整包交付：Windows / web0.1.6、Android1.0.8 / 9
+
+用户随后取消小更新方案，并明确授权构建、上传GitHub和官网。两份完整安装包已发布到 [GitHub v0.1.6](https://github.com/time-and-star/readage/releases/tag/v0.1.6) 和 [官网](https://readage.xyz/)；版本API无bundle，旧补丁清单 / 文件通道410。官网下载区在两端链接后新增用户指定的新加坡服务器与 [SourceForge镜像](https://sourceforge.net/projects/readage/) 提示；仅添加镜像入口，本轮未上传SourceForge文件。
+
+| 安装包 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| ReadAge-0.1.6-windows-x64-setup.exe | 1,277,318,782 | `a27289f657944b1d67b7cc3954daf60c460f2ba684fd3790b85a44fdc37161e3` |
+| ReadAge-1.0.8-android.apk | 1,740,885,790 | `b4b4467246f76c9da23c8bbf0df49b231d9e38254a4febd0fc5459f55c7ebefc` |
+
+1,505项应用、107项桌面 / 官网 / 更新与构建相关检查、类型、三端严格快照通过；Windows打包目录与正式资源隔离首次 / 重开通过，Android273运行资源、四套词典、原签名及图标通过；web生产HTTP与隔离SQLite通过。官网完整服务器SHA核对后再切换；公网新版本 / 镜像提示、HEAD200及两包首尾精确64KiB206通过，实际桌面和360px无横溢。GitHub四项资产完整大小及SHA256与本机一致，发布标签指向构建源码 `aa136bdf48d9f64ae55914474e29e1b9531806c0`，标为最新正式版。
+
+本轮sourceId `e8703c07409cb3dc9de639b85f6a4039459ded59f9a41723bdd0b7ef1e4ec1cd`。官网仅更新五份公开源文件和SHA清单，备份 `/srv/readage/update-backups/20261017T144307Z-full-0.1.6`；书库 / 留言数据库、Cookie密钥与用户学习数据没有替换。SSH暂存连接中断后先核实已有完整包，未重复构建。GitHub本机上行较慢，改用限定版本 / 分支 / 固定SHA的GitHub运行器从公开官网取包，使用自带临时令牌，不传本机凭据；草稿尚无标签导致的404修为按固定Release ID上传，未重建产品。
+
+未覆盖安装日常Windows或手机；设备及正式听感待验收。Windows仍无Authenticode签名，Android沿用既有调试签名。证据 `output/full-release-0.1.6/`，实际公网截图 `live-downloads.png`，摘要核对 `github-asset-verification.json` / `public-verification.json`；最终平台状态见docs/platform-parity.md最新交付。下文旧包与限流调整均保留为历史。
+
 ## 下载慢的后续修复与体积测量
 
 安装包独立请求额度改为每 IP 10/s、突发 32、16 路并发 / 全站 64 路，保留全站速率保护。原四路 / 2 次每秒规则使正常八路分段进入 429 重试：同一本地测试修前八路五路被拒，修后八路均 206 且每段与本机原包一致，两端包尾也逐字节一致。NGINX 检查后重载，配置备份为 `/etc/nginx/sites-available/readage.before-download-fix`、`/etc/nginx/readage-limits.before-download-fix`。线上 current 中配置源同步。
