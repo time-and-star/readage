@@ -1,0 +1,50 @@
+name: Upload verified ReadAge 0.1.6 installers
+
+on:
+  push:
+    branches: [codex/full-installer-release-0.1.6]
+    paths: [.github/workflows/publish-full-installer-0.1.6.yml]
+
+permissions: {}
+
+concurrency:
+  group: readage-full-installer-0.1.6
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    if: github.repository == 'time-and-star/readage'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: time-and-star/readage
+    steps:
+      - name: Download, verify and upload the two complete installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          release=$(gh api repos/time-and-star/readage/releases/tags/v0.1.6)
+          test "$(jq -r .draft <<< "$release")" = true
+          test "$(jq -r .target_commitish <<< "$release")" = aa136bdf48d9f64ae55914474e29e1b9531806c0
+          while read -r sha bytes name; do
+            existing=$(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .digest' <<< "$release")
+            if test -n "$existing"; then
+              test "$existing" = "sha256:$sha"
+              continue
+            fi
+            curl --fail --location --proto '=https' --proto-redir '=https' \
+              --retry 5 --retry-all-errors --connect-timeout 30 --max-time 1800 \
+              --speed-time 60 --speed-limit 1024 \
+              --output "$name" "https://readage.xyz/downloads/$name"
+            test "$(stat -c '%s' "$name")" = "$bytes"
+            printf '%s  %s\n' "$sha" "$name" | sha256sum --check
+            gh release upload v0.1.6 "$name"
+            gh api repos/time-and-star/readage/releases/tags/v0.1.6 \
+              --jq ".assets[] | select(.name == \"$name\") | .digest" | grep -Fx "sha256:$sha"
+          done <<'INSTALLERS'
+          a27289f657944b1d67b7cc3954daf60c460f2ba684fd3790b85a44fdc37161e3 1277318782 ReadAge-0.1.6-windows-x64-setup.exe
+          b4b4467246f76c9da23c8bbf0df49b231d9e38254a4febd0fc5459f55c7ebefc 1740885790 ReadAge-1.0.8-android.apk
+          INSTALLERS
