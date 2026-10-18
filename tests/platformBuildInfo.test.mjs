@@ -70,6 +70,7 @@ for (const [label, relative, affected] of [
   ['shared reader', 'src/reader.ts', ['web', 'desktop', 'android']],
   ['shared website artwork', 'website/assets/wisdom.png', ['web', 'desktop', 'android']],
   ['shared update protocol', 'website/update-protocol.mjs', ['web', 'desktop', 'android']],
+  ['installer delta protocol', 'website/installer-delta-protocol.mjs', ['web', 'desktop', 'android']],
   ['Node server', 'server.ts', ['web', 'desktop']],
   ['desktop shell', 'desktop/main.mjs', ['desktop']],
   ['Android Java', 'android/app/src/main/java/cn/readage/app/MainActivity.java', ['android']],

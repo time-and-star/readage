@@ -75,20 +75,20 @@ public class NativeStructuredDocumentParserTest {
         JSONArray articles = result.getJSONArray("articles"); assertEquals(2, articles.length());
         assertEquals("Title & one", articles.getJSONObject(0).getString("title"));
         assertEquals(Arrays.asList("Title & one", "Alpha beta gamma.", "Before after."), paragraphs(articles.getJSONObject(0)));
-        assertEquals("Second fallback", articles.getJSONObject(1).getString("title"));
+        assertEquals("Second chapter", articles.getJSONObject(1).getString("title"));
         assertEquals(Arrays.asList("Second chapter", "Ordered chapter two."), paragraphs(articles.getJSONObject(1)));
-        assertEquals(1, sink.images.size()); assertArrayEquals(PNG, sink.bytes.get(0));
+        assertEquals(2, sink.images.size()); assertArrayEquals(PNG, sink.bytes.get(0));
         assertEquals("Tiny & safe", sink.images.get(0).getString("alt")); assertEquals(2, sink.images.get(0).getInt("afterParagraphIndex"));
-        assertEquals(1, articles.getJSONObject(0).getJSONArray("media").length());
+        assertEquals(2, articles.getJSONObject(0).getJSONArray("media").length());
     }
 
     @Test public void epubPaginationSkipsEmptyChaptersAndOnlyPublishesSelectedImages() throws Exception {
         File source = zip(epubEntries()); Sink first = new Sink(), second = new Sink();
         JSONObject pageOne = NativeStructuredDocumentParser.parse(source, "book.epub", SOURCE_ID, 0, 1, first);
         JSONObject pageTwo = NativeStructuredDocumentParser.parse(source, "book.epub", SOURCE_ID, 1, 1, second);
-        assertEquals(1, pageOne.getInt("nextOffset")); assertEquals(2, pageOne.getInt("totalCount")); assertEquals(1, first.images.size());
+        assertEquals(1, pageOne.getInt("nextOffset")); assertEquals(2, pageOne.getInt("totalCount")); assertEquals(2, first.images.size());
         assertEquals(1, pageTwo.getInt("offset")); assertTrue(pageTwo.isNull("nextOffset")); assertEquals(0, second.images.size());
-        assertEquals("Second fallback", pageTwo.getJSONArray("articles").getJSONObject(0).getString("title"));
+        assertEquals("Second chapter", pageTwo.getJSONArray("articles").getJSONObject(0).getString("title"));
     }
 
     @Test public void magazineSemanticArticlesPreserveLegacyOrdinalsCaptionsAndInlineImagePositions() throws Exception {
@@ -98,11 +98,11 @@ public class NativeStructuredDocumentParserTest {
         File source=zip(entries);Sink sink=new Sink();JSONObject result=NativeStructuredDocumentParser.parse(source,"magazine.epub",SOURCE_ID,0,80,sink,true);JSONArray articles=result.getJSONArray("articles");
         assertEquals(4,articles.length());assertEquals("Cover",articles.getJSONObject(0).getString("legacyTitle"));
         for(int i=0;i<3;i++){assertEquals(1,articles.getJSONObject(i).getInt("sourceOrdinal"));assertEquals(i,articles.getJSONObject(i).getInt("sourceFragmentIndex"));}
-        assertEquals(2,articles.getJSONObject(3).getInt("sourceOrdinal"));assertEquals("Preferred document title",articles.getJSONObject(3).getString("title"));
+        assertEquals(2,articles.getJSONObject(3).getInt("sourceOrdinal"));assertEquals("Secondary heading",articles.getJSONObject(3).getString("title"));
         assertEquals("Harbor remains open.",paragraphs(articles.getJSONObject(3)).get(2));
         JSONArray media=articles.getJSONObject(1).getJSONArray("media");assertEquals(2,media.length());assertEquals("Photo caption",media.getJSONObject(0).getString("caption"));
         assertEquals(1,media.getJSONObject(0).getInt("afterParagraphIndex"));assertEquals(4,media.getJSONObject(1).getInt("afterParagraphIndex"));
-        JSONObject personal=NativeStructuredDocumentParser.parse(source,"personal.epub",SOURCE_ID,0,80,new Sink());assertEquals(3,personal.getInt("totalCount"));assertFalse(personal.getJSONArray("articles").getJSONObject(0).has("sourceOrdinal"));assertEquals("First story",personal.getJSONArray("articles").getJSONObject(0).getString("title"));assertEquals("Second story",personal.getJSONArray("articles").getJSONObject(1).getString("title"));assertEquals("Preferred document title",personal.getJSONArray("articles").getJSONObject(2).getString("title"));
+        JSONObject personal=NativeStructuredDocumentParser.parse(source,"personal.epub",SOURCE_ID,0,80,new Sink());assertEquals(3,personal.getInt("totalCount"));assertFalse(personal.getJSONArray("articles").getJSONObject(0).has("sourceOrdinal"));assertEquals("First story",personal.getJSONArray("articles").getJSONObject(0).getString("title"));assertEquals("Second story",personal.getJSONArray("articles").getJSONObject(1).getString("title"));assertEquals("Secondary heading",personal.getJSONArray("articles").getJSONObject(2).getString("title"));
     }
 
     @Test public void magazineCalibreSplittingAndFilenameTitleFallbackDoNotAdvanceLaterSourceOrdinals() throws Exception {
@@ -131,7 +131,7 @@ public class NativeStructuredDocumentParserTest {
     @Test public void magazineDiscardedCoverAndShortFragmentsDoNotReadTheirBrokenImages() throws Exception {
         Map<String,byte[]> entries=epubEntries();entries.put("BOOK/Text/first.xhtml",text("<html><body><article><h1>Cover</h1><p>"+"reading ".repeat(85)+"</p><img src='../Images/missing-cover.png'/></article><article><h1>Short page</h1><p>Few words.</p><img src='../Images/missing-short.png'/></article><article><h1>Real story</h1><p>"+"reading ".repeat(85)+"</p><img src='../Images/pixel.png'/></article></body></html>"));
         Sink sink=new Sink();JSONArray articles=NativeStructuredDocumentParser.parse(zip(entries),"magazine.epub",SOURCE_ID,0,80,sink,true).getJSONArray("articles");
-        assertEquals(4,articles.length());assertEquals(0,articles.getJSONObject(0).getJSONArray("media").length());assertEquals(0,articles.getJSONObject(1).getJSONArray("media").length());assertEquals(1,articles.getJSONObject(2).getJSONArray("media").length());assertEquals(1,sink.images.size());rejects(entries,"personal.epub");
+        assertEquals(4,articles.length());assertEquals(0,articles.getJSONObject(0).getJSONArray("media").length());assertEquals(0,articles.getJSONObject(1).getJSONArray("media").length());assertEquals(1,articles.getJSONObject(2).getJSONArray("media").length());assertEquals(1,sink.images.size());assertEquals(3,NativeStructuredDocumentParser.parse(zip(entries),"personal.epub",SOURCE_ID,0,80,new Sink()).getInt("totalCount"));
     }
 
     @Test public void docxCaptionStylesAttachOnlyToTheImmediatelyPrecedingImage() throws Exception {
@@ -295,4 +295,51 @@ public class NativeStructuredDocumentParserTest {
             try { NativeStructuredDocumentParser.parse(source, "book.epub", SOURCE_ID, page[0], page[1], new Sink()); fail("Invalid page accepted"); } catch (IOException expected) {}
         }
     }
+    @Test public void completeSemanticArticlesKeepNestedAndSurroundingProseWithoutDuplication() throws Exception {
+        String html="<p>Preface survives.</p><article><h1>Main story</h1><p>Before inset.</p><article><p>Inset survives.</p></article><p>After inset survives.</p></article><p>Epilogue survives.</p>";
+        JSONArray rows=NativeStructuredDocumentParser.parseHtml(html,"Book",SOURCE_ID,0,80,new Sink()).getJSONArray("articles");
+        assertEquals(1,rows.length());List<String> all=new ArrayList<>();for(int i=0;i<rows.length();i++)all.addAll(paragraphs(rows.getJSONObject(i)));
+        assertEquals(Arrays.asList("Preface survives.","Main story","Before inset.","Inset survives.","After inset survives.","Epilogue survives."),all);
+    }
+    @Test public void explicitHiddenNavigationAndGutenbergFurnitureAreRemovedButNotesAndShortPoemsRemain() throws Exception {
+        String html="<h3>A short poem</h3><div role='navigation'>navigation noise</div><p hidden>hidden noise</p><p style='display: none !important'>style noise</p><div class='pg-header'>license noise</div><span class='pagenum'>42</span><p>Two lines survive.</p><aside epub:type='footnote'>A real note survives.</aside>";
+        JSONObject row=NativeStructuredDocumentParser.parseHtml(html,"Fallback",SOURCE_ID,0,80,new Sink()).getJSONArray("articles").getJSONObject(0);
+        assertEquals("A short poem",row.getString("title"));assertEquals(Arrays.asList("A short poem","Two lines survive.","A real note survives."),paragraphs(row));
+    }
+    @Test public void namespacedNcxSplitsAnchorsAndAppendsCrossSpineContinuationWithoutSplittingSubtitles() throws Exception {
+        Map<String,byte[]> entries=epubEntries();
+        entries.put("BOOK/content.opf",text("<opf:package xmlns:opf='http://www.idpf.org/2007/opf'><opf:manifest><opf:item id='one' href='Text/first.xhtml' media-type='application/xhtml+xml'/><opf:item id='two' href='Text/second.xhtml' media-type='application/xhtml+xml'/><opf:item id='ncx' href='toc.ncx' media-type='application/x-dtbncx+xml'/></opf:manifest><opf:spine toc='ncx'><opf:itemref idref='one'/><opf:itemref idref='two'/></opf:spine></opf:package>"));
+        entries.put("BOOK/toc.ncx",text("<ncx><navMap><navPoint><navLabel><text>CHAPTER I</text></navLabel><content src='Text/first.xhtml#one'/><navPoint><navLabel><text>Subtitle</text></navLabel><content src='Text/first.xhtml#subtitle'/></navPoint></navPoint><navPoint><navLabel><text>CHAPTER II</text></navLabel><content src='Text/second.xhtml#two'/></navPoint></navMap></ncx>"));
+        entries.put("BOOK/Text/first.xhtml",text("<html><body><h2 id='one'>CHAPTER I</h2><p>First chapter starts.</p><h3 id='subtitle'>A subtitle stays here</h3><p>First chapter continues.</p></body></html>"));
+        entries.put("BOOK/Text/second.xhtml",text("<html><body><p>Continuation across physical files survives.</p><h2 id='two'>CHAPTER II</h2><p>A short final chapter survives.</p></body></html>"));
+        File file=zip(entries);JSONObject first=NativeStructuredDocumentParser.parse(file,"book.epub",SOURCE_ID,0,1,new Sink());assertEquals(2,first.getInt("totalCount"));assertEquals(1,first.getInt("nextOffset"));
+        JSONObject one=first.getJSONArray("articles").getJSONObject(0);assertEquals("CHAPTER I",one.getString("title"));assertEquals(Arrays.asList("CHAPTER I","First chapter starts.","A subtitle stays here","First chapter continues.","Continuation across physical files survives."),paragraphs(one));
+        JSONObject second=NativeStructuredDocumentParser.parse(file,"book.epub",SOURCE_ID,1,1,new Sink());assertTrue(second.isNull("nextOffset"));assertEquals("CHAPTER II",second.getJSONArray("articles").getJSONObject(0).getString("title"));
+    }
+    @Test public void epub3NavigationAndEmptyChapterMarkersSplitActualReadingChapters() throws Exception {
+        Map<String,byte[]> entries=epubEntries();entries.put("BOOK/content.opf",text("<package><manifest><item id='one' href='Text/first.xhtml' media-type='application/xhtml+xml'/><item id='nav' href='nav.xhtml' properties='nav' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='one'/></spine></package>"));
+        entries.put("BOOK/nav.xhtml",text("<nav epub:type='toc'><ol><li><a href='Text/first.xhtml#first'>CHAPTER I</a></li><li><a href='Text/first.xhtml#second'>CHAPTER II</a></li></ol></nav>"));
+        entries.put("BOOK/Text/first.xhtml",text("<div id='first' class='chapter'>CHAPTER I</div><div class='sidenote'>Into the harbor</div><p>First short chapter.</p><div id='second' class='chapter'>CHAPTER II</div><div class='sidenote'>Home again</div><p>Second short chapter.</p>"));
+        JSONArray chapters=NativeStructuredDocumentParser.parse(zip(entries),"book.epub",SOURCE_ID,0,80,new Sink()).getJSONArray("articles");assertEquals(2,chapters.length());assertEquals("CHAPTER I",chapters.getJSONObject(0).getString("title"));assertTrue(paragraphs(chapters.getJSONObject(0)).contains("First short chapter."));
+        String html="<div class='chapter'>CHAPTER I</div><div class='sidenote'>Into the harbor</div><p>First short chapter.</p><div class='chapter'>CHAPTER II</div><div class='sidenote'>Home again</div><p>Second short chapter.</p>";
+        chapters=NativeStructuredDocumentParser.parseHtml(html,"book",SOURCE_ID,0,80,new Sink()).getJSONArray("articles");assertEquals(2,chapters.length());assertEquals("CHAPTER I — Into the harbor",chapters.getJSONObject(0).getString("title"));
+    }
+    @Test public void docxInheritedChapterAndCaptionStylesRespectExplicitOutlineOverridesAndCycles() throws Exception {
+        String first="<w:p><w:pPr><w:pStyle w:val='InheritedChapter'/></w:pPr><w:r><w:t>Chapter one</w:t></w:r></w:p>";
+        String second="<w:p><w:pPr><w:pStyle w:val='InheritedChapter'/></w:pPr><w:r><w:t>Chapter two</w:t></w:r></w:p>";
+        String body=first+"<w:p><w:r><w:t>First body.</w:t></w:r>"+drawing("rId1")+"</w:p><w:p><w:pPr><w:pStyle w:val='InheritedCaption'/></w:pPr><w:r><w:t>Harbor caption</w:t></w:r></w:p>"+second+"<w:p><w:pPr><w:pStyle w:val='LowerHeading'/></w:pPr><w:r><w:t>Section stays in chapter two</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val='CycleA'/></w:pPr><w:r><w:t>Final body survives.</w:t></w:r></w:p>";
+        Map<String,byte[]> entries=docxEntries(document(body));entries.put("word/styles.xml",text("<w:styles xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:style w:styleId='InheritedChapter'><w:basedOn w:val='Heading1'/></w:style><w:style w:styleId='InheritedCaption'><w:basedOn w:val='Caption'/></w:style><w:style w:styleId='LowerHeading'><w:basedOn w:val='Heading1'/><w:pPr><w:outlineLvl w:val='1'/></w:pPr></w:style><w:style w:styleId='CycleA'><w:basedOn w:val='CycleB'/></w:style><w:style w:styleId='CycleB'><w:basedOn w:val='CycleA'/></w:style></w:styles>"));
+        JSONArray chapters=NativeStructuredDocumentParser.parse(zip(entries),"book.docx",SOURCE_ID,0,80,new Sink()).getJSONArray("articles");assertEquals(2,chapters.length());assertEquals("Harbor caption",chapters.getJSONObject(0).getJSONArray("media").getJSONObject(0).getString("caption"));assertTrue(paragraphs(chapters.getJSONObject(1)).contains("Final body survives."));
+    }
+
+    @Test public void markedInlineAndBlockDropcapsRestoreLettersOnceWithoutReadingGeneralImageAltsAsProse() throws Exception {
+        String html="<h1>Chapter</h1><p><span class='letra'><img alt='N' src='missing.png'/></span>OT all readers forget.</p><div class='figleft'><img alt='A' src='missing.png'/></div><div class='unindent'> \u00a0\u00a0LARGE tree stood here.</div><p><img alt='Map' src='missing.png'/>The map caption is separate.</p>";
+        JSONObject article=NativeStructuredDocumentParser.parseHtml(html,"book",SOURCE_ID,0,80,new Sink()).getJSONArray("articles").getJSONObject(0);
+        assertEquals(Arrays.asList("Chapter","NOT all readers forget.","A LARGE tree stood here.","The map caption is separate."),paragraphs(article));
+    }
+    @Test public void separateRealChaptersWithTheSameNameAreNeverMerged() throws Exception {
+        Map<String,byte[]> entries=epubEntries();entries.put("BOOK/content.opf",text("<package><metadata><title>Interlude</title></metadata><manifest><item id='one' href='Text/first.xhtml' media-type='application/xhtml+xml'/><item id='ncx' href='toc.ncx' media-type='application/x-dtbncx+xml'/></manifest><spine><itemref idref='one'/></spine></package>"));entries.put("BOOK/toc.ncx",text("<ncx><navMap><navPoint><navLabel><text>Interlude</text></navLabel><content src='Text/first.xhtml#a'/></navPoint><navPoint><navLabel><text>Interlude</text></navLabel><content src='Text/first.xhtml#b'/></navPoint></navMap></ncx>"));entries.put("BOOK/Text/first.xhtml",text("<h2 id='a'>Interlude</h2><p>First real chapter ends here.</p><h2 id='b'>Interlude</h2><p>Second real chapter remains separate.</p>"));
+        JSONArray chapters=NativeStructuredDocumentParser.parse(zip(entries),"book.epub",SOURCE_ID,0,80,new Sink()).getJSONArray("articles");assertEquals(2,chapters.length());assertEquals(Arrays.asList("Interlude","First real chapter ends here."),paragraphs(chapters.getJSONObject(0)));
+    }
+
 }

@@ -16,6 +16,12 @@ const packaged = process.argv.includes('--packaged');
 const resources = process.argv.includes('--resources');
 const suppliedBinary = process.argv.includes('--binary') ? process.argv[process.argv.indexOf('--binary') + 1] : undefined;
 const binary = suppliedBinary ? path.resolve(suppliedBinary) : packaged ? path.join(root, 'build/desktop/win-unpacked/readge.exe') : createRequire(import.meta.url)('electron');
+if (packaged) {
+  const bundleRoot = path.join(path.dirname(binary), 'resources');
+  const core = await fs.stat(path.join(bundleRoot, 'installer-assets.json')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  const offline = await fs.stat(path.join(bundleRoot, 'offline-resources/manifest.json')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  if (core && !offline) throw new Error('安装器核心中间目录尚未释放完整离线资源。请使用desktop:pack完整目录，或通过--binary选择完整安装后的程序进行设备验收。');
+}
 const environment = { ...process.env, READGE_DESKTOP_USER_DATA: userData, READGE_LEGACY_ROOT: legacy,
   READGE_DESKTOP_SMOKE: '1', READGE_DESKTOP_SMOKE_REPORT: report, TTS_LOCAL_ENGINE: '', TRANSLATION_LOCAL_ENGINE: '' };
 if (resources) Object.assign(environment, { READGE_DESKTOP_SMOKE_RESOURCES: '1', TTS_JAPANESE_PYTHON: 'Z:\\readge-no-external-python.exe',

@@ -17,7 +17,7 @@ import {
 import {
   toLemma,
 } from './lib/proficiency';
-import { normalizeArticleSessions, STORAGE_KEYS, usePersistentState, usePersistenceError, retryPersistentWrites, mergeChatMessages, readPersistentValue } from './lib/storage';
+import { normalizeArticleSessions, STORAGE_KEYS, usePersistentState, usePersistenceError, retryPersistentWrites, mergeChatMessages, readPersistentValue, updatePersistentValue } from './lib/storage';
 import { readReadingBookmark } from './lib/readingBookmark';
 import { summarizeWordLearningViews } from './lib/wordMemoryDetails';
 import { applyDifficultyFeedback, defaultReadingPreference, normalizeReadingPreference } from './lib/readingPreference';
@@ -59,7 +59,7 @@ import {
   getCachedMagazineRecommendationPool,
 } from './lib/magazineRecommendationPool';
 import { fetchMagazineLemmaIndex } from './lib/magazineLemmaIndex';
-import { getNextImportedArticle } from './lib/userLibrary';
+import { getNextImportedArticle, removeUserLibraryFile } from './lib/userLibrary';
 import { useMagazineReadingSequence } from './lib/useMagazineReadingSequence';
 import { MagazineReadingNavigation } from './components/MagazineReadingNavigation';
 import {
@@ -1186,7 +1186,9 @@ export default function App() {
   const handleAddImportedArticles = (articles: Article[], notice?: string) => {
     if (articles.length === 0) return;
     setShowEnterArticle(false);
-    setFileImportNotice(notice || null);
+    const batchId = articles[0].importBatchId;
+    const keepsOldParse = batchId?.includes('-s2') && history.some(article => article.importBatchId === batchId.replace('-s2', ''));
+    setFileImportNotice([notice, keepsOldParse ? '已按新目录另存这本书，原书和阅读进度仍保留。' : ''].filter(Boolean).join(' ') || null);
     const [first, ...rest] = articles;
     for (const article of rest) {
       if (history.some(existing => existing.id === article.id)) continue;
@@ -1383,7 +1385,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] font-sans flex flex-col overflow-x-clip safe-px">
-      {appUpdates.available && <AppUpdateCard key={`${appUpdates.available.release.version}:${appUpdates.available.release.build}:${appUpdates.available.release.bundle?.revision || 0}`} available={appUpdates.available} onDecline={appUpdates.decline} />}
+      {appUpdates.available && <AppUpdateCard key={`${appUpdates.available.release.version}:${appUpdates.available.release.build}`} available={appUpdates.available} onDecline={appUpdates.decline}
+        installer={appUpdates.installer} collapsed={appUpdates.collapsed} working={appUpdates.working} actionError={appUpdates.actionError}
+        onAction={appUpdates.act} onCollapse={appUpdates.collapse} onExpand={appUpdates.expand} />}
       {appUpdates.notice && <AppUpdateNotice message={appUpdates.notice} onClose={appUpdates.clearNotice} />}
       {isRecommending && (
         <div className="bg-[#FEF3C7] border-b border-[#FDE68A] text-center text-xs text-[#92400E] py-2 px-3 font-medium flex items-center justify-center gap-3 flex-wrap">
@@ -1505,6 +1509,11 @@ export default function App() {
         {route.kind === 'library' && (
           <LibraryScreen
             userArticles={userArticles}
+            onDeleteFile={async batchId => {
+              const chapterIds = userArticles.filter(article => article.importBatchId?.trim() === batchId).map(article => article.id);
+              await updatePersistentValue<Article[]>(STORAGE_KEYS.history, [], previous => removeUserLibraryFile(previous, batchId));
+              for (const id of chapterIds) getArticleImportQueue().cancel(id);
+            }}
             onSelectArticle={(article) =>
               beginReadingSession(article, {
                 source: article.source === 'magazine' ? 'magazine' : 'history',

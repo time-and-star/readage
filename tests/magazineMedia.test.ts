@@ -4,10 +4,11 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import JSZip from 'jszip';
+import { createHash } from 'node:crypto';
 import { parseEpubBuffer, resolveEpubPath } from '../server/magazines/parseEpub';
 import { imageExtension, resolveArticleImage, saveArticleImage } from '../server/magazines/assets';
 import { chaptersToArticles } from '../server/magazines/normalize';
-import { applyMediaEntry, hydrateMagazineMedia } from '../server/magazines/mediaUpgrade';
+import { applyMediaEntry, findMediaEntry, hydrateMagazineMedia, type IssueMediaManifest } from '../server/magazines/mediaUpgrade';
 import type { Article, MagazineIssue } from '../src/types';
 
 const image = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
@@ -102,6 +103,17 @@ describe('binary document asset store', () => {
 });
 
 describe('cached magazine media upgrade', () => {
+  it('matches shifted chapter IDs by unique title and original prose, never by the new ordinal alone', () => {
+    const hash = (text: string) => createHash('sha256').update(text.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase()).digest('hex');
+    const entry = { title: 'Harbor story', textHashes: [hash('Boats return safely.')], media: [{ src: '/harbor.png', afterParagraphIndex: -1 }], anchors: [null] };
+    const manifest: IssueMediaManifest = { version: 2, sourceSha: 'a'.repeat(40), articles: { shifted: entry } };
+    const article = { id: 'old-id', title: 'Harbor story', content: ['Boats return safely.'] } as Article;
+    assert.equal(findMediaEntry(article, manifest), entry);
+    assert.equal(findMediaEntry({ ...article, title: 'Another story' }, manifest), undefined);
+    assert.equal(findMediaEntry({ ...article, content: ['Unrelated prose.'] }, manifest), undefined);
+    assert.equal(findMediaEntry(article, { ...manifest, articles: { shifted: entry, duplicate: entry } }), undefined);
+    assert.equal(findMediaEntry(article, { version: 1, sourceSha: manifest.sourceSha, articles: { 'old-id': entry } }), entry);
+  });
   it('keeps media pending when the source catalog is temporarily unavailable', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'article-media-pending-'));
     try {
@@ -166,5 +178,8 @@ describe('cached magazine media upgrade', () => {
       anchors: ['Original paragraph', 'Deleted paragraph'],
     });
     assert.deepEqual(restored.media, [{ src: '/one.png', afterParagraphIndex: 1 }]);
+    assert.deepEqual(applyMediaEntry({ ...article, content: ['Original paragraph', 'Original paragraph'] }, {
+      media: [{ src: '/ambiguous.png', afterParagraphIndex: 3 }], anchors: ['Original paragraph'],
+    }).media, [], 'an inserted duplicate anchor must not guess a different image position');
   });
 });

@@ -92,14 +92,31 @@ export async function parseDocxBuffer(
   }
   const styleXml = await readXml(zip, 'word/styles.xml');
   options.signal?.throwIfAborted();
-  const styles = new Map<string, { name: string; outline?: string }>();
+  const styles = new Map<string, { name: string; outline?: string; basedOn?: string }>();
   if (styleXml) for (const node of descendants(styleXml)) {
     if (localName(node) !== 'style') continue;
     const name = [...descendants(node)].find(child => localName(child) === 'name');
     const id = attribute(node, 'styleId');
     const outline = [...descendants(node)].find(child => localName(child) === 'outlineLvl');
-    if (id) styles.set(id, { name: attribute(name, 'val') || id, outline: attribute(outline, 'val') });
+    const basedOn = [...descendants(node)].find(child => localName(child) === 'basedOn');
+    if (id) styles.set(id, { name: attribute(name, 'val') || id, outline: attribute(outline, 'val'), basedOn: attribute(basedOn, 'val') });
   }
+  const styleProperties = (id: string) => {
+    const seen = new Set<string>();
+    let outline: string | undefined, title = false, caption = false;
+    while (id && !seen.has(id)) {
+      seen.add(id);
+      const style = styles.get(id);
+      const name = style?.name || id;
+      title ||= /^(title|标题)$/i.test(id) || /^(title|标题)$/i.test(name);
+      caption ||= /^(caption|题注)$/i.test(id) || /^(caption|题注)$/i.test(name);
+      // A derived style's explicit body outline (9) overrides an inherited heading.
+      outline ??= style?.outline;
+      if (outline === undefined && (/^heading\s*1$/i.test(id) || /^(heading\s*1|标题\s*1)$/i.test(name))) outline = '0';
+      id = style?.basedOn || '';
+    }
+    return { outline, title, caption };
+  };
 
   const chapters: ParsedChapter[] = [];
   let current: ParsedChapter = { title: fallbackTitle, paragraphs: [], wordCount: 0, media: [] };
@@ -122,10 +139,10 @@ export async function parseDocxBuffer(
     const text = paragraphText(paragraph, prefix);
     const nodes = [...descendants(paragraph, `${prefix}del`)];
     const styleId = attribute(nodes.find(node => node.name === `${prefix}pStyle`), 'val') || '';
-    const style = styles.get(styleId)?.name || styleId;
-    const isTitle = /^title$/i.test(styleId) || /^(title|标题)$/i.test(style);
-    const outline = attribute(nodes.find(node => node.name === `${prefix}outlineLvl`), 'val') || styles.get(styleId)?.outline;
-    const isChapter = /^heading\s*1$/i.test(styleId) || /^(heading\s*1|标题\s*1)$/i.test(style) || outline === '0';
+    const style = styleProperties(styleId);
+    const isTitle = style.title;
+    const outline = attribute(nodes.find(node => node.name === `${prefix}outlineLvl`), 'val') ?? style.outline;
+    const isChapter = outline === '0';
     if (text && (isTitle || isChapter)) {
       if (isChapter && current.paragraphs.some(item => item !== current.title)) {
         publish();
@@ -133,7 +150,7 @@ export async function parseDocxBuffer(
       } else current.title = text.slice(0, 200);
     }
     if (text) current.paragraphs.push(text);
-    if (text && (/^caption$/i.test(styleId) || /^(caption|题注)$/i.test(style))) {
+    if (text && style.caption) {
       const image = current.media?.[current.media.length - 1];
       if (image && image.afterParagraphIndex === current.paragraphs.length - 2) image.caption = text;
     }

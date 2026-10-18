@@ -1,6 +1,8 @@
 package cn.readage.app;
 
 import android.content.Intent;
+import android.Manifest;
+import android.os.Build;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -15,11 +17,7 @@ import java.util.concurrent.*;
 
 @CapacitorPlugin(name = "ReadageAppUpdates")
 public class ReadageAppUpdatesPlugin extends Plugin {
-    private NativeInstallerUpdate installer;
-    private synchronized NativeInstallerUpdate installer() {
-        if (installer == null) installer = new NativeInstallerUpdate(new File(getContext().getCacheDir(), "installer-updates"), url -> (HttpURLConnection)url.openConnection());
-        return installer;
-    }
+    private NativeInstallerUpdate installer() { return InstallerDownloadService.engine(getContext()); }
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ConcurrentHashMap<String, NativeAppUpdateHttp.Request> requests = new ConcurrentHashMap<>();
     @PluginMethod public void version(PluginCall call) {
@@ -58,11 +56,30 @@ public class ReadageAppUpdatesPlugin extends Plugin {
     }
     @PluginMethod public void downloadInstaller(PluginCall call) {
         try {
-            NativeAppUpdateHttp.Request active = installer().reserve();
-            worker.execute(() -> { try { call.resolve(JSObject.fromJSONObject(installer().download(call.getString("version", ""), active))); } catch (Exception error) { call.reject(error.getMessage(), error); } });
+            installer().begin(call.getString("version", ""),call.getLong("build",0L),call.getString("sha256",""));
+            launchInstallerTask();
+            call.resolve(JSObject.fromJSONObject(installer().status()));
         } catch (Exception error) { call.reject(error.getMessage(), error); }
     }
-    @PluginMethod public void cancelInstaller(PluginCall call) { installer().cancel(); call.resolve(); }
+    private void launchInstallerTask() throws Exception {
+        try {
+            if (Build.VERSION.SDK_INT >= 33 && getContext().checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                getActivity().runOnUiThread(() -> getActivity().requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 3184));
+            }
+            InstallerDownloadService.launch(getContext());
+        } catch (Exception error) { installer().pause("后台下载无法启动，已下载内容保留，请返回应用继续。"); throw error; }
+    }
+    @PluginMethod public void resumeInstaller(PluginCall call) {
+        try { installer().resume(); launchInstallerTask(); call.resolve(JSObject.fromJSONObject(installer().status())); }
+        catch (Exception error) { call.reject(error.getMessage(), error); }
+    }
+    @PluginMethod public void pauseInstaller(PluginCall call) {
+        try { installer().pause(""); call.resolve(JSObject.fromJSONObject(installer().status())); }
+        catch (Exception error) { call.reject(error.getMessage(), error); }
+    }
+    @PluginMethod public void cancelInstaller(PluginCall call) {
+        try { installer().cancel(); call.resolve(); } catch (Exception error) { call.reject(error.getMessage(), error); }
+    }
     @PluginMethod public void installInstaller(PluginCall call) {
         worker.execute(() -> {
             try {
@@ -72,7 +89,7 @@ public class ReadageAppUpdatesPlugin extends Plugin {
                 PackageInfo current = manager.getPackageInfo(getContext().getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES);
                 if (next == null || !current.packageName.equals(next.packageName) || next.getLongVersionCode() <= current.getLongVersionCode()
                     || next.getLongVersionCode() != installer().expectedBuild() || !next.versionName.equals(call.getString("version", ""))
-                    || next.signingInfo == null || !Arrays.equals(current.signingInfo.getApkContentsSigners(), next.signingInfo.getApkContentsSigners())) throw new Exception("安装包身份或签名不匹配，更新已停止。");
+                    || current.signingInfo == null || next.signingInfo == null || !Arrays.equals(current.signingInfo.getApkContentsSigners(), next.signingInfo.getApkContentsSigners())) throw new Exception("安装包身份或签名不匹配，更新已停止。");
                 if (!manager.canRequestPackageInstalls()) {
                     getActivity().startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName())));
                     call.reject("请允许 ReadAge 安装应用更新，然后返回点击“安装更新”。"); return;
@@ -91,5 +108,5 @@ public class ReadageAppUpdatesPlugin extends Plugin {
     @PluginMethod public void activatePatch(PluginCall call) { call.reject("小更新已停用，请使用最新版完整安装包更新。"); }
     @PluginMethod public void cancelPatch(PluginCall call) { call.resolve(); }
     @PluginMethod public void patchReady(PluginCall call) { call.resolve(); }
-    @Override protected void handleOnDestroy() { requests.values().forEach(NativeAppUpdateHttp.Request::cancel); if(installer!=null)installer.cancel(); worker.shutdownNow(); }
+    @Override protected void handleOnDestroy() { requests.values().forEach(NativeAppUpdateHttp.Request::cancel); worker.shutdownNow(); }
 }

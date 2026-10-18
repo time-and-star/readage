@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendPreparedFileBatch, FILE_IMPORT_PREPARATION_LIMIT, requestUserFileBatch, type ImportedFileBatch } from '../src/lib/userFileImport';
+import { appendPreparedFileBatch, fileImportBatchId, FILE_IMPORT_PREPARATION_LIMIT, requestUserFileBatch, type ImportedFileBatch } from '../src/lib/userFileImport';
 
 const sourceId = 'a'.repeat(64);
 const file = new File(['This is a short lesson.'], 'book.html', { type: 'text/html' });
@@ -9,6 +9,14 @@ const batch = (offset = 0, count = 2, totalCount = 4): ImportedFileBatch => ({
   articles: Array.from({ length: count }, (_, index) => ({ title: `Chapter ${offset + index + 1}`, paragraphs: ['A short readable lesson.'] })),
 });
 const response = (value: unknown) => new Response(JSON.stringify({ ok: true, ...value as object }), { headers: { 'Content-Type': 'application/json' } });
+
+test('new chapter maps have separate identities while unchanged PDF and TXT identities remain stable', () => {
+  for (const format of ['epub', 'html', 'docx']) assert.equal(fileImportBatchId(sourceId, format), `file-${sourceId}-s2`);
+  for (const format of ['pdf', 'text']) assert.equal(fileImportBatchId(sourceId, format), `file-${sourceId}`);
+  const prepared = appendPreparedFileBatch(null, file, batch());
+  assert.equal(prepared.articles[0].id, `file-${sourceId}-s2-0`);
+  assert.equal(prepared.articles[0].importBatchId, `file-${sourceId}-s2`);
+});
 
 test('file preparation uploads the selected source and validates the returned chapter cursor', async () => {
   const result = await requestUserFileBatch(file, 2, { fetcher: async (url, options) => {

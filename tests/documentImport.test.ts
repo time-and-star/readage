@@ -68,6 +68,26 @@ test('Word resolves custom heading styles and namespace prefixes', async () => {
   assert.deepEqual((await parseDocxBuffer(buffer, 'Book')).map(chapter => chapter.title), ['First Chapter', 'Second Chapter']);
 });
 
+test('Word inherits chapter styles through basedOn, honours body overrides and tolerates cycles', async () => {
+  const p = (style: string, text: string) => `<w:p><w:pPr><w:pStyle w:val="${style}"/></w:pPr><w:r><w:t>${text}</w:t></w:r></w:p>`;
+  const buffer = await docxFixture(p('custom', 'First Chapter') + p('', 'Short first lesson.')
+    + p('body', 'A body paragraph with a heading parent.') + p('custom', 'Second Chapter')
+    + p('loopA', 'A cyclic style is still readable.'), {
+    styles: `<w:styles>
+      <w:style w:styleId="custom"><w:name w:val="My chapter"/><w:basedOn w:val="middle"/></w:style>
+      <w:style w:styleId="middle"><w:basedOn w:val="Heading1"/></w:style>
+      <w:style w:styleId="Heading1"><w:name w:val="Heading 1"/></w:style>
+      <w:style w:styleId="body"><w:basedOn w:val="custom"/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style>
+      <w:style w:styleId="loopA"><w:basedOn w:val="loopB"/></w:style>
+      <w:style w:styleId="loopB"><w:basedOn w:val="loopA"/></w:style>
+    </w:styles>`,
+  });
+  const chapters = await parseDocxBuffer(buffer, 'Book');
+  assert.deepEqual(chapters.map(chapter => chapter.title), ['First Chapter', 'Second Chapter']);
+  assert.deepEqual(chapters[0].paragraphs, ['First Chapter', 'Short first lesson.', 'A body paragraph with a heading parent.']);
+  assert.deepEqual(chapters[1].paragraphs, ['Second Chapter', 'A cyclic style is still readable.']);
+});
+
 test('TXT recognises Unicode BOMs and common Chinese Windows text instead of dropping letters', async () => {
   const text = 'Market Notes\n\nPrices rose today.';
   for (const buffer of [Buffer.from(`\ufeff${text}`, 'utf16le'), Buffer.from(`\ufeff${text}`, 'utf16le').swap16()]) {

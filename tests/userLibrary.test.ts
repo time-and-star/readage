@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Article } from '../src/types';
-import { filterUserLibrary, getLibraryFileProgress, groupUserLibrary, getNextImportedArticle } from '../src/lib/userLibrary';
+import { filterUserLibrary, getLibraryFileProgress, groupUserLibrary, getNextImportedArticle, removeUserLibraryFile } from '../src/lib/userLibrary';
 
 function article(patch: Partial<Article> & Pick<Article, 'id' | 'title'>): Article {
   return {
@@ -15,6 +15,20 @@ function article(patch: Partial<Article> & Pick<Article, 'id' | 'title'>): Artic
 }
 
 describe('user library shelf', () => {
+  it('deletes every chapter of only the selected import, retaining same-title books and loose articles', () => {
+    const chapters = [0, 1, 83].map(n => article({ id: `file-one-${n}`, title: `Chapter ${n}`, importBatchId: 'one', importBatchTitle: 'Same title' }));
+    const other = article({ id: 'file-two-0', title: 'Chapter 0', importBatchId: 'two', importBatchTitle: 'Same title' });
+    const note = article({ id: 'note', title: 'Note' });
+    const history = [chapters[1], other, chapters[0], note, chapters[2]];
+    assert.deepEqual(removeUserLibraryFile(history, 'one'), [other, note]);
+    assert.deepEqual(removeUserLibraryFile(history, ' one '), [other, note]);
+    assert.deepEqual(removeUserLibraryFile(history, ''), history);
+    assert.deepEqual(removeUserLibraryFile(history, 'missing'), history);
+    assert.equal(history.length, 5, 'the original history is never mutated');
+    assert.equal(removeUserLibraryFile(history, 'one')[0], other);
+    const magazine = article({ id: 'magazine', title: 'Magazine', source: 'magazine', importBatchId: 'one' });
+    assert.deepEqual(removeUserLibraryFile([...history, magazine], 'one'), [other, note, magazine]);
+  });
   it('resumes the latest chapter and advances after completion without counting untouched imports as started', () => {
     const chapters = [
       article({ id: 'novel-0', title: 'One' }),

@@ -26,7 +26,7 @@ export async function compileAndroidUpdateApi(output) {
     path.join(root, 'android/app/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'), ...jars];
   await fs.mkdir(output, { recursive: true });
   const args = ['-encoding', 'UTF-8', '-cp', cp.join(path.delimiter), '-d', output,
-    ...['WebPatchEngine.java', 'NativeAppUpdateHttp.java', 'NativeInstallerUpdate.java', 'ReadageAppUpdatesPlugin.java', 'MainActivity.java'].map(n => path.join(root, 'android/app/src/main/java/cn/readage/app', n))];
+    ...['WebPatchEngine.java', 'NativeAppUpdateHttp.java', 'NativeInstallerUpdate.java', 'InstallerDownloadService.java', 'ReadageAppUpdatesPlugin.java', 'MainActivity.java'].map(n => path.join(root, 'android/app/src/main/java/cn/readage/app', n))];
   const argfile = path.join(output, 'javac-args.txt'); await fs.writeFile(argfile, args.map(s => '"' + s.replaceAll('\\', '/') + '"').join('\n'));
   const result = spawnSync(path.join(env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'javac.exe' : 'javac'), ['@' + argfile], { cwd: root, env, encoding: 'utf8', windowsHide: true });
   process.stdout.write((result.stdout || '') + (result.stderr || ''));

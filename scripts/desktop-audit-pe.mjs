@@ -125,6 +125,9 @@ function fileVersions(filenames) {
 export async function auditDesktopPe({ directory, tool = defaultTool, output, expectedCount } = {}) {
   directory = path.resolve(directory || path.join(root, 'build/desktop/win-unpacked'));
   output = path.resolve(output || path.join(root, 'build/desktop/pe-integrity.json'));
+  const assetMetadata = await fs.stat(path.join(directory, 'resources/installer-assets.json')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  const offlineManifest = await fs.stat(path.join(directory, 'resources/offline-resources/manifest.json')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  if (assetMetadata && !offlineManifest) throw new Error('安装器核心中间目录缺少独立携带的推理组件，不能算完整PE依赖验收。请使用desktop:pack完整目录或完整安装结果。');
   const scanErrors = [];
   const filenames = await nativeFiles(directory, scanErrors);
   const modules = [];

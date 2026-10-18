@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { createHash } from 'node:crypto';
 import type { Article, ArticleMedia, MagazineCatalogIndex, MagazineIssue } from '../../src/types';
 import { issueFileKey, getSourceById } from './config';
 import { parseEpubBuffer } from './parseEpub';
@@ -11,10 +12,12 @@ interface MediaEntry {
   media: ArticleMedia[];
   /** Original paragraph anchors permit safe reuse if cached prose was later edited. */
   anchors: Array<string | null>;
+  title?: string;
+  textHashes?: string[];
 }
 
-interface IssueMediaManifest {
-  version: 1;
+export interface IssueMediaManifest {
+  version: 1 | 2;
   sourceSha: string;
   articles: Record<string, MediaEntry>;
 }
@@ -24,7 +27,21 @@ const pendingIssues = new Map<string, Promise<IssueMediaManifest>>();
 async function readIssueMedia(issue: MagazineIssue, dataRoot: string): Promise<IssueMediaManifest | null> {
   const file = path.join(dataRoot, 'media_by_issue', `${issueFileKey(issue.sourceId, issue.issueLabel)}.json`);
   const cached = await readJsonFile<IssueMediaManifest | null>(file, null);
-  return cached?.version === 1 && cached.sourceSha === issue.remoteSha ? cached : null;
+  return (cached?.version === 1 || cached?.version === 2) && cached.sourceSha === issue.remoteSha ? cached : null;
+}
+
+const normalized = (text: string) => text.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+const textHash = (text: string) => createHash('sha256').update(normalized(text)).digest('hex');
+
+/** Re-splitting a source can shift generated IDs. Match the story before attaching any images. */
+export function findMediaEntry(article: Article, manifest: IssueMediaManifest): MediaEntry | undefined {
+  if (manifest.version === 1) return manifest.articles[article.id];
+  if (typeof article.title !== 'string' || !Array.isArray(article.content)) return undefined;
+  const title = normalized(article.title);
+  const bodyHashes = new Set(article.content.filter(text => normalized(text) !== title).map(textHash));
+  const matches = Object.values(manifest.articles).filter(entry => entry.title && normalized(entry.title) === title
+    && entry.textHashes?.some(hash => bodyHashes.has(hash)));
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 async function getIssueMedia(issue: MagazineIssue, dataRoot: string): Promise<IssueMediaManifest> {
@@ -45,11 +62,13 @@ async function getIssueMedia(issue: MagazineIssue, dataRoot: string): Promise<Is
     const chapters = await parseEpubBuffer(buffer, {
       saveImage: (image) => saveArticleImage(image, dataRoot),
     });
-    const manifest: IssueMediaManifest = { version: 1, sourceSha: sha, articles: {} };
+    const manifest: IssueMediaManifest = { version: 2, sourceSha: sha, articles: {} };
     for (const article of chaptersToArticles(chapters, source, issue.issueLabel)) {
       const media = article.media || [];
       manifest.articles[article.id] = {
         media,
+        title: article.title,
+        textHashes: [...new Set(article.content.filter(text => normalized(text) !== normalized(article.title)).map(textHash))],
         anchors: media.map((image) => image.afterParagraphIndex < 0
           ? null : article.content[image.afterParagraphIndex] || null),
       };
@@ -71,8 +90,9 @@ export function applyMediaEntry(article: Article, entry: MediaEntry): Article {
     if (image.afterParagraphIndex < 0) return [{ ...image, afterParagraphIndex: -1 }];
     const anchor = entry.anchors[index];
     if (!anchor) return [];
+    const matches = article.content.flatMap((text, index) => text === anchor ? [index] : []);
     const afterParagraphIndex = article.content[image.afterParagraphIndex] === anchor
-      ? image.afterParagraphIndex : article.content.indexOf(anchor);
+      ? image.afterParagraphIndex : matches.length === 1 ? matches[0] : -1;
     return afterParagraphIndex >= 0 ? [{ ...image, afterParagraphIndex }] : [];
   });
   return { ...article, media };
@@ -92,7 +112,7 @@ export async function hydrateMagazineMedia(article: Article, dataRoot = getDataR
     const manifest = options.restoreMissing === false || process.env.READGE_OFFLINE === '1'
       ? await readIssueMedia(issue, dataRoot) : await getIssueMedia(issue, dataRoot);
     if (!manifest) return article;
-    const entry = manifest.articles[article.id];
+    const entry = findMediaEntry(article, manifest);
     return entry ? applyMediaEntry(article, entry) : { ...article, media: [] };
   } catch (error) {
     // A missing old source blob must not prevent an existing article from opening.

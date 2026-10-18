@@ -18,6 +18,13 @@ final class NativeAppUpdateHttp {
             connection = value;
         }
         synchronized void cancel() { cancelled = true; if (connection != null) connection.disconnect(); }
+        void cancelAsync() {
+            final HttpURLConnection active;
+            synchronized(this) { cancelled = true; active = connection; }
+            // Some Android HTTP implementations wait for socket IO during disconnect. Do not block a
+            // notification command or dataSync timeout callback on the service's main thread.
+            if(active != null) { Thread close = new Thread(() -> { try { active.disconnect(); } catch (Exception ignored) {} }, "readage-update-disconnect"); close.setDaemon(true); close.start(); }
+        }
         void check(long deadline) throws IOException {
             if (cancelled || Thread.currentThread().isInterrupted()) throw new InterruptedIOException("检查已取消");
             if (System.nanoTime() >= deadline) throw new SocketTimeoutException("检查更新超时");

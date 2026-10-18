@@ -33,7 +33,7 @@ test('layout gate detects Android files in ASAR and unpacked layouts, without ex
   assert.equal(forbiddenDesktopDependency('node_modules/@capacitor/core/package.json'), false);
 });
 
-test('short child TEMP keeps both legacy compiler and formal voice type-map paths below MAX_PATH', () => {
+test('short child TEMP covers the original samples, while the longest 0.1.4 compiler path needs migration', () => {
   const profile = 'C:\\Users\\19891';
   const paths = [
     'resources\\app.asar.unpacked\\node_modules\\@capacitor\\android\\capacitor\\build\\intermediates\\runtime_library_classes_dir\\debug\\bundleLibRuntimeToDirDebug\\com\\getcapacitor\\cordova\\MockCordovaInterfaceImpl.class',
@@ -43,6 +43,12 @@ test('short child TEMP keeps both legacy compiler and formal voice type-map path
     assert.ok(path.win32.join(profile, 'AppData/Local/Temp/nsFFFFF.tmp/old-install', filename).length >= 260);
     assert.ok(windowsUpgradePath(filename, profile).length < 260);
   }
+  const longest = 'resources\\app.asar.unpacked\\node_modules\\@capacitor\\android\\capacitor\\build\\intermediates\\runtime_library_classes_dir\\debug\\bundleLibRuntimeToDirDebug\\com\\getcapacitor\\plugin\\util\\HttpRequestHandler$ResponseType.class';
+  assert.equal(path.win32.join(profile, 'AppData/Local/Programs/readge', longest).length, 262);
+  assert.equal(windowsUpgradePath(longest, profile).length, 264);
+  const migrated = path.win32.join('.ra-android-1', longest.slice('resources\\app.asar.unpacked\\node_modules\\@capacitor\\android\\'.length));
+  assert.ok(path.win32.join(profile, 'AppData/Local/Programs/readge', migrated).length < 260);
+  assert.ok(windowsUpgradePath(migrated, profile).length < 260);
   assert.equal(config.nsis.include, 'desktop/resources/installer.nsh');
   assert.equal(config.nsis.deleteAppDataOnUninstall, false);
   assert.equal(config.afterPack, './desktop/verify-package-layout.cjs');
@@ -58,6 +64,11 @@ test('package gate preserves ordinary models, rejects unsafe future layouts, and
   const result = await verifyDesktopInstallLayout(root, ['/desktop/main.mjs'], { profile: 'C:\\Users\\19891' });
   assert.equal(result.files, 1);
   assert.equal(await fs.readFile(path.join(root, 'resources/model.onnx'), 'utf8'), 'fixture');
+  const virtual = 'resources/offline-resources/workspace/local-data/translation/models/model.gguf';
+  const withAssets = await verifyDesktopInstallLayout(root, [], { profile: 'C:\\Users\\19891', additionalFiles: [virtual] });
+  assert.equal(withAssets.files, 2);
+  await assert.rejects(verifyDesktopInstallLayout(root, [], { profile: 'C:\\Users\\19891', additionalFiles: [`resources/${'long/'.repeat(50)}model.gguf`] }), /路径过长/);
+  await assert.rejects(verifyDesktopInstallLayout(root, [], { additionalFiles: ['resources/../private'] }), /路径无效/);
   await assert.rejects(verifyDesktopInstallLayout(root, ['/node_modules/@capacitor/android/package.json']), /Android/);
   await assert.rejects(verifyDesktopInstallLayout(root, [], { profile: `C:\\Users\\${'a'.repeat(230)}` }), /路径过长/);
   await fs.mkdir(path.join(root, 'resources/app.asar.unpacked/node_modules/@capacitor/android'), { recursive: true });

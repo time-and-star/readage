@@ -12,5 +12,12 @@ function run(name, args) {
 }
 run('javac', ['-encoding', 'UTF-8', '-d', output, 'android/app/src/main/java/cn/readage/app/NativeAppUpdateHttp.java', 'tests/android-document-host/NativeAppUpdateHttpTest.java']);
 run('java', ['-cp', output, 'cn.readage.app.NativeAppUpdateHttpTest']);
+const jsonJar = path.join(root, 'tmp/android-tools/host-tests/lib/android-json.jar');
+run('javac', ['-encoding', 'UTF-8', '-cp', jsonJar, '-d', output,
+  'android/app/src/main/java/cn/readage/app/NativeAppUpdateHttp.java',
+  'android/app/src/main/java/cn/readage/app/NativeInstallerUpdate.java',
+  'tests/android-document-host/NativeInstallerUpdateTest.java']);
+const fixture = await fs.mkdtemp(path.join(output, 'installer-'));
+run('java', ['-cp', [output, jsonJar].join(path.delimiter), 'cn.readage.app.NativeInstallerUpdateTest', fixture]);
 await compileAndroidUpdateApi(output);
 console.log('Android update bridge source compilation passed; no product build or device validation.');

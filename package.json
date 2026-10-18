@@ -2,7 +2,7 @@
     "name": "readge",
     "private": true,
     "license": "Apache-2.0",
-    "version": "0.1.6",
+    "version": "0.1.7",
     "type": "module",
     "scripts": {
         "start:local": "node scripts/start-local.mjs",
@@ -63,6 +63,7 @@
         "platforms:check": "node scripts/platform-build-info.mjs",
         "platforms:test": "node --test tests/platformBuildInfo.test.mjs",
         "updates:prepare": "node scripts/prepare-patch-release.mjs",
+        "updates:prepare-deltas": "node scripts/prepare-installer-deltas.mjs",
         "updates:test-android": "node scripts/test-web-patches.mjs"
     },
     "dependencies": {

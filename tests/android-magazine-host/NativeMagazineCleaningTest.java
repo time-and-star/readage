@@ -112,20 +112,21 @@ public class NativeMagazineCleaningTest {
         assertEquals(title.substring(0,80)+"...",clean.getString("title"));assertEquals("original-long-title-4",clean.getString("id"));assertEquals(title,clean.getJSONArray("content").getString(0));
     }
     @Test public void missingOriginalSameShaUpdateReparsesAndFirstRetainedFragmentOwnsTheOldChapterId() throws Exception {
-        JSONArray oldRows=new JSONArray().put(article("mag:"+ISSUE+":combined-1","Combined old chapter",body(90))).put(article("mag:"+ISSUE+":politics-2","Politics",body(90)));
+        JSONArray oldRows=new JSONArray().put(article("mag:"+ISSUE+":combined-1","Combined old chapter",body(90),body(91))).put(article("mag:"+ISSUE+":politics-2","Politics",body(90)));
         JSONObject issue=seed(oldRows,"epub").put("epubCleaningVersion",2).put("epubStructureVersion",0).put("reparseRequired",true);writeSeed(issue,oldRows);
         store=new NativeMagazineStore(directory,(file,name,offset,limit)->NativeMagazineStore.object("nextOffset",JSONObject.NULL,"articles",new JSONArray()
             .put(part("Cover",1,0,"Cover","Short cover."))
             .put(part("Main story",1,1,"Cover",body(90)))
-            .put(part("Other story",1,2,"Cover",body(90)))
+            .put(part("Other story",1,2,"Cover",body(91)))
             .put(part("Politics",2,0,"Politics",body(90)))),network("same-sha"));sync();
-        JSONArray fresh=rows();assertEquals(3,fresh.length());assertEquals("mag:"+ISSUE+":combined-1",fresh.getJSONObject(0).getString("id"));assertEquals("mag:"+ISSUE+":combined-1-part-3",fresh.getJSONObject(1).getString("id"));assertEquals("mag:"+ISSUE+":politics-2",fresh.getJSONObject(2).getString("id"));
-        JSONObject current=store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0);assertEquals(1,current.getInt("epubStructureVersion"));assertFalse(current.has("reparseRequired"));assertEquals(1,store.status().getJSONObject("lastResult").getInt("importedIssues"));
+        JSONArray fresh=rows();assertEquals(3,fresh.length());assertTrue(fresh.getJSONObject(0).getString("id").startsWith("mag:"+ISSUE+":combined-1-content-"));assertTrue(fresh.getJSONObject(1).getString("id").startsWith("mag:"+ISSUE+":combined-1-content-"));assertEquals("mag:"+ISSUE+":politics-2",fresh.getJSONObject(2).getString("id"));
+        JSONObject current=store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0);assertEquals(NativeMagazineStore.EPUB_STRUCTURE_VERSION,current.getInt("epubStructureVersion"));assertFalse(current.has("reparseRequired"));assertEquals(1,store.status().getJSONObject("lastResult").getInt("importedIssues"));
     }
     @Test public void changedRemoteContentDoesNotStealOldArticleIdsAndUnreadablePayloadCanBeRepaired() throws Exception {
         JSONArray oldRows=new JSONArray().put(article("mag:"+ISSUE+":politics-1","Politics",body(90)));JSONObject issue=seed(oldRows,"epub").put("epubCleaningVersion",2).put("epubStructureVersion",1);writeSeed(issue,oldRows);
         NativeMagazineStore.Parser parser=(file,name,offset,limit)->NativeMagazineStore.object("nextOffset",JSONObject.NULL,"articles",new JSONArray().put(part("Business",1,0,"Business",body(90))));
-        store=new NativeMagazineStore(directory,parser,network("changed-sha"));sync();assertEquals("mag:"+ISSUE+":business-1",rows().getJSONObject(0).getString("id"));store.close();
+        store=new NativeMagazineStore(directory,parser,network("changed-sha"));sync();assertEquals("mag:"+ISSUE+":business-1",rows().getJSONObject(0).getString("id"));
+        JSONObject historical=store.query("/articles/mag:"+ISSUE+":politics-1",Collections.emptyMap());assertTrue(historical.getBoolean("ok"));assertEquals("Politics",historical.getJSONObject("article").getString("title"));assertTrue(new File(directory,OLD).isFile());store.close();
         issue=seed(oldRows,"epub").put("epubCleaningVersion",2).put("epubStructureVersion",0);writeSeed(issue,oldRows);Files.writeString(new File(directory,OLD).toPath(),"broken JSON");
         store=new NativeMagazineStore(directory,parser,network("same-sha"));sync();assertEquals("mag:"+ISSUE+":business-1",rows().getJSONObject(0).getString("id"));assertEquals(1,store.status().getJSONObject("lastResult").getInt("importedIssues"));
     }
@@ -155,7 +156,7 @@ public class NativeMagazineCleaningTest {
         JSONObject payload=new JSONObject(Files.readString(new File(directory,OLD).toPath())).put("originalFile",retainedOriginal.getName());Files.writeString(new File(directory,OLD).toPath(),payload.toString());byte[] oldPayload=Files.readAllBytes(new File(directory,OLD).toPath());
         final int[] parseCalls={0};store=new NativeMagazineStore(directory,(file,name,page,limit)->{parseCalls[0]++;assertEquals(retainedOriginal.getCanonicalFile(),file);return NativeStructuredDocumentParser.parse(file,name,sha,page,limit,(bytes,imageName,alt,after)->NativeMagazineStore.object("src","/api/import/images/fixture.png","alt",alt,"afterParagraphIndex",after),true);},(u,m)->{throw new AssertionError("Full structural cache migration must stay offline");});
         JSONArray cleaned=rows();assertEquals(72,cleaned.length());assertEquals(2,parseCalls[0]);assertArrayEquals(oldPayload,Files.readAllBytes(new File(directory,OLD).toPath()));assertArrayEquals(Files.readAllBytes(epub.toPath()),Files.readAllBytes(retainedOriginal.toPath()));
-        JSONObject migrated=store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0);assertEquals(1,migrated.getInt("epubStructureVersion"));assertEquals("economist",migrated.getString("sourceId"));assertEquals(sha,migrated.getString("documentSourceId"));assertEquals(retainedOriginal.getName(),migrated.getString("originalFile"));
+        JSONObject migrated=store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0);assertEquals(NativeMagazineStore.EPUB_STRUCTURE_VERSION,migrated.getInt("epubStructureVersion"));assertEquals("economist",migrated.getString("sourceId"));assertEquals(sha,migrated.getString("documentSourceId"));assertEquals(retainedOriginal.getName(),migrated.getString("originalFile"));
         assertEquals("mag:"+ISSUE+":politics-4",cleaned.getJSONObject(0).getString("id"));assertEquals("mag:"+ISSUE+":business-5",cleaned.getJSONObject(1).getString("id"));
         assertEquals(1227,cleaned.getJSONObject(0).getInt("wordCount"));assertEquals(750,cleaned.getJSONObject(1).getInt("wordCount"));
         Set<String> originalIds=new HashSet<>();for(int i=0;i<raw.length();i++)originalIds.add(raw.getJSONObject(i).getString("id"));for(int i=0;i<cleaned.length();i++)assertTrue(originalIds.contains(cleaned.getJSONObject(i).getString("id")));
@@ -167,4 +168,27 @@ public class NativeMagazineCleaningTest {
         Files.writeString(Path.of(System.getProperty("readage.magazine.test.root")).getParent().resolve("real-epub-cleaning-report.json"),evidence.toString(2));
         System.out.println("Actual Economist 2026.10.03 host EPUB: 95 raw -> 72 cleaned; politics-4/business-5 IDs retained; 1227/750 words; no network or learning profile access.");
     }
+    private static JSONArray reparsed(JSONArray parsed,JSONArray previous) throws Exception {
+        java.lang.reflect.Method method=NativeMagazineStore.class.getDeclaredMethod("magazineArticles",JSONArray.class,String[].class,String.class,String.class,JSONArray.class);method.setAccessible(true);
+        JSONArray rows=(JSONArray)method.invoke(null,parsed,NativeMagazineStore.source("economist"),ISSUE,"2026.10.03",previous);return NativeMagazineStore.cleanEpubArticles(rows);
+    }
+    @Test public void insertedFrontMatterCannotStealExistingPartIdsAndAmbiguousTitlesReceiveNewStableIds() throws Exception {
+        JSONArray old=new JSONArray().put(article("old-first","First story",body(90)).put("sourceOrdinal",1).put("sourceFragmentIndex",0).put("legacyArticleId","combined-1"))
+            .put(article("old-second","Second story",body(91)).put("sourceOrdinal",1).put("sourceFragmentIndex",1).put("legacyArticleId","combined-1"));
+        JSONArray parsed=new JSONArray().put(part("A new preface",1,0,"Combined","preface ".repeat(90))).put(part("First story",1,1,"Combined",body(90))).put(part("Second story",1,2,"Combined",body(91)));
+        JSONArray current=reparsed(parsed,old);assertEquals(3,current.length());assertNotEquals("old-first",current.getJSONObject(0).getString("id"));assertEquals("old-first",current.getJSONObject(1).getString("id"));assertEquals("old-second",current.getJSONObject(2).getString("id"));
+        assertEquals(current.toString(),reparsed(parsed,current).toString());assertEquals("old-first",old.getJSONObject(0).getString("id"));
+        JSONArray duplicate=new JSONArray().put(article("old-a","Same name","alpha ".repeat(90)).put("sourceOrdinal",1)).put(article("old-b","Same name","beta ".repeat(90)).put("sourceOrdinal",1));
+        JSONObject unmatched=reparsed(new JSONArray().put(part("Same name",1,0,"Combined","new prose ".repeat(90))),duplicate).getJSONObject(0);assertNotEquals("old-a",unmatched.getString("id"));assertNotEquals("old-b",unmatched.getString("id"));assertTrue(unmatched.getString("id").contains("-content-"));
+    }
+
+    @Test public void sameTitleWithRemovedOpeningGetsNewIdWhileTheOldBookmarkStillOpensTheCompleteArticle() throws Exception {
+        String oldId="mag:"+ISSUE+":same-title-1";JSONArray oldRows=new JSONArray().put(article(oldId,"Same title","An original opening remains in history.",body(90)));
+        JSONObject issue=seed(oldRows,"epub").put("epubCleaningVersion",NativeMagazineStore.EPUB_CLEANING_VERSION).put("epubStructureVersion",0);writeSeed(issue,oldRows);
+        store=new NativeMagazineStore(directory,(file,name,offset,limit)->NativeMagazineStore.object("nextOffset",JSONObject.NULL,"articles",new JSONArray().put(part("Same title",1,0,"Same title",body(90)))),network("same-sha"));sync();
+        JSONObject fresh=rows().getJSONObject(0);assertNotEquals(oldId,fresh.getString("id"));assertTrue(fresh.getString("id").contains("-content-"));
+        JSONObject historical=store.query("/articles/"+oldId,Collections.emptyMap());assertTrue(historical.getBoolean("ok"));JSONArray content=historical.getJSONObject("article").getJSONArray("content");assertEquals(2,content.length());assertEquals("An original opening remains in history.",content.getString(0));assertEquals(body(90),content.getString(1));
+        String pointer=store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0).getString("storedFile");store.close();store=new NativeMagazineStore(directory,(file,name,offset,limit)->{throw new AssertionError("A current cache must not reparse");},network("same-sha"));assertEquals(pointer,store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0).getString("storedFile"));assertTrue(store.query("/articles/"+oldId,Collections.emptyMap()).getBoolean("ok"));
+    }
+
 }

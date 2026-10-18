@@ -11,6 +11,8 @@ import {
 } from '../src/lib/platform/localDatabaseTransport';
 import { LOCAL_DATA_HEADER, LOCAL_PROFILE_KEY, type LocalTable } from '../src/lib/localDatabaseProtocol';
 import { initializeWordMemory, submitFsrsReview } from '../src/lib/memoryV2/fsrsIntegration';
+import { removeUserLibraryFile } from '../src/lib/userLibrary';
+import type { Article } from '../src/types';
 
 test('Android build cannot select a PC HTTP database when the native adapter is absent', async t => {
   const artifact = await build({ entryPoints: [fileURLToPath(new URL('../src/lib/platform/localDatabaseTransport.ts', import.meta.url))],
@@ -107,6 +109,7 @@ test('native transport runs existing settings and FSRS transactions against SQLi
         case 'query': return { status: 200, body: body.keys
           ? database.queryKeys(body.profileId, body.table as LocalTable, body.keys)
           : database.query(body.profileId, body.table as LocalTable, body.key, body.prefix) };
+        case 'operation': return { status: 200, body: { committed: database.operationCommitted(body.profileId, body.operationId) } };
         case 'commit': {
           const revision = database.commit(body.profileId, body.revision, body.changes, body.operationId);
           if (loseCommitReply) { loseCommitReply = false; throw new TypeError('native acknowledgement lost'); }
@@ -142,9 +145,19 @@ test('native transport runs existing settings and FSRS transactions against SQLi
   client.getApplicationStorage()!.setItem('english-ai:v2:readingBookmark', '{"articleId":"article","paragraphIndex":3}');
   await client.flushLocalDatabaseWrites();
   assert.equal(database.settings(initial.profile.id)['english-ai:v2:readingBookmark'], '{"articleId":"article","paragraphIndex":3}');
+  const books: Article[] = ['selected', 'other', 'selected'].map((batchId, index) => ({
+    id: `file-${index}`, title: 'Same title', description: '', content: ['Original text'], date: '',
+    source: 'user_input', status: 'In Progress', importBatchId: batchId, importBatchFormat: 'epub',
+  }));
+  await client.commitLocalSetting('english-ai:v2:articles', [], books);
+  await client.commitLocalSetting<Article[]>('english-ai:v2:articles', [], previous => removeUserLibraryFile(previous, 'selected'));
+  assert.deepEqual(JSON.parse(database.settings(initial.profile.id)['english-ai:v2:articles']), [books[1]]);
+  assert.deepEqual(await memory.getMemoryState('u', 'serendipity'), state, 'book deletion preserves learned vocabulary');
+  assert.equal(database.settings(initial.profile.id)['english-ai:v2:readingBookmark'], '{"articleId":"article","paragraphIndex":3}');
   const reopened = new LocalLearningDatabase(filename);
   try {
     assert.deepEqual(reopened.query(initial.profile.id, 'memoryState', 'u|serendipity').rows[0].value, { state });
+    assert.deepEqual(JSON.parse(reopened.settings(initial.profile.id)['english-ai:v2:articles']), [books[1]], 'book deletion survives SQLite reopening');
   } finally { reopened.close(); }
   assert.ok(commands.includes('bootstrap') && commands.includes('commit'));
   assert.equal(httpCalls, 0);

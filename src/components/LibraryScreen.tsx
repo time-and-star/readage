@@ -10,7 +10,7 @@ import {
 } from '../types';
 import { CEFR_LEVELS } from '../data/mockArticles';
 import { getArticleCefrLevel } from '../lib/articleLevel';
-import { filterUserLibrary, getLibraryFileProgress, groupUserLibrary } from '../lib/userLibrary';
+import { filterUserLibrary, getLibraryFileProgress, groupUserLibrary, type UserLibraryFile } from '../lib/userLibrary';
 import { getJsonApiHeaders } from '../lib/apiAuth';
 import { AppPageHeader } from './AppPageHeader';
 import { defaultLibraryView, normalizeLibraryView, type LibraryView } from '../lib/libraryView';
@@ -19,6 +19,10 @@ import { fetchMagazineArticleById } from '../lib/magazineLemmaIndex';
 import { CAN_MANUALLY_SYNC_MAGAZINES, IS_OFFLINE_APP } from '../lib/platform/runtime';
 import type { LibraryEntry } from '../lib/contentLibraryEntry';
 import { LibraryBookCover } from './LibraryBookCover';
+import { LibraryBookTitle } from './LibraryBookTitle';
+import { bookAppearance } from '../../website/book-presentation.js';
+import { LibraryBookButton } from './LibraryBookButton';
+import { DeleteLibraryBookDialog } from './DeleteLibraryBookDialog';
 
 type LibraryTab = 'mine' | 'magazines';
 
@@ -78,6 +82,7 @@ interface LibraryScreenProps {
   userArticles: Article[];
   onSelectArticle: (article: Article) => void | Promise<void>;
   onInsertArticle: (entry?: LibraryEntry) => void;
+  onDeleteFile?: (batchId: string) => Promise<void>;
   onBack: () => void;
   navigation?: React.ReactNode;
 }
@@ -86,6 +91,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   userArticles,
   onSelectArticle,
   onInsertArticle,
+  onDeleteFile,
   onBack,
   navigation,
 }) => {
@@ -95,6 +101,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     return view;
   });
   const [tab, setTab] = useState<LibraryTab>(initialView.tab);
+  const [deleteFile, setDeleteFile] = useState<UserLibraryFile | null>(null);
   const [levelFilter, setLevelFilter] = useState<string>(initialView.levelFilter);
   const [topicQuery, setTopicQuery] = useState(initialView.topicQuery);
   /** L1→L2 inside My articles: which imported file is open. */
@@ -557,7 +564,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
             </nav>
           ) : <p className="library-eyebrow">The reading room</p>}
           <div className="library-heading-line">
-            <div><h1 className={isNested ? 'library-title library-title--detail' : 'library-title'}>{title}</h1>
+            <div><h1 className={isNested ? 'library-title library-title--detail' : 'library-title'}>{activeImportFile ? <LibraryBookTitle title={title} kind={activeImportFile.articles[0].distribution?.kind} /> : title}</h1>
               {activeImportFile && fileProgress && <p className="library-heading-meta">{activeImportFile.articles.length} {fileProgress.unit}<span>·</span>已读 {fileProgress.completedCount} {fileProgress.unit}</p>}
               {selectedIssue && <p className="library-heading-meta">{activeSource?.displayName}
                 {isArticleSource && publicationDate(selectedIssue.publishedAt) && <><span>·</span>{publicationDate(selectedIssue.publishedAt)}</>}
@@ -609,17 +616,24 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                     const progress = getLibraryFileProgress(item.file);
                     const volume = item.file.articles[0].distribution;
                     const bookTitle = volume?.title || item.file.title;
-                    return <button type="button" key={item.file.id} className="ra-book-choice library-owned-book" aria-label={`打开书籍：${bookTitle}`} onClick={() => {
+                    const caption = bookAppearance({ title: bookTitle, kind: volume?.kind }).originalTitle || bookTitle;
+                    return <div key={item.file.id} className="library-owned-volume"><LibraryBookButton className="ra-book-choice library-owned-book" aria-label={`打开书籍：${bookTitle}`}
+                      title={onDeleteFile ? '点击打开目录；长按或右键删除书本' : undefined}
+                      aria-haspopup={onDeleteFile ? 'dialog' : undefined} onDelete={onDeleteFile ? () => setDeleteFile(item.file) : undefined} onOpen={() => {
                       setActiveImportBatchId(item.file.id); setTopicQuery(''); setError(null);
                     }}>
                       <LibraryBookCover id={volume?.resourceId || item.file.id} title={bookTitle} kind={volume?.kind} />
-                      <span className="ra-book-caption">{bookTitle}</span><span className="ra-book-meta">
+                      <span className="ra-book-caption">{caption}</span><span className="ra-book-meta">
                         <span>{item.file.articles.length} {progress.unit}</span>
                         {progress.started && <span>已读 {progress.completedCount} / {item.file.articles.length}</span>}
                         {!progress.completed && progress.started && <span>继续第 {progress.resumeNumber} {progress.unit}</span>}
                       </span>{progress.started && <span className="library-file-progress" aria-hidden="true"><span style={{ width: `${progress.completedCount / item.file.articles.length * 100}%` }} /></span>}
-                      <span className="ra-book-state">{progress.completed ? '已读完 · 查看目录 →' : progress.started ? '继续阅读 →' : '打开目录 →'}</span>
-                    </button>;
+                      <span className="ra-book-state">{progress.completed ? '已读完 · 查看目录 →' : '查看目录 →'}</span>
+                    </LibraryBookButton>
+                    {progress.started && !progress.completed && progress.resumeArticle && <button type="button" className="library-resume-book"
+                      aria-label={`继续阅读：${bookTitle}`} onClick={() => { void onSelectArticle(progress.resumeArticle!); }}>
+                      继续阅读<ArrowUpRight size={13} aria-hidden="true" />
+                    </button>}</div>;
                   }
                   const level = getArticleCefrLevel(item.article);
                   const number = activeImportFile ? activeImportFile.articles.findIndex((article) => article.id === item.article.id) + 1 : index + 1;
@@ -693,6 +707,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
           </details>
         </footer>}
       </div>
+      {deleteFile && onDeleteFile && <DeleteLibraryBookDialog title={deleteFile.title} count={deleteFile.articles.length}
+        onCancel={() => setDeleteFile(null)} onDelete={() => onDeleteFile(deleteFile.id)} />}
     </div>
   );
 };

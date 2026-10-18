@@ -4,7 +4,7 @@ import { OFFICIAL_LIBRARY_ORIGIN, libraryEditionState, nextLibraryOffset, resolv
 import type { Article } from '../src/types';
 import type { LibraryItem } from '../src/lib/contentLibraryProtocol';
 const item: LibraryItem = { id: 'book:reading', title: 'Reading', filename: 'reading.epub', sha256: 'a'.repeat(64), kind: 'book', language: 'en', bytes: 1234, updatedAt: '2026-10-16T00:00:00Z', downloadPath: '/api/library/files/' + 'a'.repeat(64) };
-const chapter = (index: number, totalCount = 2): Article => ({ id: `file-${item.sha256}-${index}`, title: `Chapter ${index}`, content: ['A complete paragraph.'], date: '', description: '', keyWords: [], source: 'user_input', status: 'Completed', importBatchId: `file-${item.sha256}`, distribution: { resourceId: item.id, title: item.title, serverUrl: 'https://library.example', version: item.sha256, totalCount } });
+const chapter = (index: number, totalCount = 2): Article => ({ id: `file-${item.sha256}-s2-${index}`, title: `Chapter ${index}`, content: ['A complete paragraph.'], date: '', description: '', keyWords: [], source: 'user_input', status: 'Completed', importBatchId: `file-${item.sha256}-s2`, distribution: { resourceId: item.id, title: item.title, serverUrl: 'https://library.example', version: item.sha256, totalCount } });
 test('installed clients resolve the embedded official address without asking users; development loopback never becomes an Android default', () => {
   assert.equal(resolveLibraryServer({ configured: 'https://read.example/' }), 'https://read.example');
   assert.equal(resolveLibraryServer({ configured: 'https://read.example', android: true }), 'https://read.example');
@@ -46,4 +46,15 @@ test('continued import starts at the first missing chapter instead of preparing 
   assert.equal(nextLibraryOffset(item, [chapter(1)]), 0);
   assert.equal(nextLibraryOffset(item, [chapter(0), chapter(2)]), 1);
   assert.equal(nextLibraryOffset({ ...item, language: 'fr' }, [chapter(0)]), 0);
+});
+
+test('a reorganised EPUB is a separate edition and never resumes at the old chapter offset', () => {
+  const old = [0, 1].map(index => ({ ...chapter(index), id: `file-${item.sha256}-${index}`, importBatchId: `file-${item.sha256}` }));
+  const snapshot = structuredClone(old);
+  assert.equal(libraryEditionState(item, old), 'revision');
+  assert.equal(nextLibraryOffset(item, old), 0);
+  assert.equal(libraryEditionState(item, [...old, chapter(0)]), 'partial');
+  assert.equal(nextLibraryOffset(item, [...old, chapter(0)]), 1);
+  assert.equal(libraryEditionState(item, [...old, chapter(0), chapter(1)]), 'saved');
+  assert.deepEqual(old, snapshot);
 });

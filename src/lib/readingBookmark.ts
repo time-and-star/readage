@@ -1,7 +1,7 @@
-import { useEffect, type RefObject } from 'react';
+import { useLayoutEffect, type RefObject } from 'react';
 import type { Article } from '../types';
 import { classifyArticleParagraph } from './articlePresentation';
-import { readStorage, STORAGE_KEYS, updatePersistentValue } from './storage';
+import { readPersistentValue, readStorage, STORAGE_KEYS, updatePersistentValue } from './storage';
 import { getApplicationStorage } from './localDatabase';
 import { readingContentVersion } from './readingProgress';
 
@@ -67,7 +67,10 @@ function browserStorage(): Storage | undefined {
 }
 
 export function readReadingBookmarks(storage = browserStorage()): ReadingBookmarkCollection {
-  const bookmarks = readStorage(storage, STORAGE_KEYS.readingBookmarks, {}, normalizeReadingBookmarks);
+  // A quick return to the reader must include writes still waiting for SQLite or the tab lock.
+  const bookmarks = storage && storage === browserStorage()
+    ? readPersistentValue(STORAGE_KEYS.readingBookmarks, {}, normalizeReadingBookmarks)
+    : readStorage(storage, STORAGE_KEYS.readingBookmarks, {}, normalizeReadingBookmarks);
   const legacy = readStorage(storage, STORAGE_KEYS.readingBookmark, null, normalizeReadingBookmark);
   return mergeReadingBookmark(bookmarks, legacy);
 }
@@ -93,11 +96,14 @@ export function useReadingBookmark(
 ) {
   const content = article?.content;
   const title = article?.title;
-  useEffect(() => {
+  useLayoutEffect(() => {
     let restored = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let frame = 0;
     let captureFrame = 0;
+    let layoutFrame = 0;
+    let disposed = false;
+    let userInteracted = false;
     let lastSnapshot: ReadingBookmark | null = null;
     const contentVersion = content && title !== undefined ? readingContentVersion({ content, title }) : undefined;
     const paragraphs = () => [...(root.current?.querySelectorAll<HTMLElement>('[data-reading-paragraph]') ?? [])]
@@ -120,22 +126,41 @@ export function useReadingBookmark(
       if (lastSnapshot) void saveReadingBookmark(lastSnapshot).catch(() => {});
     };
     const bookmark = readReadingBookmark(articleId);
+    const restore = () => {
+      const items = paragraphs();
+      const matchesArticle = bookmark?.articleId === articleId;
+      const anchor = matchesArticle && content && title !== undefined
+        ? resolveReadingBookmarkAnchor(bookmark, { content, title }) : null;
+      const usable = matchesArticle && (!(content && title !== undefined) || anchor !== null);
+      const paragraphIndex = anchor?.paragraphIndex ?? bookmark?.paragraphIndex;
+      const item = !usable ? undefined : bookmark.anchorVersion === 2 || anchor
+        ? items.find(element => Number(element.dataset.readingParagraph) === paragraphIndex)
+        : items[bookmark.paragraphIndex];
+      const fraction = anchor?.fraction ?? bookmark?.fraction ?? 0;
+      const rect = item?.getBoundingClientRect();
+      window.scrollTo({ top: rect ? window.scrollY + rect.top + rect.height * fraction - 130 : 0, behavior: 'instant' });
+      restored = true;
+      save();
+    };
+    // Illustrations and fonts can arrive after the initial two frames. Keep the
+    // saved paragraph in place until the reader takes control of the page.
+    const correctLayout = () => {
+      if (disposed || userInteracted || !restored || !bookmark || layoutFrame) return;
+      layoutFrame = requestAnimationFrame(() => { layoutFrame = 0; if (!disposed && !userInteracted) restore(); });
+    };
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(correctLayout);
+    const element = root.current;
+    if (element) observer?.observe(element);
+    element?.addEventListener('load', correctLayout, true);
+    void document.fonts?.ready.then(correctLayout);
+    const onInteraction = () => { userInteracted = true; observer?.disconnect(); };
+    const onKey = (event: KeyboardEvent) => {
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) onInteraction();
+    };
     frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
-        const items = paragraphs();
-        const matchesArticle = bookmark?.articleId === articleId;
-        const anchor = matchesArticle && content && title !== undefined
-          ? resolveReadingBookmarkAnchor(bookmark, { content, title }) : null;
-        const usable = matchesArticle && (!(content && title !== undefined) || anchor !== null);
-        const paragraphIndex = anchor?.paragraphIndex ?? bookmark?.paragraphIndex;
-        const item = !usable ? undefined : bookmark.anchorVersion === 2 || anchor
-          ? items.find(element => Number(element.dataset.readingParagraph) === paragraphIndex)
-          : items[bookmark.paragraphIndex];
-        const fraction = anchor?.fraction ?? bookmark?.fraction ?? 0;
-        const rect = item?.getBoundingClientRect();
-        window.scrollTo({ top: rect ? window.scrollY + rect.top + rect.height * fraction - 130 : 0, behavior: 'instant' });
-        restored = true;
-        save();
+        if (!userInteracted) restore();
+        else { restored = true; save(); }
       });
     });
     const onScroll = () => {
@@ -146,15 +171,29 @@ export function useReadingBookmark(
     const onVisibility = () => { if (document.visibilityState === 'hidden') save(); };
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('pagehide', save);
+    window.addEventListener('resize', correctLayout);
+    window.addEventListener('wheel', onInteraction, { passive: true });
+    window.addEventListener('touchstart', onInteraction, { passive: true });
+    window.addEventListener('pointerdown', onInteraction, { passive: true });
+    document.addEventListener('keydown', onKey);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
-      // The DOM may already be detached; retain the last captured position on SPA navigation.
+      // Layout cleanup captures the final position before React detaches the paragraphs.
       save();
+      disposed = true;
+      observer?.disconnect();
+      element?.removeEventListener('load', correctLayout, true);
       cancelAnimationFrame(frame);
       cancelAnimationFrame(captureFrame);
+      cancelAnimationFrame(layoutFrame);
       if (timer) clearTimeout(timer);
       window.removeEventListener('scroll', onScroll);
       window.removeEventListener('pagehide', save);
+      window.removeEventListener('resize', correctLayout);
+      window.removeEventListener('wheel', onInteraction);
+      window.removeEventListener('touchstart', onInteraction);
+      window.removeEventListener('pointerdown', onInteraction);
+      document.removeEventListener('keydown', onKey);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [articleId, root, content, title]);

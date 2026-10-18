@@ -27,6 +27,7 @@ let backend;
 let voice;
 let origin;
 let stopping = false;
+let readyToQuit = false;
 let log;
 let installerUpdates;
 let installerToLaunch;
@@ -37,29 +38,48 @@ else {
   app.on('second-instance', () => { if (window?.isMinimized()) window.restore(); (window || splash)?.focus(); });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', event => {
-    if (stopping) return;
+    if (readyToQuit) return;
     event.preventDefault();
+    if (stopping) return;
     stopping = true;
+    const installing = installerToLaunch;
+    installerToLaunch = undefined;
+    const closingWindow = window && !window.isDestroyed() ? window : undefined;
+    const wasEnabled = closingWindow?.isEnabled();
+    closingWindow?.setEnabled(false);
+    const keepOpen = () => {
+      stopping = false;
+      if (closingWindow && !closingWindow.isDestroyed()) { closingWindow.setEnabled(wasEnabled); closingWindow.focus(); }
+    };
     void (async () => {
       try {
         if (window && !window.isDestroyed()) await window.webContents.executeJavaScript('window.__READGE_FLUSH_LOCAL_DATA__?.()');
       } catch (error) {
-        stopping = false;
+        keepOpen();
         log?.write(`[desktop] save before close failed: ${error.message}\n`);
         dialog.showErrorBox('学习档案尚未保存', '部分设置尚未确认保存，窗口会保持打开。请稍候重试关闭，或先导出备份。');
         return;
       }
-      await Promise.all(ownChildren.map(child => stopDesktopChild(child)));
-      if (installerToLaunch) {
-        try {
-          // Recheck after the reader has saved and before invoking a fixed verified EXE.
-          const filename = await installerUpdates.verifiedInstaller(installerToLaunch);
-          const child = spawn(filename, [], { detached: true, stdio: 'ignore', windowsHide: true });
-          await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
-          child.unref();
-        } catch (error) { dialog.showErrorBox('安装更新未启动', error.message); }
+      // Finish the current file write before exiting; the pinned task can resume on reopen.
+      try { await installerUpdates?.pause(); }
+      catch (error) {
+        keepOpen();
+        dialog.showErrorBox('更新进度尚未保存', '窗口会保持打开，请稍候重试退出。' + error.message);
+        return;
       }
+      if (installing) {
+        try {
+          // Keep the current backend and reader alive until the verified EXE actually spawns.
+          await installerUpdates.launchInstaller(installing, spawn);
+        } catch (error) {
+          keepOpen();
+          dialog.showErrorBox('安装更新未启动', '当前应用会保持打开，已下载的安装包保留。' + error.message);
+          return;
+        }
+      }
+      await Promise.all(ownChildren.map(child => stopDesktopChild(child)));
       log?.end();
+      readyToQuit = true;
       app.quit();
     })();
   });
@@ -215,18 +235,25 @@ async function start() {
   const environment = createDesktopEnvironment({ appRoot, dataRoot: workspace, settings, port: savedPort, ttsPort, translationPort });
   if (resources) environment.READGE_BUNDLED_RESOURCES = '1';
   secureSession(environment.APP_API_TOKEN);
-  installerUpdates = new InstallerUpdate(path.join(app.getPath('userData'), 'installer-updates'));
+  installerUpdates = new InstallerUpdate(path.join(app.getPath('userData'), 'installer-updates'), fetch, {
+    baselineSources: process.env.LOCALAPPDATA ? { nsis: path.join(process.env.LOCALAPPDATA, 'readge-updater', 'installer.exe') } : {},
+  });
   const trustedUpdateRequest = event => {
     if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
       || new URL(event.senderFrame.url).origin !== origin) throw new Error('更新请求来源无效。');
   };
-  for (const action of ['status', 'download', 'cancel', 'install']) ipcMain.handle('readage-installer-' + action, async (event, version) => {
+  for (const action of ['status', 'download', 'pause', 'resume', 'cancel', 'install']) ipcMain.handle('readage-installer-' + action, async (event, version, expected) => {
     trustedUpdateRequest(event);
     if (action === 'status') return installerUpdates.status();
+    if (stopping) throw new Error('应用正在退出，请稍候。');
     if (action === 'cancel') return installerUpdates.cancel();
+    if (action === 'pause') return installerUpdates.pause();
+    if (action === 'resume') return installerUpdates.resume();
     if (typeof version !== 'string' || !/^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(version)) throw new Error('更新版本无效。');
-    if (action === 'download') return installerUpdates.download(version);
-    await installerUpdates.verifiedInstaller(version); installerToLaunch = version;
+    if (action === 'download') return installerUpdates.start(version, expected);
+    const status = await installerUpdates.status();
+    if (status.phase !== 'ready' || status.version !== version) throw new Error('请先下载并校验此版本。');
+    installerToLaunch = version;
     setImmediate(() => app.quit()); return { ok: true };
   });
   updateProgress('正在启动本机阅读服务…');
@@ -255,7 +282,7 @@ async function start() {
   window.webContents.setWindowOpenHandler(({ url }) => { openExternalLink(url); return { action: 'deny' }; });
   window.webContents.on('will-navigate', (event, url) => { try { if (new URL(url).origin !== origin) { event.preventDefault(); openExternalLink(url); } } catch { event.preventDefault(); } });
   window.webContents.on('will-attach-webview', event => event.preventDefault());
-  window.on('close', event => { if (!stopping) { event.preventDefault(); app.quit(); } });
+  window.on('close', event => { if (!readyToQuit) { event.preventDefault(); if (!stopping) app.quit(); } });
   await window.loadURL(origin);
   window.show();
   splash.close();

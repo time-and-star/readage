@@ -6,6 +6,7 @@ import { readBundledResourceManifest, resourceFileHash } from '../desktop/bundle
 import { icoFrames, peIconGroups, matchingBrandIcon } from '../desktop/icon-resources.mjs';
 import { verifyDesktopDictionaryBundle } from './desktop-bundle-dictionaries.mjs';
 import { verifyDesktopInstallLayout } from '../desktop/install-layout.mjs';
+import { verifyInstallerCoreAssets } from '../desktop/installer-payload.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const supplied = process.argv.includes('--directory') ? process.argv[process.argv.indexOf('--directory') + 1] : undefined;
 const directory = supplied ? path.resolve(supplied) : path.join(root, 'build/desktop/win-unpacked');
@@ -33,6 +34,17 @@ try {
   }
   const windowsIconFrames = icoFrames(await fs.readFile(path.join(root, 'desktop/resources/readge.ico')));
   if (!matchingBrandIcon(peIconGroups(await fs.readFile(path.join(directory, 'readge.exe'))), windowsIconFrames)) throw new Error('Windows executable default icon does not match the complete readge brand ICO.');
+  const coreMetadata = await fs.lstat(path.join(resources, 'installer-assets.json')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  const physicalOffline = await fs.lstat(path.join(resources, 'offline-resources')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  if (coreMetadata && !physicalOffline) {
+    if (!process.argv.includes('--installer-core')) throw new Error('这是安装器核心中间目录，离线资源由NSIS独立携带；不能作为完整可运行目录验收。请使用--installer-core单独核对输入，或在完整安装后验证。');
+    const assets = await verifyInstallerCoreAssets({ directory, workspace: root });
+    const result = { ok: true, directory, installLayout, installerCoreOnly: true, currentCodeVerified: true,
+      independentlyVerifiedAssetInputs: assets, fullInstalledOfflineAcceptance: 'pending', checkedAt: new Date().toISOString() };
+    await fs.writeFile(path.join(root, 'build/desktop/installer-core-verification.json'), `${JSON.stringify(result, null, 2)}\n`);
+    console.log(JSON.stringify(result, null, 2));
+    process.exit(0);
+  }
   const resourceDirectory = path.join(resources, 'offline-resources');
   const manifest = await readBundledResourceManifest(resourceDirectory);
   for (const file of manifest.files) {

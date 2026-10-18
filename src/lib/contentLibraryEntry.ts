@@ -1,5 +1,6 @@
 import type { Article } from '../types';
 import { libraryOrigin, type LibraryItem } from './contentLibraryProtocol';
+import { fileImportBatchId } from './userFileImport';
 
 export const OFFICIAL_LIBRARY_ORIGIN = 'https://readage.xyz';
 
@@ -28,13 +29,16 @@ export function initialLibraryServer(): string {
   return resolveLibraryServer({ saved, configured: String(environment?.VITE_READAGE_LIBRARY_URL || ''), development: environment?.DEV === true, android: environment?.VITE_APP_PLATFORM === 'android' });
 }
 export function libraryEditionState(item: LibraryItem, history: readonly Article[]): 'new' | 'revision' | 'partial' | 'saved' {
+  const currentBatch = fileImportBatchId(item.sha256, item.filename.split('.').pop()?.toLowerCase() || '');
   const same = history.filter(article => (article.language || 'en').split('-')[0] === item.language
-    && (article.importBatchId === `file-${item.sha256}` || article.importBatchId === `file-${item.sha256}-${item.language}`));
+    && (article.importBatchId === currentBatch || article.importBatchId === `${currentBatch}-${item.language}`));
   if (same.length) {
     const total = same.find(article => article.distribution?.totalCount)?.distribution?.totalCount;
     return total && new Set(same.map(article => article.id)).size < total ? 'partial' : 'saved';
   }
-  return history.some(article => article.distribution?.resourceId === item.id && article.distribution.version !== item.sha256) ? 'revision' : 'new';
+  return history.some(article => (article.language || 'en').split('-')[0] === item.language
+    && (article.importBatchId === `file-${item.sha256}` || article.importBatchId === `file-${item.sha256}-${item.language}`
+      || article.distribution?.resourceId === item.id && article.distribution.version !== item.sha256)) ? 'revision' : 'new';
 }
 export function selectLibraryItems(items: readonly LibraryItem[], history: readonly Article[], entry: LibraryEntry, availableOnly: boolean) {
   return items.filter(item => (!entry.kind || item.kind === entry.kind) && (!entry.sourceId || item.id.startsWith(`${entry.sourceId}:`))
@@ -42,8 +46,9 @@ export function selectLibraryItems(items: readonly LibraryItem[], history: reado
 }
 /** Resume at the first missing chapter, including imports that began in the middle. */
 export function nextLibraryOffset(item: LibraryItem, history: readonly Article[]): number {
+  const currentBatch = fileImportBatchId(item.sha256, item.filename.split('.').pop()?.toLowerCase() || '');
   const indices = new Set(history.filter(article => (article.language || 'en').split('-')[0] === item.language
-    && (article.importBatchId === `file-${item.sha256}` || article.importBatchId === `file-${item.sha256}-${item.language}`))
+    && (article.importBatchId === currentBatch || article.importBatchId === `${currentBatch}-${item.language}`))
     .map(article => Number(article.id.match(/-(\d+)$/)?.[1])).filter(Number.isSafeInteger));
   let offset = 0; while (indices.has(offset)) offset++;
   return offset;

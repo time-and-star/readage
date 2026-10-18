@@ -1,0 +1,18 @@
+.content-library-picker { display: flex; flex-direction: column; gap: 16px; }
+.content-library-toolbar { display: grid; gap: 4px; min-width: 0; }
+.content-library-search-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #d9d2c6; }
+.content-library-search { display: flex; flex: 1; align-items: center; gap: 9px; min-width: 0; min-height: 44px; color: #817a6e; }
+.content-library-search svg { flex-shrink: 0; }
+.content-library-search input { width: 100%; min-width: 0; min-height: 44px; padding: 9px 0; border: 0; border-radius: 0; background: transparent; color: #2b2723; font: inherit; font-size: 14px; }
+.content-library-search input::placeholder { color: #928b7f; }
+.content-library-search-row:focus-within { border-bottom-color: #7d8a72; }
+.content-library-search input:focus-visible { outline: 2px solid #7d8a72; outline-offset: 2px; }
+.content-library-refresh { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; border: 0; border-radius: 8px; background: transparent; color: #817a6e; cursor: pointer; }
+.content-library-refresh:disabled { opacity: .45; cursor: wait; }
+.content-library-filters { display: flex; align-items: center; gap: 10px; min-width: 0; color: #817a6e; font-size: 12px; }
+.content-library-filters select { flex: 1; width: 0; min-width: 0; min-height: 44px; padding: 8px 3px 8px 0; border: 0; border-radius: 0; background: transparent; color: #625c50; font: inherit; text-overflow: ellipsis; }
+.content-library-count { flex-shrink: 0; white-space: nowrap; color: #999184; font-size: 11px; }
+.content-library-updates { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; min-height: 44px; white-space: nowrap; cursor: pointer; }
+.content-library-updates input { width: 14px; height: 14px; margin: 0; accent-color: #50604e; }
+.content-library-filters select:focus-visible, .content-library-refresh:focus-visible, .content-library-updates input:focus-visible { outline: 2px solid #7d8a72; outline-offset: 2px; }
+@media (hover: hover) { .content-library-refresh:hover:not(:disabled) { background: #ede9df; color: #354137; } }

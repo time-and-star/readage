@@ -12,6 +12,12 @@ export type UserLibraryItem =
   | { kind: 'file'; file: UserLibraryFile }
   | { kind: 'article'; article: Article };
 
+/** Remove only this exact import group, preserving other books and loose articles. */
+export function removeUserLibraryFile(articles: readonly Article[], batchId: string): Article[] {
+  if (!batchId.trim()) return [...articles];
+  return articles.filter(article => article.source !== 'user_input' || article.importBatchId?.trim() !== batchId.trim());
+}
+
 /** Resume in source order after a completed chapter, or return to the latest open chapter. */
 export function getLibraryFileProgress(file: UserLibraryFile) {
   const completedCount = file.articles.filter((article) => article.status === 'Completed').length;

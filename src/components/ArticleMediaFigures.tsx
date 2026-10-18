@@ -4,6 +4,23 @@ import { getApiAuthHeaders } from '../lib/apiAuth';
 import { IS_ANDROID, IS_OFFLINE_APP } from '../lib/platform/runtime';
 import { nativeAssetUrl } from '../lib/platform/nativeFiles';
 
+/** Captions can span a heading and a separate copyright paragraph in the source. */
+export function captionIsInParagraphs(caption: string, paragraphs: readonly string[]): boolean {
+  const normalize = (text: string) => text.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const expected = normalize(caption);
+  if (!expected) return false;
+  const text = paragraphs.map(normalize);
+  return text.some((_, start) => {
+    let joined = '';
+    for (let index = start; index < text.length; index++) {
+      joined = [joined, text[index]].filter(Boolean).join(' ');
+      if (joined === expected) return true;
+      if (!expected.startsWith(joined)) return false;
+    }
+    return false;
+  });
+}
+
 const ArticleImage: React.FC<{ src: string; alt: string }> = ({ src, alt }) => {
   const privateImage = !IS_ANDROID && src.startsWith('/api/import/images/');
   const [url, setUrl] = useState<string | null>(null);
@@ -41,7 +58,7 @@ export const ArticleMediaFigures: React.FC<{
   return media.filter(item => item.afterParagraphIndex === afterParagraphIndex).map((item, index) => (
     <figure key={`${item.src}:${index}`} className="reading-figure">
       <ArticleImage src={item.src} alt={item.alt || item.caption || '文章插图'} />
-      {item.caption && !paragraphs.some(paragraph => paragraph.trim() === item.caption!.trim()) && <figcaption>{item.caption}</figcaption>}
+      {item.caption && !captionIsInParagraphs(item.caption, paragraphs) && <figcaption>{item.caption}</figcaption>}
     </figure>
   ));
 };

@@ -22,7 +22,7 @@ final class NativeMagazineStore {
     }
     interface Parser { JSONObject parse(File file, String name, int offset, int limit) throws Exception; }
     static final int MAX_FILE = 64 * 1024 * 1024;
-    static final int EPUB_CLEANING_VERSION = 2, EPUB_STRUCTURE_VERSION = 1;
+    static final int EPUB_CLEANING_VERSION = 3, EPUB_STRUCTURE_VERSION = 2;
     private final JSONArray cacheCleaningErrors = new JSONArray();
     private Map<String,File> originalsByGitSha;
     private final File root, indexFile;
@@ -92,7 +92,7 @@ final class NativeMagazineStore {
                 String first=kept.getString(0);article.put("title",first.substring(0,Math.min(80,first.length()))+(first.length()>80?"...":""));
             }
             String legacyId=article.optString("legacyArticleId");
-            if(!legacyId.isEmpty()) {
+            if(!legacyId.isEmpty() && !article.optBoolean("preserveArticleId")) {
                 // The first retained fragment owns the old combined chapter's ID, even
                 // when a leading semantic cover/short fragment was discarded.
                 boolean first=retainedSources.add(legacyId);int fragment=article.optInt("sourceFragmentIndex");
@@ -123,6 +123,7 @@ final class NativeMagazineStore {
                 JSONArray cleaned=cleanEpubArticles(uncleaned,original==null && issue.optInt("epubCleaningVersion")>=1);
                 if(cleaned.length()==0)throw new IOException("整理后没有可阅读正文，已保留原缓存。");
                 JSONObject updated=clone(issue).put("articleCount",cleaned.length()).put("epubCleaningVersion",EPUB_CLEANING_VERSION).put("epubStructureVersion",original==null?0:EPUB_STRUCTURE_VERSION);
+                retainPreviousPayload(updated,issue);
                 if(original!=null)updated.put("originalFile",original.getName()).put("documentSourceId",fileHash(original,"SHA-256",false));
                 else updated.put("reparseRequired",true);
                 if(original!=null)updated.remove("reparseRequired");
@@ -175,7 +176,7 @@ final class NativeMagazineStore {
             if(old.has("sourceOrdinal")){oldIds.putIfAbsent(old.getInt("sourceOrdinal"),old.optString("legacyArticleId",id));continue;}
             Matcher ordinal=Pattern.compile("-(\\d+)$").matcher(id);if(!id.matches(".*-part-\\d+$") && ordinal.find())oldIds.put(Integer.parseInt(ordinal.group(1)),id);
         }
-        JSONArray articles=new JSONArray();
+        JSONArray articles=new JSONArray();Set<String> assignedIds=new HashSet<>();
         for(int i=0;i<parsed.length();i++) {
             JSONObject part=parsed.getJSONObject(i);JSONArray paragraphs=part.getJSONArray("paragraphs"),media=part.optJSONArray("media");if(paragraphs.length()==0 && part.optJSONObject("sourceDocument")==null && (media==null || media.length()==0))continue;
             String title=part.optString("title","Article"),body=text(paragraphs);int ordinal=part.optInt("sourceOrdinal",i+1),fragment=part.optInt("sourceFragmentIndex");
@@ -184,9 +185,37 @@ final class NativeMagazineStore {
             JSONObject article=object("id",id,"language","en","title",title,"description",body.substring(0,Math.min(160,body.length())),"date",label,"status","In Progress","content",paragraphs,"source","magazine","level",source[3],"topic",source[4],"magazineIssueId",issueId,"magazineSourceId",source[0],"wordCount",wordCount(body));
             if(part.has("sourceOrdinal"))article.put("sourceOrdinal",ordinal).put("sourceFragmentIndex",fragment).put("legacyArticleId",base);
             if(part.has("sourceWordCount"))article.put("sourceWordCount",part.getInt("sourceWordCount"));
+            if(previous!=null && NativeEpubCleaning.readable(title,identityParagraphs(paragraphs))) {
+                String retained=matchingPreviousId(article,previous,assignedIds);
+                if(retained==null)retained=base+"-content-"+hash(identityText(paragraphs)+"\n"+title).substring(0,16);
+                String unique=retained;int occurrence=2;while(!assignedIds.add(unique))unique=retained+"-"+(occurrence++);
+                article.put("id",unique).put("preserveArticleId",true);
+            }
             if(media!=null)article.put("media",media);if(part.has("sourceDocument"))article.put("sourceDocument",part.getJSONObject("sourceDocument"));articles.put(article);
         }
         return articles;
+    }
+    private static List<String> identityParagraphs(JSONArray values) {
+        List<String> result=new ArrayList<>();for(int i=0;i<values.length();i++){String value=NativeEpubCleaning.clean(values.optString(i));if(!NativeEpubCleaning.furniture(value))result.add(value);}return result;
+    }
+    private static String identityText(JSONArray values){return String.join("\n",identityParagraphs(values));}
+    private static String paragraphIdentity(JSONArray values,boolean cleanFurniture) {
+        JSONArray result=new JSONArray();for(int i=0;i<values.length();i++){String value=NativeEpubCleaning.clean(values.optString(i));if(!cleanFurniture||!NativeEpubCleaning.furniture(value))result.put(value);}return result.toString();
+    }
+    /** Retain IDs only when every final paragraph is unchanged, preserving old bookmark indexes. */
+    private static String matchingPreviousId(JSONObject article,JSONArray previous,Set<String> assigned) {
+        String content=paragraphIdentity(article.optJSONArray("content"),true),title=NativeEpubCleaning.clean(article.optString("title"));int ordinal=article.optInt("sourceOrdinal");
+        List<JSONObject> matches=new ArrayList<>();
+        for(int i=0;i<previous.length();i++) {
+            JSONObject old=previous.optJSONObject(i);if(old==null||assigned.contains(old.optString("id")))continue;
+            int oldOrdinal=old.optInt("sourceOrdinal");
+            if(oldOrdinal==0){Matcher suffix=Pattern.compile("-(\\d+)$").matcher(old.optString("id"));if(suffix.find())try{oldOrdinal=Integer.parseInt(suffix.group(1));}catch(NumberFormatException ignored){}}
+            if(ordinal>0&&oldOrdinal>0&&ordinal!=oldOrdinal)continue;
+            JSONArray oldContent=old.optJSONArray("content");if(oldContent!=null&&content.equals(paragraphIdentity(oldContent,false)))matches.add(old);
+        }
+        if(matches.size()==1)return matches.get(0).optString("id");
+        List<String> titles=new ArrayList<>();for(JSONObject old:matches)if(title.equalsIgnoreCase(NativeEpubCleaning.clean(old.optString("title"))))titles.add(old.optString("id"));
+        return titles.size()==1?titles.get(0):null;
     }
     private static String hash(String input) throws Exception { StringBuilder hex = new StringBuilder(); for (byte value : MessageDigest.getInstance("SHA-256").digest(input.getBytes(StandardCharsets.UTF_8))) hex.append(String.format(Locale.ROOT,"%02x",value & 255)); return hex.toString(); }
     private void atomic(File target, JSONObject value) throws Exception {
@@ -405,7 +434,7 @@ final class NativeMagazineStore {
         // A failed catalog commit must never overwrite the previously readable version.
         String stored=hash(issueId+":"+candidate.optString("sha")+":"+UUID.randomUUID())+".json";
         JSONObject issue=object("id",issueId,"sourceId",source[0],"issueLabel",label,"title",source[1]+" "+label,"publishedAt",label,"importedAt",importedAt,"format",format,"remotePath",candidate.optString("path"),"remoteSha",candidate.optString("sha"),"articleCount",articles.length(),"status","ready","storedFile",stored);
-        issue.put("sourceKind",source[5]);
+        issue.put("sourceKind",source[5]);if(previous!=null)retainPreviousPayload(issue,previous);
         if(source[5].equals("web_articles")) {
             byte[] html=candidate.getString("html").getBytes(StandardCharsets.UTF_8);String original=NativeMagazineFeeds.hash(html)+".html";
             atomicBytes(new File(webOriginals(),original),html);
@@ -426,6 +455,21 @@ final class NativeMagazineStore {
                 updated.put(issue); next.put("issues",updated); atomic(indexFile,next); index=next; committed=true;
             }
         } finally { if(!committed)Files.deleteIfExists(payload.toPath()); }
+    }
+    /** Keep old identities reachable from history while the current catalog uses corrected chapters. */
+    private static void retainPreviousPayload(JSONObject updated,JSONObject previous) throws Exception {
+        LinkedHashSet<String> names=new LinkedHashSet<>();JSONArray old=previous.optJSONArray("previousStoredFiles");
+        if(old!=null)for(int i=0;i<old.length();i++){String name=old.optString(i);if(name.matches("[a-f0-9]{64}\\.json"))names.add(name);}
+        String file=previous.optString("storedFile");if(file.matches("[a-f0-9]{64}\\.json"))names.add(file);updated.put("previousStoredFiles",new JSONArray(names));
+    }
+    private JSONObject historicalArticle(JSONObject issue,String id) throws Exception {
+        JSONArray files=issue.optJSONArray("previousStoredFiles");if(files==null)return null;
+        for(int i=files.length()-1;i>=0;i--) {
+            String name=files.optString(i);if(!name.matches("[a-f0-9]{64}\\.json"))continue;
+            try {JSONObject payload=new JSONObject(read(new File(root,name),MAX_FILE));if(!issue.optString("id").equals(payload.getJSONObject("issue").optString("id")))continue;JSONArray rows=payload.getJSONArray("articles");for(int n=0;n<rows.length();n++){JSONObject article=rows.getJSONObject(n);if(id.equals(article.optString("id")))return article;}}
+            catch(Exception error){if(stopping(error))throw error;}
+        }
+        return null;
     }
     private synchronized JSONObject findIssue(String id) throws Exception { JSONArray issues=index.getJSONArray("issues"); for(int i=0;i<issues.length();i++)if(id.equals(issues.getJSONObject(i).getString("id")))return clone(issues.getJSONObject(i)); return null; }
     private File issueFile(JSONObject issue) throws Exception { String name=issue.getString("storedFile"); if(!name.matches("[a-f0-9]{64}\\.json"))throw new IOException("外刊缓存标识无效。"); return new File(root,name); }
@@ -453,7 +497,7 @@ final class NativeMagazineStore {
             String id=route.substring(10); int sourceEnd=id.startsWith("mag:")?id.indexOf(':',4):-1;
             int issueEnd=sourceEnd<0?-1:id.indexOf(':',sourceEnd+1);
             JSONObject issue=issueEnd<0?null:findIssue(id.substring(4,issueEnd));
-            if(issue!=null) { JSONArray rows=articles(issue); for(int n=0;n<rows.length();n++) { JSONObject article=rows.getJSONObject(n); if(id.equals(article.optString("id")))return object("ok",true,"article",article); } }
+            if(issue!=null) { JSONArray rows=articles(issue); for(int n=0;n<rows.length();n++) { JSONObject article=rows.getJSONObject(n); if(id.equals(article.optString("id")))return object("ok",true,"article",article); } JSONObject archived=historicalArticle(issue,id);if(archived!=null)return object("ok",true,"article",archived); }
             return object("ok",false,"error",object("code","NOT_FOUND","message","文章尚未下载，请先更新目录。"));
         }
         if(route.equals("/articles")) {

@@ -4,6 +4,9 @@ import { convert as htmlToText, type DomNode, type HtmlToTextOptions } from 'htm
 import type { ArticleMedia } from '../../src/types';
 import { classifyArticleParagraph } from '../../src/lib/articlePresentation';
 import { saveArticleImage } from './assets';
+import { parseDocument, DomUtils } from 'htmlparser2';
+import type { AnyNode } from 'domhandler';
+import { cleanReadingDocument, elements, elementName, headingTitle, plainNodeText, readingRoot, readTocTargets, splitReadingDocument, xmlAttribute, type ReadingFragment, type TocTarget } from './epubStructure';
 
 export interface ParsedChapter {
   title: string;
@@ -23,7 +26,7 @@ export interface EpubParseOptions {
 
 const MIN_WORDS = 80;
 const SKIP_TITLE_RE =
-  /^(cover|contents|table of contents|copyright|title page|masthead|colophon|advertisement|subscribe|credits|index)$/i;
+  /^(cover|contents|table of contents|list of (?:the )?(?:illustrations|plates)|copyright|title page|masthead|colophon|advertisement|subscribe|credits|index|the full project gutenberg[™®]? licen[cs]e)[.:]?$/i;
 
 /** Magazine boilerplate chapters (cover, contents, copyright) are not articles. */
 export function isSkippableImportTitle(title: string): boolean {
@@ -46,6 +49,8 @@ function stripHtml(html: string, imageFormatter?: HtmlToTextOptions['formatters'
       { selector: 'script', format: 'skip' },
       { selector: 'style', format: 'skip' },
       { selector: 'nav', format: 'skip' },
+      { selector: 'blockquote', format: 'block' },
+      { selector: '[data-readge-illustration-cell]', format: 'block', options: { leadingLineBreaks: 2, trailingLineBreaks: 2 } },
       // Keep Japanese ruby base text readable and queryable without inline furigana.
       { selector: 'rt', format: 'skip' },
       { selector: 'rp', format: 'skip' },
@@ -66,10 +71,8 @@ function cleanArticleParagraphs(paragraphs: string[]): string[] {
 }
 
 function splitHtmlDocuments(html: string): string[] {
-  const semanticArticles = [...html.matchAll(/<article\b[^>]*>[\s\S]*?<\/article>/gi)].map(
-    (match) => match[0]
-  );
-  if (semanticArticles.length > 0) return semanticArticles;
+  const semanticArticles = splitReadingDocument(html);
+  if (semanticArticles.length > 1) return semanticArticles.map(fragment => fragment.html);
 
   // Calibre sometimes concatenates article pages without semantic article tags.
   // Its download attribution is a stable end marker for each article in that form.
@@ -86,42 +89,24 @@ function splitHtmlDocuments(html: string): string[] {
     return documents.filter((document) => /[A-Za-z]/.test(document));
   }
 
-  return [html];
-}
-
-function textFromHtmlFragment(fragment: string): string {
-  return htmlToText(fragment, { wordwrap: false, selectors: [
-    { selector: 'rt', format: 'skip' }, { selector: 'rp', format: 'skip' },
-  ] })
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return semanticArticles.map(fragment => fragment.html);
 }
 
 function extractTitle(html: string, fallback: string): string {
-  const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
-  if (h1) {
-    const title = textFromHtmlFragment(h1[1]);
-    if (title) return title.slice(0, 200);
-  }
-  const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  if (titleTag) {
-    const title = textFromHtmlFragment(titleTag[1]);
-    if (title && !/\.x?html?$/i.test(title)) return title.slice(0, 200);
-  }
-  const h2 = html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
-  if (h2) {
-    const title = textFromHtmlFragment(h2[1]);
-    if (title) return title.slice(0, 200);
-  }
+  const document = cleanReadingDocument(html);
+  const heading = headingTitle(readingRoot(document));
+  if (heading) return heading;
+  const titleTag = elements(document).find(node => elementName(node) === 'title');
+  const title = titleTag && plainNodeText(titleTag);
+  if (title && !/\.x?html?$/i.test(title) && !/^The Project Gutenberg eBook of\b/i.test(title)) return title.slice(0, 200);
   return fallback;
 }
 
-function parseHtmlDocument(html: string, fallbackTitle: string, minWords = MIN_WORDS): ParsedChapter | null {
-  const title = extractTitle(html, fallbackTitle);
+function parseHtmlDocument(html: string, fallbackTitle: string, minWords = MIN_WORDS, explicitTitle?: string): ParsedChapter | null {
+  const title = explicitTitle || extractTitle(html, fallbackTitle);
   if (isSkippableImportTitle(title)) return null;
 
-  const rawParagraphs = paragraphsFromText(stripHtml(html));
+  const rawParagraphs = paragraphsFromText(stripHtml(DomUtils.getOuterHTML(readingRoot(cleanReadingDocument(html)))));
   const paragraphs = cleanArticleParagraphs(rawParagraphs);
   const sourceWordCount = textWordCount(rawParagraphs.join(' '));
   const wordCount = textWordCount(paragraphs.join(' '));
@@ -156,12 +141,6 @@ export function resolveEpubPath(baseDir: string, relative: string): string | nul
   return stack.join('/');
 }
 
-function nodeText(node: DomNode): string {
-  if (['script', 'style', 'img'].includes(node.name || '')) return '';
-  if (node.type === 'text') return node.data || '';
-  return (node.children || []).map(nodeText).join(' ');
-}
-
 function findCaption(node: DomNode): string | undefined {
   const visit = (candidate: DomNode): DomNode | undefined => {
     if (candidate.name === 'figcaption'
@@ -175,7 +154,8 @@ function findCaption(node: DomNode): string | undefined {
     && !['body', 'article', 'main', 'html'].includes(parent.name || ''); depth += 1, parent = parent.parent) {
     if (parent.name !== 'figure' && imageCount(parent) !== 1) continue;
     const caption = visit(parent);
-    if (caption) return nodeText(caption).replace(/\s+/g, ' ').trim().slice(0, 1200) || undefined;
+    if (caption) return stripHtml(DomUtils.getOuterHTML(caption as unknown as AnyNode))
+      .replace(/\s+/g, ' ').trim().slice(0, 1200) || undefined;
   }
   return undefined;
 }
@@ -210,25 +190,23 @@ function collectImagePositions(html: string, htmlPath: string, paragraphs: strin
     },
   });
 
-  let previousParagraphIndex = -1;
-  for (const block of markedText.replace(/\r\n/g, '\n').split(/\n{2,}/)) {
-    const clean = block.replace(marker, '').replace(/\s+/g, ' ').trim();
-    const paragraphIndex = clean ? paragraphs.indexOf(clean, previousParagraphIndex + 1) : -1;
-    for (const match of block.matchAll(marker)) {
-      const candidate = candidates[Number(match[1])];
-      const precedingText = block.slice(0, match.index).replace(marker, '').trim();
-      candidate.afterParagraphIndex = paragraphIndex >= 0 && precedingText
-        ? paragraphIndex : previousParagraphIndex;
-    }
-    if (paragraphIndex >= 0) previousParagraphIndex = paragraphIndex;
+  // Image markers can join two otherwise separate text blocks (for example a drop cap
+  // between a chapter label and its first paragraph). Match text offsets rather than
+  // assuming the marked and text-only HTML converters produced identical blocks.
+  const text = markedText.replace(marker, '').replace(/\s+/g, ' ').trim();
+  let cursor = 0;
+  const paragraphStarts = paragraphs.map(paragraph => {
+    const start = text.indexOf(paragraph, cursor);
+    if (start >= 0) cursor = start + paragraph.length;
+    return start;
+  });
+  for (const match of markedText.matchAll(marker)) {
+    const offset = markedText.slice(0, match.index).replace(marker, '').replace(/\s+/g, ' ').trim().length;
+    let anchor = -1;
+    paragraphStarts.forEach((start, index) => { if (start >= 0 && start < offset) anchor = index; });
+    candidates[Number(match[1])].afterParagraphIndex = anchor;
   }
   return candidates;
-}
-
-function parseXmlAttr(tag: string, attr: string): string | null {
-  const re = new RegExp(`${attr}\\s*=\\s*["']([^"']+)["']`, 'i');
-  const match = tag.match(re);
-  return match ? match[1] : null;
 }
 
 async function readZipText(zip: JSZip, filePath: string): Promise<string | null> {
@@ -257,18 +235,32 @@ export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions 
   options.signal?.throwIfAborted();
   if (!opf) throw new Error(`Invalid EPUB: missing OPF ${opfPath}`);
 
+  const opfNodes = elements(parseDocument(opf, { xmlMode: true, decodeEntities: true }));
+  const bookTitle = opfNodes.find(node => elementName(node) === 'title');
+  const fallbackBookTitle = bookTitle ? plainNodeText(bookTitle) : '';
+  const items = opfNodes.filter(node => elementName(node) === 'item');
   const idToHref = new Map<string, string>();
-  for (const itemMatch of opf.matchAll(/<item\b[^>]*>/gi)) {
-    const id = parseXmlAttr(itemMatch[0], 'id');
-    const href = parseXmlAttr(itemMatch[0], 'href');
+  for (const item of items) {
+    const id = xmlAttribute(item, 'id'), href = xmlAttribute(item, 'href');
     if (id && href) idToHref.set(id, href);
   }
-
-  const spineIds: string[] = [];
-  for (const refMatch of opf.matchAll(/<itemref\b[^>]*>/gi)) {
-    const idref = parseXmlAttr(refMatch[0], 'idref');
-    if (idref) spineIds.push(idref);
+  const spineIds = opfNodes.filter(node => elementName(node) === 'itemref')
+    .map(node => xmlAttribute(node, 'idref')).filter((id): id is string => Boolean(id));
+  const tocTargets: TocTarget[] = [];
+  // Prefer the EPUB 3 reading TOC; NCX provides the same contract for EPUB 2.
+  const navigationItems = items.filter(item => (xmlAttribute(item, 'properties') || '').split(/\s+/).includes('nav'));
+  const ncxItems = items.filter(item => xmlAttribute(item, 'media-type') === 'application/x-dtbncx+xml');
+  for (const item of [...navigationItems, ...ncxItems]) {
+    const href = xmlAttribute(item, 'href');
+    const path = href && resolveEpubPath(opfDir, href);
+    const contents = path && await readZipText(zip, path);
+    options.signal?.throwIfAborted();
+    if (!path || !contents) continue;
+    const targets = readTocTargets(contents, path, resolveEpubPath, ncxItems.includes(item));
+    for (const target of targets) if (!tocTargets.some(entry => entry.file === target.file && entry.anchor === target.anchor)) tocTargets.push(target);
+    if (targets.length && navigationItems.includes(item)) break;
   }
+  const structuredBook = tocTargets.some(target => target.anchor);
 
   const chapters: ParsedChapter[] = [];
   const savedImages = new Map<string, Promise<string | null>>();
@@ -304,6 +296,67 @@ export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions 
     }
   };
   let index = 0;
+  let lastChapter: ParsedChapter | undefined;
+  let pendingHeading: ParsedChapter | undefined;
+  let pendingImages: ArticleMedia[] = [];
+  const appendChapter = (target: ParsedChapter, addition: ParsedChapter) => {
+    const offset = target.paragraphs.length;
+    target.paragraphs.push(...addition.paragraphs);
+    target.wordCount = textWordCount(target.paragraphs.join(' '));
+    target.media = [...(target.media || []), ...(addition.media || []).map(image => ({
+      ...image, afterParagraphIndex: image.afterParagraphIndex < 0 ? offset - 1 : image.afterParagraphIndex + offset,
+    }))];
+  };
+  const processDocument = async (html: string, fullPath: string) => {
+    const document = cleanReadingDocument(html), body = readingRoot(document);
+    // Gutenberg's non-linear large-image viewers repeat images already at their reading position.
+    const original = elements(parseDocument(html));
+    if (!plainNodeText(body) && original.some(node => elementName(node) === 'a' && node.attribs.title === 'back')) return;
+    const targets = tocTargets.filter(target => target.file.toLowerCase() === fullPath.toLowerCase());
+    const fragments: ReadingFragment[] = structuredBook || elements(body).some(node => (node.attribs.class || '').split(/\s+/).includes('chapter'))
+      ? splitReadingDocument(html, targets, structuredBook)
+      : splitHtmlDocuments(html).map(fragment => ({ html: fragment }));
+    for (const fragment of fragments) {
+      options.signal?.throwIfAborted();
+      const fragmentTitle = fragment.title || extractTitle(fragment.html, '');
+      if (/^transcriber['’]s note[.:]?$/i.test(fragmentTitle)) continue;
+      if (/^the end[.!]?$/i.test(fragmentTitle)) {
+        const text = cleanArticleParagraphs(paragraphsFromText(stripHtml(fragment.html)));
+        if (text.every(paragraph => /^the end[.!]?$/i.test(paragraph)
+          || /^(?:illustrations reproduced|text printed|printed by|at the .*press)\b/i.test(paragraph))) continue;
+      }
+      const explicitTitle = fragment.title?.match(/(?:^|\s)(CHAPTER\s*[IVXLCDM\d]+[.:]?)$/i)?.[1] || fragment.title;
+      const chapter = parseHtmlDocument(fragment.html, extractTitle(html, fallbackBookTitle || `Section ${index + 1}`), options.minWords, explicitTitle);
+      if (chapter) {
+        await attachMedia(chapter, fragment.html, fullPath);
+        if (pendingImages.length) { chapter.media = [...pendingImages, ...(chapter.media || [])]; pendingImages = []; }
+        const titleOnly = structuredBook && chapter.paragraphs.every(paragraph => classifyArticleParagraph(paragraph, chapter.title) === 'title'
+          || classifyArticleParagraph(paragraph, chapter.title) === 'author');
+        if (titleOnly) {
+          if (pendingHeading) appendChapter(pendingHeading, chapter);
+          else pendingHeading = chapter;
+        } else {
+          if (pendingHeading) {
+            const title = chapter.title;
+            appendChapter(pendingHeading, chapter);
+            Object.assign(chapter, pendingHeading, { title });
+            pendingHeading = undefined;
+          }
+          if (fragment.continuation && lastChapter) appendChapter(lastChapter, chapter);
+          else if (structuredBook && chapters.length === 1 && lastChapter && lastChapter.title.toLowerCase() === chapter.title.toLowerCase()
+            && (!fallbackBookTitle || fallbackBookTitle.toLowerCase().startsWith(chapter.title.toLowerCase()))
+            && !lastChapter.paragraphs.some(paragraph => /[.!?。！？]["'”’)]?$/.test(paragraph) && !/^(?:copyright|illustrated|by\b)/i.test(paragraph))) appendChapter(lastChapter, chapter);
+          else { chapters.push(chapter); lastChapter = chapter; }
+        }
+      } else if ((structuredBook || options.minWords === 1) && !plainNodeText(readingRoot(cleanReadingDocument(fragment.html)))) {
+        const imageOnly: ParsedChapter = { title: '', paragraphs: [], wordCount: 0, media: [] };
+        await attachMedia(imageOnly, fragment.html, fullPath);
+        if (lastChapter) appendChapter(lastChapter, imageOnly);
+        else pendingImages.push(...(imageOnly.media || []));
+      }
+      index += 1;
+    }
+  };
   for (const id of spineIds) {
     options.signal?.throwIfAborted();
     const href = idToHref.get(id);
@@ -314,15 +367,7 @@ export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions 
     options.signal?.throwIfAborted();
     if (!html) continue;
 
-    for (const document of splitHtmlDocuments(html)) {
-      options.signal?.throwIfAborted();
-      const chapter = parseHtmlDocument(document, `Section ${index + 1}`, options.minWords);
-      if (chapter) {
-        await attachMedia(chapter, document, fullPath);
-        chapters.push(chapter);
-      }
-      index += 1;
-    }
+    await processDocument(html, fullPath);
   }
 
   // Fallback: if the spine produced nothing useful, inspect all HTML files.
@@ -334,15 +379,11 @@ export async function parseEpubBuffer(buffer: Buffer, options: EpubParseOptions 
       options.signal?.throwIfAborted();
       const html = await zip.files[htmlFiles[i]].async('text');
       options.signal?.throwIfAborted();
-      for (const document of splitHtmlDocuments(html)) {
-        const chapter = parseHtmlDocument(document, `Part ${i + 1}`, options.minWords);
-        if (chapter) {
-          await attachMedia(chapter, document, htmlFiles[i]);
-          chapters.push(chapter);
-        }
-      }
+      await processDocument(html, htmlFiles[i]);
     }
   }
+
+  if (pendingHeading && lastChapter) appendChapter(lastChapter, pendingHeading);
 
   return chapters;
 }
@@ -355,7 +396,7 @@ export function parseHtmlContent(html: string, fallbackTitle: string, minWords =
   const chapters: ParsedChapter[] = [];
   let index = 0;
   for (const document of splitHtmlDocuments(html)) {
-    const chapter = parseHtmlDocument(document, fallbackTitle || `Section ${index + 1}`, minWords);
+    const chapter = parseHtmlDocument(document, extractTitle(html, fallbackTitle || `Section ${index + 1}`), minWords);
     if (chapter) chapters.push(chapter);
     index += 1;
   }
@@ -368,7 +409,7 @@ export async function parseHtmlContentWithMedia(html: string, fallbackTitle: str
   let imageBytes = 0;
   for (const document of splitHtmlDocuments(html)) {
     options.signal?.throwIfAborted();
-    const chapter = parseHtmlDocument(document, fallbackTitle, options.minWords);
+    const chapter = parseHtmlDocument(document, extractTitle(html, fallbackTitle), options.minWords);
     if (!chapter) continue;
     chapter.media = [];
     for (const image of collectImagePositions(document, '', chapter.paragraphs, true)) {

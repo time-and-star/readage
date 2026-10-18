@@ -61,7 +61,7 @@ public final class NativeStructuredDocumentParser {
                 if(magazine && format.equals("epub") && !NativeEpubCleaning.readable(article.title,article.paragraphs))continue;
                 if (article.images.size() > 256) throw new IOException("单篇文档插图超过 256 张，请拆分后导入。");
                 for (Image image : article.images) {
-                    if (!archive.has(image.path)) throw new IOException("文档缺少引用的图片：" + image.path);
+                    if (!archive.has(image.path)) continue;
                     long length = archive.entries.get(image.path).getSize();
                     if (length > 16L * 1024 * 1024) throw new IOException("文档单张插图超过 16MB。");
                     selectedBytes += length;
@@ -73,7 +73,7 @@ public final class NativeStructuredDocumentParser {
                 Article article = articles.get(index); JSONArray media = new JSONArray();
                 List<Image> images=magazine && format.equals("epub") && !NativeEpubCleaning.readable(article.title,article.paragraphs)?Collections.emptyList():article.images;
                 for (Image image : images) {
-                    if (!archive.has(image.path)) throw new IOException("文档缺少引用的图片：" + image.path);
+                    if (!archive.has(image.path)) continue;
                     byte[] bytes = archive.bytes(image.path);
                     // Native attachments support raster formats. SVG/vector drawings remain text-only.
                     if (!raster(bytes)) continue;
@@ -285,8 +285,8 @@ public final class NativeStructuredDocumentParser {
     }
 
     private static final class ManifestItem {
-        final String href, mediaType;
-        ManifestItem(String href, String mediaType) { this.href = href; this.mediaType = mediaType; }
+        final String href, mediaType, properties;
+        ManifestItem(String href, String mediaType, String properties) { this.href = href; this.mediaType = mediaType; this.properties = properties; }
     }
     private static List<Article> epub(Archive archive, String filename, TextBudget budget, boolean magazine) throws Exception {
         if (archive.has("META-INF/encryption.xml")) throw new IOException("加密 EPUB 暂不支持，请导出未加密副本。");
@@ -307,7 +307,7 @@ public final class NativeStructuredDocumentParser {
                 super.startElement(uri, name, qualified, attributes); String element = local(name, qualified);
                 if (element.equals("item")) {
                     String id = attr(attributes, "id"), href = attr(attributes, "href");
-                    if (id.isEmpty() || id.length() > 1024 || href.isEmpty() || manifest.size() >= MAX_ENTRIES || manifest.put(id, new ManifestItem(href, attr(attributes, "media-type"))) != null)
+                    if (id.isEmpty() || id.length() > 1024 || href.isEmpty() || manifest.size() >= MAX_ENTRIES || manifest.put(id, new ManifestItem(href, attr(attributes, "media-type"), attr(attributes, "properties"))) != null)
                         throw new SAXException("EPUB 内容清单无效。");
                 } else if (element.equals("itemref")) {
                     if (spine.size() >= MAX_ENTRIES) throw new SAXException("EPUB 章节数量过多。"); spine.add(attr(attributes, "idref"));
@@ -316,59 +316,234 @@ public final class NativeStructuredDocumentParser {
             @Override public void characters(char[] chars, int start, int length) throws SAXException { if (captureTitle) { budget.add(chars, start, length); bookTitle.append(chars, start, length); } }
             @Override public void endElement(String uri, String name, String qualified) throws SAXException { if (local(name, qualified).equals("title")) captureTitle = false; super.endElement(uri, name, qualified); }
         });
-        List<Article> result = new ArrayList<>(); int index = 0, sourceOrdinal=0;Map<String,Integer> sourceOrdinals=new HashMap<>();
-        for (String id : spine) {
-            if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("文件准备已取消。");
-            ManifestItem item = manifest.get(id); if (item == null) throw new IOException("EPUB 阅读顺序引用了不存在的章节。");
-            if (!item.mediaType.equals("application/xhtml+xml") && !item.mediaType.equals("text/html")) continue;
-            String path = reference(packagePath, item.href); if (path == null) throw new IOException("EPUB 章节必须内置。");
-            Article article = new Article((clean(bookTitle.toString()).isEmpty() ? title(filename) : clean(bookTitle.toString())) + " — " + (index+1));
-            String source=xhtmlSource(archive,path);
-            if(!magazine) {
-                for(String fragment:splitMagazineDocuments(source)) {
-                    Article part=new Article("Section "+(++index));xhtml(fragment,path,part,budget,true);cleanPersonalArticle(part);
-                    if(!part.paragraphs.isEmpty()&&!NativeEpubCleaning.skipTitle(part.title))result.add(part);
-                }
-                continue;
-            }
-            // Count exactly the legacy nonempty spine entries, before splitting or filtering.
-            xhtml(source,path,article,new TextBudget(),false);index++;if(article.paragraphs.isEmpty())continue;sourceOrdinal++;sourceOrdinals.put(path,sourceOrdinal);
-            List<String> fragments=splitMagazineDocuments(source);
-            for(int fragment=0;fragment<fragments.size();fragment++) {
-                Article part=new Article("Section "+sourceOrdinal);part.sourceOrdinal=sourceOrdinal;part.fragmentIndex=fragment;part.legacyTitle=article.title;
-                xhtml(fragments.get(fragment),path,part,budget,true);if(!part.paragraphs.isEmpty())result.add(part);
-            }
-        }
-        // Same Node fallback: if the spine has no usable reading article, inspect
-        // every HTML file. Existing spine ordinals remain reserved for old IDs.
+        List<TocPoint> toc=epubToc(archive,packagePath,manifest);
+        List<String> paths=new ArrayList<>();
+        for(String id:spine){ManifestItem item=manifest.get(id);if(item==null)throw new IOException("EPUB 阅读顺序引用了不存在的章节。");if(!item.mediaType.equals("application/xhtml+xml")&&!item.mediaType.equals("text/html"))continue;String path=reference(packagePath,item.href);if(path==null)throw new IOException("EPUB 章节必须内置。");paths.add(path);}
+        Map<String,Integer> sourceOrdinals=new HashMap<>();
+        List<Article> result=readEpubPaths(archive,paths,toc,budget,magazine,sourceOrdinals,false,clean(bookTitle.toString()));
         if((magazine && result.stream().noneMatch(article->NativeEpubCleaning.readable(article.title,article.paragraphs))) || (!magazine && result.isEmpty())) {
-            result.clear();TextBudget fallbackBudget=new TextBudget();
-            for(String path:archive.entries.keySet()) {
-                if(!path.toLowerCase(Locale.ROOT).matches(".*\\.x?html?$"))continue;String source=xhtmlSource(archive,path);
-                if(!magazine) {
-                    for(String fragment:splitMagazineDocuments(source)) {
-                        Article part=new Article("Part "+(++index));xhtml(fragment,path,part,fallbackBudget,true);cleanPersonalArticle(part);
-                        if(!part.paragraphs.isEmpty()&&!NativeEpubCleaning.skipTitle(part.title))result.add(part);
-                    }
-                    continue;
+            paths=new ArrayList<>();for(String path:archive.entries.keySet())if(path.toLowerCase(Locale.ROOT).matches(".*\\.x?html?$"))paths.add(path);
+            result=readEpubPaths(archive,paths,toc,new TextBudget(),magazine,sourceOrdinals,true,clean(bookTitle.toString()));
+        }
+        return result;
+    }
+    private static final class TocPoint {
+        final String path,anchor,title;
+        TocPoint(String path,String anchor,String title){this.path=path;this.anchor=anchor;this.title=title;}
+    }
+    private static String tag(Element node){String name=node.normalName();return name.substring(name.indexOf(':')+1);}
+    private static Element direct(Element node,String name){for(Element child:node.children())if(tag(child).equalsIgnoreCase(name))return child;return null;}
+    private static boolean chapterLabel(String value){return Pattern.compile("(?i)^(?:chapter|letter|act|scene)\\b|^第.+[章节幕]").matcher(value).find();}
+    private static void tocPoint(List<TocPoint> result,String base,String href,String title) {
+        try {
+            URI uri=new URI(href.replace(" ","%20"));String anchor=uri.getFragment();
+            // A book-level link to a whole file is not a chapter boundary.
+            if(anchor==null||anchor.isEmpty())return;
+            String path=reference(base,uri.getPath()==null||uri.getPath().isEmpty()?basename(base):href);
+            if(path!=null && result.size()<MAX_ENTRIES)result.add(new TocPoint(path,anchor,NativeEpubCleaning.clean(title)));
+        } catch(Exception ignored) { /* A malformed optional TOC cannot replace valid spine reading order. */ }
+    }
+    private static void ncxPoints(Element node,String base,List<TocPoint> result) {
+        for(Element child:node.children())if(tag(child).equalsIgnoreCase("navpoint")) {
+            Element label=direct(child,"navlabel"),content=direct(child,"content");String title=label==null?"":label.text();
+            if(content!=null)tocPoint(result,base,content.attr("src"),title);
+            if(!chapterLabel(title))ncxPoints(child,base,result);
+        }
+    }
+    private static List<TocPoint> epubToc(Archive archive,String packagePath,Map<String,ManifestItem> manifest) throws Exception {
+        List<TocPoint> result=new ArrayList<>();
+        for(ManifestItem item:manifest.values()) {
+            boolean nav=Arrays.asList(item.properties.split("\\s+")).contains("nav"),ncx=item.mediaType.equals("application/x-dtbncx+xml");
+            if(!nav&&!ncx)continue;String path=reference(packagePath,item.href);if(path==null||!archive.has(path))continue;
+            Document document=ncx?Jsoup.parse(xhtmlSource(archive,path),"",org.jsoup.parser.Parser.xmlParser()):Jsoup.parse(xhtmlSource(archive,path));
+            if(ncx) {for(Element node:document.getAllElements())if(tag(node).equalsIgnoreCase("navmap")){ncxPoints(node,path,result);break;}}
+            else {
+                Element navigation=null;for(Element node:document.getAllElements())if(tag(node).equals("nav") && (node.attr("epub:type").contains("toc")||node.attr("role").equals("doc-toc"))) {navigation=node;break;}
+                if(navigation==null)navigation=document.selectFirst("nav");
+                if(navigation!=null)for(Element link:navigation.select("a[href]")) {
+                    boolean nestedChapter=false;Element own=link.closest("li");for(Element ancestor=own==null?null:own.parent();ancestor!=null&&ancestor!=navigation;ancestor=ancestor.parent())if(ancestor.normalName().equals("li")){Element parentLink=ancestor.selectFirst("a[href]");if(parentLink!=null&&chapterLabel(parentLink.text())){nestedChapter=true;break;}}
+                    if(!nestedChapter)tocPoint(result,path,link.attr("href"),link.text());
                 }
-                Article legacy=new Article("Part "+(sourceOrdinal+1));xhtml(source,path,legacy,new TextBudget(),false);if(legacy.paragraphs.isEmpty())continue;
-                Integer ordinal=sourceOrdinals.get(path);if(ordinal==null){ordinal=++sourceOrdinal;sourceOrdinals.put(path,ordinal);}
-                List<String> fragments=splitMagazineDocuments(source);
-                for(int fragment=0;fragment<fragments.size();fragment++){Article part=new Article("Part "+ordinal);part.sourceOrdinal=ordinal;part.fragmentIndex=fragment;part.legacyTitle=legacy.title;xhtml(fragments.get(fragment),path,part,fallbackBudget,true);if(!part.paragraphs.isEmpty())result.add(part);}
             }
         }
         return result;
     }
+    private static List<HtmlPart> epubParts(String source,String path,List<TocPoint> toc) throws IOException {
+        Document document=readingDocument(source);Map<Element,String> starts=new IdentityHashMap<>();boolean structured=!toc.isEmpty();
+        for(TocPoint point:toc)if(point.path.equals(path)) {
+            Element node=document.getElementById(point.anchor);
+            if(node==null)for(Element candidate:document.body().select("a[name]"))if(candidate.attr("name").equals(point.anchor)){node=candidate;break;}
+            if(node==null || !document.body().getAllElements().contains(node))continue;
+            starts.putIfAbsent(node,point.title);
+        }
+        if(structured)for(Element heading:document.body().select("h1,h2,h3,h4,h5,h6")) {
+            String title=headingText(heading);if(title.matches("(?i)(?:preface|introduction|contents|table of contents|list of (?:the )?(?:plates|illustrations))[.:]?"))starts.put(heading,title);
+        }
+        for(Element chapter:document.body().select(".chapter")) {
+            if(!chapter.select(".chapter").stream().allMatch(child->child==chapter))continue;
+            String title=headingTitle(chapter);if(title.isEmpty()&&chapter.text().length()<=200)title=NativeEpubCleaning.clean(chapter.text());if(title.isEmpty())continue;
+            boolean existing=false;for(Element boundary:starts.keySet())if(chapter.getAllElements().contains(boundary)){existing=true;break;}if(existing)continue;
+            Element next=chapter.nextElementSibling();if(next!=null&&next.hasClass("sidenote")&&!title.endsWith(" — "+NativeEpubCleaning.clean(next.text())))title+=" — "+NativeEpubCleaning.clean(next.text());starts.put(chapter,title);
+        }
+        if(starts.isEmpty()) {
+            List<HtmlPart> parts=splitReadingDocuments(source);
+            if(structured&&parts.size()==1){String heading=headingTitle(document.body());parts.get(0).title=heading.isEmpty()?null:heading;parts.get(0).continuation=heading.isEmpty();}
+            return parts;
+        }
+        return partition(document,starts,Collections.emptySet(),structured);
+    }
+    private static void appendArticle(Article target,Article addition) {
+        int offset=target.paragraphs.size();target.paragraphs.addAll(addition.paragraphs);
+        for(Image image:addition.images){image.afterParagraph+=offset;target.images.add(image);}
+    }
+    private static List<Article> readEpubPaths(Archive archive,List<String> paths,List<TocPoint> toc,TextBudget budget,boolean magazine,Map<String,Integer> sourceOrdinals,boolean fallback,String bookTitle) throws Exception {
+        List<Article> result=new ArrayList<>();List<Image> leadingImages=new ArrayList<>();Article pendingHeading=null;int sourceOrdinal=sourceOrdinals.values().stream().mapToInt(Integer::intValue).max().orElse(0),index=0;
+        for(String path:paths) {
+            if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("文件准备已取消。");
+            String source=xhtmlSource(archive,path);Document originalDocument=Jsoup.parse(source);
+            if(readingDocument(source).body().text().trim().isEmpty() && originalDocument.select("a[title=back]").size()>0)continue;
+            Article legacy=new Article((fallback?"Part ":"Section ")+(index+1));
+            if(magazine){xhtml(source,path,legacy,new TextBudget(),false);if(legacy.paragraphs.isEmpty())continue;Integer known=sourceOrdinals.get(path);if(known==null){known=++sourceOrdinal;sourceOrdinals.put(path,known);}legacy.sourceOrdinal=known;}
+            List<HtmlPart> parts=epubParts(source,path,toc);int fragmentIndex=0;
+            for(HtmlPart fragment:parts) {
+                Article part=new Article(bookTitle.isEmpty()?(fallback?"Part ":"Section ")+(++index):bookTitle);xhtml(source,path,part,new TextBudget(),true);part.paragraphs.clear();part.images.clear();xhtml(fragment.source,path,part,budget,true);
+                if(fragment.title!=null&&!fragment.title.isEmpty()) {Matcher chapter=Pattern.compile("(?i)(?:^|\\s)(CHAPTER\\s*[IVXLCDM\\d]+[.:]?)$").matcher(fragment.title);String value=chapter.find()?chapter.group(1):fragment.title;part.title=value.substring(0,Math.min(200,value.length()));}
+                if(!magazine && part.title.matches("(?i)transcriber['’]s note[.:]?"))continue;
+                if(!magazine && part.title.matches("(?i)the end[.!]?") && part.paragraphs.stream().allMatch(value->NativeEpubCleaning.furniture(value)||value.matches("(?i)the end[.!]?|(?:illustrations reproduced|text printed|printed by|at the .*press)\\b.*")))continue;
+                if(magazine){part.sourceOrdinal=legacy.sourceOrdinal;part.fragmentIndex=fragmentIndex++;part.legacyTitle=legacy.title;}
+                else cleanPersonalArticle(part);
+                // Publisher image wrappers belong to the preceding reading chapter, even if their head title is a license.
+                if(part.paragraphs.isEmpty()) {
+                    if(!part.images.isEmpty()) {if(result.isEmpty())leadingImages.addAll(part.images);else appendArticle(result.get(result.size()-1),part);}
+                    continue;
+                }
+                if(!magazine && NativeEpubCleaning.skipTitle(part.title))continue;
+                boolean structured=!magazine&&!toc.isEmpty();
+                final String currentTitle=part.title;
+                if(structured && part.paragraphs.stream().allMatch(value->sameHeading(value,currentTitle)||value.matches("(?i)^(?:(?:by|written by|words by|text by|byline)\\b|authors?\\s*[:：]?|作者\\s*[:：]?).*"))) {
+                    if(pendingHeading==null)pendingHeading=part;else appendArticle(pendingHeading,part);continue;
+                }
+                if(pendingHeading!=null){String title=part.title;appendArticle(pendingHeading,part);part=pendingHeading;part.title=title;pendingHeading=null;}
+                boolean continued=fragment.continuation;
+                if(!magazine && !result.isEmpty() && (continued || (structured&&result.size()==1&&result.get(0).title.equalsIgnoreCase(part.title)&&(bookTitle.isEmpty()||bookTitle.toLowerCase(Locale.ROOT).startsWith(part.title.toLowerCase(Locale.ROOT)))&&result.get(0).paragraphs.stream().noneMatch(NativeStructuredDocumentParser::genuineSentence))))appendArticle(result.get(result.size()-1),part);
+                else {if(!leadingImages.isEmpty()){for(Image image:leadingImages)image.afterParagraph=-1;part.images.addAll(0,leadingImages);leadingImages.clear();}result.add(part);}
+            }
+        }
+        if(pendingHeading!=null&&!result.isEmpty())appendArticle(result.get(result.size()-1),pendingHeading);
+        return result;
+    }
+    private static boolean genuineSentence(String text) {
+        return Pattern.compile("[.!?。！？][\\x22'”’)]?$").matcher(text).find()&&!Pattern.compile("(?i)^(?:copyright|illustrated|by\\b)").matcher(text).find();
+    }
+    private static boolean sameHeading(String value,String title) {
+        return java.text.Normalizer.normalize(value,java.text.Normalizer.Form.NFKC).trim().equalsIgnoreCase(java.text.Normalizer.normalize(title,java.text.Normalizer.Form.NFKC).trim());
+    }
 
+    /** Remove declared navigation/hidden publisher furniture without guessing from prose. */
+    private static Document readingDocument(String source) {
+        Document document=Jsoup.parse(source);
+        document.select("script,style,nav,noscript,iframe,object,template,svg,rt,rp,[hidden],[aria-hidden=true]").remove();
+        for(Element element:new ArrayList<>(document.getAllElements())) {
+            String id=element.id().toLowerCase(Locale.ROOT),classes=element.className().toLowerCase(Locale.ROOT),role=element.attr("role").toLowerCase(Locale.ROOT),summary=element.hasAttr("data-summary")?element.attr("data-summary"):element.attr("summary");
+            if(id.matches("pg-(header|footer|boilerplate)(?:[-_].*)?")
+                || Pattern.compile("(?:^|\\s)(?:pg-header|pg-footer|pg-boilerplate|pgheader|pgfooter|x-ebookmaker-pageno|pagenum|toc)(?:\\s|$)").matcher(classes).find()
+                || Pattern.compile("(?:^|\\s)(?:navigation|doc-toc|doc-pagelist)(?:\\s|$)").matcher(role).find()
+                || summary.matches("(?i)toc|table of contents|contents|list of illustrations")
+                || Pattern.compile("(?i)(?:^|;)\\s*(?:display\\s*:\\s*none|visibility\\s*:\\s*hidden)\\s*(?:!important)?\\s*(?:;|$)").matcher(element.attr("style")).find()
+                || (element.normalName().equals("a") && ((element.attr("title").equals("linked image")&&element.text().matches("(?i)original"))||(element.attr("title").equals("back")&&element.text().matches("(?i)back")))))element.remove();
+            String text=element.text();
+            if(!Arrays.asList("html","body").contains(element.normalName()) && text.startsWith("There are several editions of this ebook in the Project Gutenberg collection.") && text.matches("(?s).*Click on any of the filenumbers below[^.]*\\.?")) {
+                Element next=element.nextElementSibling();if(next!=null&&next.normalName().equals("table"))next.remove();element.remove();
+            }
+        }
+        for(Element image:document.select("img[alt]")) {
+            if(image.hasAttr("data-readge-dropcap-restored") || !image.attr("alt").matches("[\\x22“'‘]?[A-Z]"))continue;
+            Element container=image;while(container.parent()!=null&&!Arrays.asList("body","html").contains(container.parent().normalName())&&!container.className().matches("(?:.*\\s)?(?:figleft|dropcap|drop-cap|letra)(?:\\s.*)?"))container=container.parent();
+            if(!container.className().matches("(?:.*\\s)?(?:figleft|dropcap|drop-cap|letra)(?:\\s.*)?"))continue;
+            Node following=container.nextSibling();while(following instanceof TextNode && NativeEpubCleaning.clean(((TextNode)following).getWholeText()).isEmpty())following=following.nextSibling();
+            boolean inline=container.hasClass("letra")||container.normalName().equals("span");
+            if(following==null || (!inline && (!(following instanceof Element)||!Arrays.asList("p","div").contains(((Element)following).normalName()))))continue;
+            TextNode first=firstText(following);if(first==null)continue;String raw=first.getWholeText(),remainder=raw.replaceFirst("^[\\s\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+","");
+            if(Pattern.compile("^(?:[A-Z]{2,}\\b|[A-Z]\\.)").matcher(remainder).find()){first.text(image.attr("alt")+(raw.matches("(?s)^[\\s]*\\u00a0.*")?" ":"")+remainder);image.attr("data-readge-dropcap-restored","true");}
+        }
+        return document;
+    }
+    private static TextNode firstText(Node node) {
+        if(node instanceof TextNode && !NativeEpubCleaning.clean(((TextNode)node).getWholeText()).isEmpty())return (TextNode)node;
+        for(Node child:node.childNodes()){TextNode found=firstText(child);if(found!=null)return found;}return null;
+    }
+    private static String headingText(Element node) {
+        String text=NativeEpubCleaning.clean(node.text());if(!text.isEmpty())return text;
+        List<String> alts=new ArrayList<>();for(Element image:node.select("img[alt]"))if(!image.attr("alt").trim().isEmpty())alts.add(image.attr("alt"));return NativeEpubCleaning.clean(String.join(" ",alts));
+    }
+    private static String headingTitle(Element body) {
+        for(int level=1;level<=6;level++)for(Element heading:body.select("h"+level)){String title=headingText(heading);if(!title.isEmpty())return title;}
+        for(Element chapter:body.select(".chapter")) {
+            String title=NativeEpubCleaning.clean(chapter.text());if(title.isEmpty()||title.length()>200)continue;
+            Element next=chapter.nextElementSibling();if(next!=null&&next.hasClass("sidenote"))title+=" — "+NativeEpubCleaning.clean(next.text());return title;
+        }
+        return "";
+    }
+    private static final class HtmlPart {
+        String source,title; boolean continuation;
+        HtmlPart(String source,String title,boolean continuation){this.source=source;this.title=title;this.continuation=continuation;}
+    }
+    private static final class Partition {
+        int current,depth;final Map<Integer,String> titles=new HashMap<>();
+        void next(String title){current++;if(title!=null)titles.put(current,title);}
+    }
+    /** Project each DOM node into its reading slice; cloned ancestor wrappers retain text and image order. */
+    private static Map<Integer,Node> project(Node node,Partition state,Map<Element,String> starts,Set<Element> ends) throws IOException {
+        if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("文件准备已取消。");
+        if(++state.depth>128)throw new IOException("EPUB 章节层级过深。");
+        if(node instanceof Element && starts.containsKey(node))state.next(starts.get(node));
+        Map<Integer,Node> result=new LinkedHashMap<>();
+        if(node instanceof Element) {
+            Element element=(Element)node;
+            for(Node child:element.childNodes())for(Map.Entry<Integer,Node> entry:project(child,state,starts,ends).entrySet()) {
+                Element wrapper=(Element)result.get(entry.getKey());
+                if(wrapper==null){wrapper=new Element(element.tag(),element.baseUri(),element.attributes().clone());result.put(entry.getKey(),wrapper);}
+                wrapper.appendChild(entry.getValue());
+            }
+            if(element.childNodeSize()==0)result.put(state.current,new Element(element.tag(),element.baseUri(),element.attributes().clone()));
+        } else result.put(state.current,node.clone());
+        if(node instanceof Element && ends.contains(node))state.next(null);
+        state.depth--;return result;
+    }
+    private static List<HtmlPart> partition(Document document,Map<Element,String> starts,Set<Element> ends,boolean continuation) throws IOException {
+        Partition state=new Partition();List<HtmlPart> result=new ArrayList<>();
+        for(Map.Entry<Integer,Node> entry:project(document.body(),state,starts,ends).entrySet()) {
+            Element body=(Element)entry.getValue();
+            if(body.text().trim().isEmpty() && body.select("img").isEmpty())continue;
+            String source="<html>"+document.head().outerHtml()+body.outerHtml()+"</html>";
+            result.add(new HtmlPart(source,state.titles.get(entry.getKey()),continuation && !state.titles.containsKey(entry.getKey())));
+            if(result.size()>MAX_ENTRIES)throw new IOException("文档章节数量过多。");
+        }
+        return result;
+    }
+    private static List<HtmlPart> splitReadingDocuments(String source) throws IOException {
+        Document document=readingDocument(source);Map<Element,String> starts=new IdentityHashMap<>();Set<Element> ends=Collections.newSetFromMap(new IdentityHashMap<>());
+        for(Element article:document.body().select("article")) {
+            boolean nested=false;for(Element parent=article.parent();parent!=null;parent=parent.parent())if(parent.normalName().equals("article")){nested=true;break;}
+            if(!nested){starts.put(article,"");ends.add(article);}
+        }
+        if(starts.size()==1) {
+            Element only=starts.keySet().iterator().next();Document outside=document.clone();for(Element article:outside.body().select("article"))article.remove();
+            if(!outside.body().text().trim().isEmpty())return Collections.singletonList(new HtmlPart(document.outerHtml(),headingTitle(document.body()),false));
+        }
+        if(starts.isEmpty())for(Element chapter:document.body().select("div.chapter,section.chapter")) {
+            boolean nested=false;for(Element parent=chapter.parent();parent!=null;parent=parent.parent())if(parent.hasClass("chapter")){nested=true;break;}
+            if(!nested){String title=headingTitle(chapter);if(title.isEmpty()&&chapter.text().length()<=200)title=chapter.text();Element next=chapter.nextElementSibling();if(next!=null&&next.hasClass("sidenote")&&!title.endsWith(" — "+next.text()))title+=" — "+next.text();starts.put(chapter,title);}
+        }
+        if(!starts.isEmpty())return partition(document,starts,ends,false);
+        // Calibre attribution paragraphs are reliable article ends after DOM cleaning.
+        List<Element> markers=new ArrayList<>();
+        for(Element node:document.body().select("p,div,section,footer"))if(node.children().stream().noneMatch(child->child.text().contains("This article was downloaded by calibre from")) && node.text().startsWith("This article was downloaded by calibre from"))markers.add(node);
+        if(markers.size()>1){ends.addAll(markers);return partition(document,starts,ends,false);}
+        return Collections.singletonList(new HtmlPart(document.outerHtml(),null,false));
+    }
     private static List<String> splitMagazineDocuments(String source) throws IOException {
-        List<String> result=new ArrayList<>();Matcher articles=Pattern.compile("(?is)<article\\b[^>]*>[\\s\\S]*?</article>").matcher(source);
-        while(articles.find()){if(result.size()>=MAX_ENTRIES)throw new IOException("外刊文章数量过多。");result.add(articles.group());}
-        if(!result.isEmpty())return result;
-        Matcher markers=Pattern.compile("(?is)This article was downloaded by calibre from[\\s\\S]*?(?:</(?:p|div|section|footer)>|\\n)").matcher(source);List<Integer> ends=new ArrayList<>();
-        while(markers.find()){if(ends.size()>=MAX_ENTRIES)throw new IOException("外刊文章数量过多。");ends.add(markers.end());}
-        if(ends.size()>1){int start=0;for(int end:ends){result.add(source.substring(start,end));start=end;}if(start<source.length())result.add(source.substring(start));result.removeIf(value->!Pattern.compile("[A-Za-z]").matcher(value).find());return result;}
-        return Collections.singletonList(source);
+        List<String> result=new ArrayList<>();for(HtmlPart part:splitReadingDocuments(source))result.add(part.source);return result;
     }
 
     private static void cleanPersonalArticle(Article article) {
@@ -380,6 +555,7 @@ public final class NativeStructuredDocumentParser {
             int anchor=image.afterParagraph;while(anchor>=0&&!positions.containsKey(anchor))anchor--;
             image.afterParagraph=anchor<0?-1:positions.get(anchor);
         }
+        if(article.title.length()>120&&!article.paragraphs.isEmpty()){String first=article.paragraphs.get(0);article.title=first.substring(0,Math.min(80,first.length()))+(first.length()>80?"...":"");}
     }
 
     /** Standalone HTML uses the same semantic splits, title priority and image anchors as EPUB. */
@@ -438,14 +614,13 @@ public final class NativeStructuredDocumentParser {
         return null;
     }
     private static void xhtml(String source, String path, Article article, TextBudget budget, boolean magazine) throws Exception {
-        Document document = Jsoup.parse(source);
+        Document document = magazine?readingDocument(source):Jsoup.parse(source);
         document.select("script,style,nav,noscript,iframe,object,template,svg").remove();
         Element heading = document.body().selectFirst("h1,h2,h3,h4,h5,h6");
         String candidate = heading != null ? clean(heading.text()) : clean(document.title());
         if(magazine) {
-            document.select("rt,rp").remove();Element h1=document.body().selectFirst("h1");candidate=h1==null?"":NativeEpubCleaning.clean(h1.text());
-            String pageTitle=NativeEpubCleaning.clean(document.title());if(candidate.isEmpty() && !pageTitle.matches("(?i).*\\.x?html?$"))candidate=pageTitle;
-            Element h2=document.body().selectFirst("h2");if(candidate.isEmpty() && h2!=null)candidate=NativeEpubCleaning.clean(h2.text());
+            candidate=headingTitle(document.body());
+            String pageTitle=NativeEpubCleaning.clean(document.title());if(candidate.isEmpty() && !pageTitle.matches("(?i).*\\.x?html?$") && !pageTitle.matches("(?i)^The Project Gutenberg eBook of\\b.*"))candidate=pageTitle;
         }
         if (!candidate.isEmpty()) article.title = candidate.substring(0, Math.min(200, candidate.length()));
         Paragraphs paragraphs = new Paragraphs(article, budget, magazine);
@@ -493,17 +668,18 @@ public final class NativeStructuredDocumentParser {
         });
         final Map<String, String[]> styles = new HashMap<>();
         if (archive.has("word/styles.xml")) xml(archive, "word/styles.xml", new SafeXml() {
-            String id, styleName, outline; int styleDepth;
+            String id, styleName, outline, basedOn; int styleDepth;
             @Override public void startElement(String uri, String name, String qualified, Attributes attributes) throws SAXException {
                 super.startElement(uri, name, qualified, attributes); String element = local(name, qualified);
-                if (element.equals("style")) { id = attr(attributes, "styleId"); styleName = id; outline = ""; styleDepth = depth; }
+                if (element.equals("style")) { id = attr(attributes, "styleId"); styleName = id; outline = ""; basedOn = ""; styleDepth = depth; }
                 else if (styleDepth != 0 && element.equals("name")) styleName = attr(attributes, "val");
                 else if (styleDepth != 0 && element.equals("outlineLvl")) outline = attr(attributes, "val");
+                else if (styleDepth != 0 && element.equals("basedOn")) basedOn = attr(attributes, "val");
             }
             @Override public void endElement(String uri, String name, String qualified) throws SAXException {
                 if (styleDepth == depth) {
                     if (id.length() > 1024 || styles.size() >= MAX_ENTRIES) throw new SAXException("Word 样式清单过大。");
-                    styles.put(id, new String[]{styleName, outline}); styleDepth = 0;
+                    styles.put(id, new String[]{styleName, outline, basedOn}); styleDepth = 0;
                 }
                 super.endElement(uri, name, qualified);
             }
@@ -538,11 +714,11 @@ public final class NativeStructuredDocumentParser {
                 if (deletedDepth == depth) deletedDepth = 0;
                 else if (deletedDepth == 0 && element.equals("p")) {
                     paragraphs.flush();
-                    String[] style = styles.getOrDefault(styleId, new String[]{styleId, ""});
-                    boolean isTitle = styleId.matches("(?i)title") || style[0].matches("(?i)title|标题");
-                    boolean isChapter = styleId.matches("(?i)heading\\s*1") || style[0].matches("(?i)heading\\s*1|标题\\s*1") || (outline.isEmpty() ? style[1] : outline).equals("0");
+                    String inheritedOutline=styleOutline(styleId,styles),effectiveOutline=outline.isEmpty()?inheritedOutline:outline;
+                    boolean isTitle=styleMatches(styleId,styles,"(?i)title|标题");
+                    boolean isChapter=effectiveOutline.isEmpty()?styleMatches(styleId,styles,"(?i)heading\\s*1|标题\\s*1"):effectiveOutline.equals("0");
                     Article current = paragraphs.article; int last = current.paragraphs.size() - 1;
-                    if(last>=paragraphStart&&(styleId.matches("(?i)caption")||style[0].matches("(?i)caption|图注|题注"))) {
+                    if(last>=paragraphStart&&styleMatches(styleId,styles,"(?i)caption|图注|题注")) {
                         String text=current.paragraphs.get(last);
                         for(Image image:current.images)if(image.afterParagraph>=paragraphStart-1)image.caption=text.substring(0,Math.min(1200,text.length()));
                     }
@@ -564,6 +740,17 @@ public final class NativeStructuredDocumentParser {
             @Override public void endDocument() throws SAXException { paragraphs.flush(); chapters.add(paragraphs.article); }
         });
         return chapters;
+    }
+
+    private static boolean styleMatches(String id,Map<String,String[]> styles,String expression) {
+        Set<String> seen=new HashSet<>();
+        while(id!=null&&!id.isEmpty()&&seen.add(id)){String[] value=styles.get(id);if(id.matches(expression)||(value!=null&&value[0].matches(expression)))return true;id=value==null?"":value[2];}
+        return false;
+    }
+    private static String styleOutline(String id,Map<String,String[]> styles) {
+        Set<String> seen=new HashSet<>();
+        while(id!=null&&!id.isEmpty()&&seen.add(id)){String[] value=styles.get(id);if(value==null)break;if(!value[1].isEmpty())return value[1];id=value[2];}
+        return "";
     }
 
     private static boolean raster(byte[] bytes) {

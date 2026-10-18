@@ -3,6 +3,8 @@
 @import "./components/wordMemoryDetails.css";
 @import "./components/readageEntry.css";
 @import './components/appUpdates.css';
+@import './components/contentLibraryPicker.css';
+@import './components/libraryBookTitle.css';
 
 @theme {
   --font-sans: "Inter", "Aptos", "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
@@ -285,6 +287,9 @@ textarea::placeholder {
 .library-owned-shelf > .library-reading-row { grid-column: 1 / -1; }
 .library-owned-book .ra-book-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .library-owned-book .library-file-progress { display: block; width: 100%; }
+.library-owned-volume { min-width: 0; }
+.library-resume-book { display: inline-flex; align-items: center; gap: 5px; min-height: 44px; margin-top: 3px; padding: 0; border: 0; background: transparent; color: #50604e; font-size: 12px; cursor: pointer; }
+.library-resume-book:focus-visible { outline: 2px solid #7d8a72; outline-offset: 2px; }
 .library-file-progress { max-width: 200px; height: 2px; margin-top: 12px; background: #e3dbcd; }
 .library-file-progress > span { display: block; height: 100%; background: #87957b; }
 .library-issues { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 44px; }

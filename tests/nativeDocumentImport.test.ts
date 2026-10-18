@@ -30,12 +30,12 @@ test('native chapter batches use the original private handle and preserve text/m
   assert.deepEqual(calls, [{ handle: hash, filename: 'Harbor.epub', offset: 0, limit: 80, requestId: request.requestId }]);
   const file = new File([], picked.name);
   const prepared = appendPreparedFileBatch(null, file, batch);
-  assert.equal(prepared.articles[0].id, `file-${hash}-0`);
+  assert.equal(prepared.articles[0].id, `file-${hash}-s2-0`);
   assert.deepEqual(prepared.articles[0].content, ['The boats return safely at sunset.']);
   assert.equal(prepared.articles[0].media?.[0].src, `/api/import/images/${'a'.repeat(64)}.png`);
   plugin.parseDocument = async request => { calls.push(request); return chapter(1); };
   const next = await requestNativeDocumentBatch(picked, 1, { plugin });
-  assert.equal(appendPreparedFileBatch(prepared, file, next).articles[1].id, `file-${hash}-1`);
+  assert.equal(appendPreparedFileBatch(prepared, file, next).articles[1].id, `file-${hash}-s2-1`);
   assert.throws(() => appendPreparedFileBatch(prepared, file, batch), /章节顺序/);
 });
 

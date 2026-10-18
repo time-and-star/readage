@@ -41,6 +41,13 @@ public class NativeAppUpdateHttpTest {
         catch (InterruptedIOException expected) { check(true, "cancel before request avoids network"); }
         Connection during = new Connection(); NativeAppUpdateHttp.Request request = new NativeAppUpdateHttp.Request(); request.attach(during); request.cancel();
         check(during.closed, "cancel disconnects active network");
+        java.util.concurrent.CountDownLatch disconnectEntered=new java.util.concurrent.CountDownLatch(1),disconnectReleased=new java.util.concurrent.CountDownLatch(1),disconnectFinished=new java.util.concurrent.CountDownLatch(1);
+        Connection blocking=new Connection(){@Override public void disconnect(){disconnectEntered.countDown();try{disconnectReleased.await();}catch(InterruptedException stopped){Thread.currentThread().interrupt();}closed=true;disconnectFinished.countDown();}};
+        NativeAppUpdateHttp.Request backgroundCancel=new NativeAppUpdateHttp.Request();backgroundCancel.attach(blocking);backgroundCancel.cancelAsync();
+        try{
+            check(disconnectEntered.await(5,java.util.concurrent.TimeUnit.SECONDS)&&!blocking.closed,"async cancellation returns while socket disconnect is still blocked");
+            try{backgroundCancel.check(Long.MAX_VALUE);throw new AssertionError();}catch(InterruptedIOException expected){check(true,"async cancellation rejects more work immediately before disconnect finishes");}
+        }finally{disconnectReleased.countDown();check(disconnectFinished.await(5,java.util.concurrent.TimeUnit.SECONDS),"asynchronous socket cleanup completes without retaining the command thread");}
         check(NativeAppUpdateHttp.DOWNLOAD.equals("https://readage.xyz/#download"), "download action fixed to official page");
         System.out.println(passed + " native update checks passed");
     }

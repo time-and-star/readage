@@ -1,0 +1,5 @@
+.library-book-title-main { display: block; overflow-wrap: anywhere; }
+.library-book-title-original { display: block; margin-top: 5px; font-family: var(--font-serif, Georgia, serif); font-size: max(.65em, 12px); font-weight: 400; line-height: 1.5; letter-spacing: 0; color: #817a6e; overflow-wrap: anywhere; }
+.ra-book-selection { row-gap: 16px; }
+.ra-book-selection > .library-book-selection-title { grid-column: 1 / -1; margin: 0; }
+@media (max-width: 540px) { .ra-book-selection > .library-book-selection-title { font-size: 18px; } }

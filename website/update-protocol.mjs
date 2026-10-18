@@ -1,6 +1,9 @@
+import { MAX_INSTALLER_BYTES, MAX_INSTALLER_DELTAS, validateInstallerDeltaRecord } from './installer-delta-protocol.mjs';
+
 /** @typedef {'web'|'windows'|'android'} AppPlatform */
 /** @typedef {{revision:number,runtime:string,version:string,bytes:number}} UpdateBundle */
-/** @typedef {{filename:string,sha256:string,bytes:number}} UpdateInstaller */
+/** @typedef {import('./installer-delta-protocol.mjs').InstallerDelta} InstallerDelta */
+/** @typedef {{filename:string,sha256:string,bytes:number,deltas?:InstallerDelta[]}} UpdateInstaller */
 /** @typedef {{version:string,build:number,publishedAt:string,notes:string[],bundle?:UpdateBundle,installer?:UpdateInstaller}} UpdateRelease */
 /** @typedef {{schemaVersion:1,releases:Record<AppPlatform,UpdateRelease>}} UpdateManifest */
 /** @typedef {{platform:AppPlatform,version:string,build:number,runtime?:string,revision?:number,rejectedRevision?:number,shellVersion?:string}} InstalledVersion */
@@ -27,10 +30,19 @@ export function validateUpdateManifest(value) {
       const file = release.installer;
       const expected = platform === 'windows' ? `ReadAge-${release.version}-windows-x64-setup.exe` : platform === 'android' ? `ReadAge-${release.version}-android.apk` : '';
       if (!expected || !file || file.filename !== expected || !/^[a-f0-9]{64}$/.test(file.sha256)
-        || !Number.isSafeInteger(file.bytes) || file.bytes < 1 || file.bytes > 4 * 1024 ** 3) throw new Error('安装包信息无效。');
+        || !Number.isSafeInteger(file.bytes) || file.bytes < 1 || file.bytes > MAX_INSTALLER_BYTES) throw new Error('安装包信息无效。');
       releases[platform].installer = { filename: expected, sha256: file.sha256, bytes: file.bytes };
+      if (file.deltas !== undefined) {
+        if (!Array.isArray(file.deltas) || file.deltas.length > MAX_INSTALLER_DELTAS) throw new Error('差分安装包列表无效。');
+        const seen = new Set();
+        releases[platform].installer.deltas = file.deltas.map(value => {
+          const delta = validateInstallerDeltaRecord(value, releases[platform].installer);
+          if (seen.has(delta.baseSha256)) throw new Error('差分安装包基线重复。');
+          seen.add(delta.baseSha256); return delta;
+        });
+      }
     }
-    // Legacy bundle metadata is ignored: releases now advertise complete installers only.
+    // Legacy web bundles remain retired. Deltas always reconstruct the complete installer.
   }
   return { schemaVersion: 1, releases };
 }

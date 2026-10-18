@@ -18,15 +18,29 @@ All format adapters should produce the same reading data:
 
 EPUB adapters read the package manifest and spine, then extract article paragraphs
 and embedded raster images in document order. They retain alt text and semantic
-figure captions. Only archive-relative references are read; remote URLs, escaping
+figure captions. NCX / EPUB 3 reading TOC anchors and explicit chapter containers
+define chapter boundaries rather than assuming that every spine file is a chapter.
+A file beginning midway through a chapter continues that chapter, with image anchors
+offset by its existing paragraph count. Nested articles retain their full DOM and
+text outside article elements is preserved. Explicit navigation, hidden elements,
+Gutenberg boilerplate, page markers and image-viewer duplicates are omitted from the
+reading text; the original distributed file is unchanged. Legitimate short chapters,
+poems, prefaces, author notes and footnotes remain readable.
+
+Only archive-relative references are read; remote URLs, escaping
 paths and active SVG/HTML assets are ignored. PNG, JPEG, GIF and WebP are recognised
 from their bytes. Individual images are limited to 12 MiB and extracted images to
-64 MiB per issue. Images are served under `/api/magazines/assets/<digest>.<ext>`.
+128 MiB per issue in Node (Android keeps its existing bounded native extraction).
+Images are served under `/api/magazines/assets/<digest>.<ext>`.
 
 Older magazine articles are upgraded when opened. A per-issue side manifest is
 built from the already saved EPUB blob, without downloading again. Existing article
 files, paragraphs, translations, and learning state are not overwritten. Text
 anchors prevent attaching media to the wrong paragraph if stored prose was edited.
+New media manifests match a unique title and original body text before attaching
+images; they do not assume an old chapter ordinal still identifies the same story.
+Ambiguous remapped paragraph anchors are skipped. Existing version 1 manifests remain
+readable and existing saved prose / learning records are not rewritten.
 
 ## Adding more formats
 
@@ -43,8 +57,17 @@ ignores deleted text and external image relationships, and reads embedded drawin
 as binary assets. Personal EPUB uploads retain short chapters; magazine sync keeps
 its existing 80-word threshold. Tables in Word are extracted as text rather than
 retaining their original grid layout. Old binary `.doc` files must be saved as DOCX.
+Word custom styles inherit chapter, title and caption properties through `basedOn`;
+an explicit body outline overrides the inherited chapter level and style cycles stop.
 Imported files remain grouped on the user's shelf. Reading advances to the next
 chapter/page in that file's source order, rather than entering a recommendation stream.
+
+EPUB / HTML / DOCX imports now use the `-s2` batch identity suffix. Their reorganised
+chapter maps are separate editions of the same source bytes, so repeated imports
+cannot mix old and new chapter numbers or replace old bookmarks / translations.
+The source SHA-256 remains unchanged. A legacy edition stays available on the shelf;
+the library offers the reorganised edition from chapter zero, and subsequent imports
+resume only that edition. PDF and TXT retain their existing identities and page rules.
 
 PDF uploads retain the complete source once by SHA-256. Up to 80 pages are indexed
 as reading entries, including scans. Each `Article.sourceDocument` records the

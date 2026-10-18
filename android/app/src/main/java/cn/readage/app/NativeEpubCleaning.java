@@ -6,7 +6,7 @@ import java.util.regex.Pattern;
 
 /** The existing Node magazine cutoff/furniture policy; never applied to personal short chapters. */
 final class NativeEpubCleaning {
-    private static final Pattern TITLE=Pattern.compile("^(cover|contents|table of contents|copyright|title page|masthead|colophon|advertisement|subscribe|credits|index)$",Pattern.CASE_INSENSITIVE);
+    private static final Pattern TITLE=Pattern.compile("^(cover|contents|table of contents|list of (?:the )?(?:illustrations|plates)|copyright|title page|masthead|colophon|advertisement|subscribe|credits|index|the full project gutenberg[™®]? licen[cs]e)[.:]?$",Pattern.CASE_INSENSITIVE);
     private static final Pattern ATTRIBUTION=Pattern.compile("^(?:Read:\\s+|This (?:article|poem) (?:appears|was featured|was downloaded)\\b)",Pattern.CASE_INSENSITIVE);
     // Java's default \s is ASCII; use the ECMAScript whitespace set used by Node.
     private static final String SPACE="[\\s\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+";

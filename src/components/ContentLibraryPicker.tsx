@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { RefreshCw, Search } from 'lucide-react';
 import type { Article } from '../types';
 import { downloadLibraryFile, loadLibraryCatalog, type LibraryCatalog, type LibraryItem } from '../lib/contentLibrary';
 import type { NativePickedFile } from '../lib/platform/nativeFiles';
 import { libraryOrigin } from '../lib/contentLibraryProtocol';
 import { initialLibraryServer, libraryEditionState, nextLibraryOffset, selectLibraryItems, type LibraryEntry } from '../lib/contentLibraryEntry';
 import { LibraryBookCover } from './LibraryBookCover';
+import { LibraryBookTitle } from './LibraryBookTitle';
 import { bookAppearance, bookCategoryLabel, filterLibraryItems, libraryBookCategories } from '../../website/book-presentation.js';
 
 export function ContentLibraryPicker({ history, onSelect, entry = { intent: 'import' } }: {
@@ -50,16 +52,31 @@ export function ContentLibraryPicker({ history, onSelect, entry = { intent: 'imp
   const scoped = catalog ? selectLibraryItems(catalog.items, history, entry, availableOnly) : [];
   const items = filterLibraryItems(scoped, { query, kind, category });
   const categories = libraryBookCategories(scoped);
-  return <section aria-label="服务器资料库" className="space-y-4">
-    <div><h3 className="ra-shelf-heading">{entry.intent === 'updates' ? '书架有新篇。' : '选一本，慢慢读。'}</h3><p className="ra-shelf-note">{entry.intent === 'updates' ? '新刊、新版，以及还没导完的书。' : '书籍与整期杂志，选好后查看目录，加入自己的书架。'}</p></div>
+  return <section aria-label="服务器资料库" className="content-library-picker">
+    <p className="ra-shelf-note">选好之后查看目录，加入自己的书架。</p>
     {!initialServer && <p role="status" className="text-xs text-[#736B60]">官网地址尚未配置。可在下方设置检测地址，或使用本地导入。</p>}
-    {busy && <div role="status" className="flex items-center justify-between gap-2 text-xs"><span>{busy}</span><button type="button" className="min-h-11 shrink-0 underline" onClick={() => { operation.current?.abort(); operation.current = null; setBusy(''); }}>取消</button></div>}
+    {busy && <div role="status" className="flex items-center justify-between gap-2 text-xs"><span><LibraryBookTitle title={busy} /></span><button type="button" className="min-h-11 shrink-0 underline" onClick={() => { operation.current?.abort(); operation.current = null; setBusy(''); }}>取消</button></div>}
     {error && <p role="alert" className="text-sm text-red-800 break-words">{error}</p>}
-    {catalog && <><div className="ra-shelf-tools"><input aria-label="搜索服务器资料" placeholder="找一本书，或一期杂志" value={query} onChange={e => setQuery(e.target.value)} className="ra-shelf-search" /><select aria-label="服务器资料类型" value={kind} onChange={e => { setKind(e.target.value); if (e.target.value === 'magazine') setCategory(''); }} className="ra-shelf-type"><option value="">全部</option><option value="book">书籍</option><option value="magazine">杂志</option></select><button type="button" disabled={!!busy || !serverUrl} onClick={() => void connect()} className="min-h-11 shrink-0 text-xs text-[#736B60] underline disabled:opacity-50">刷新</button></div>
-      {kind !== 'magazine' && <label className="ra-category-control">书籍分类<select aria-label="服务器书籍分类" value={category} onChange={event => { setCategory(event.target.value); if (event.target.value) setKind('book'); }}><option value="">全部分类</option>{categories.map(option => <option key={option.id} value={option.id}>{option.label} · {option.count}</option>)}</select></label>}
+    {catalog && <><div className="content-library-toolbar" role="group" aria-label="搜索和筛选资料">
+      <div className="content-library-search-row">
+        <label className="content-library-search"><Search size={16} aria-hidden="true" /><input type="search" aria-label="搜索服务器资料" placeholder="搜索书名、作者或刊名" value={query} onChange={e => setQuery(e.target.value)} /></label>
+        <button type="button" aria-label="刷新目录" title="刷新目录" disabled={!!busy || !serverUrl} onClick={() => void connect()} className="content-library-refresh"><RefreshCw size={16} aria-hidden="true" /></button>
+      </div>
+      <div className="content-library-filters">
+        <select aria-label="筛选资料" value={category ? `category:${category}` : kind} onChange={event => {
+          const value = event.target.value;
+          setCategory(value.startsWith('category:') ? value.slice('category:'.length) : '');
+          setKind(value.startsWith('category:') ? 'book' : value);
+        }}>
+          <option value="">全部资料</option><option value="book">全部书籍</option><option value="magazine">全部杂志</option>
+          {categories.length > 0 && <optgroup label="书籍分类">{categories.map(option => <option key={option.id} value={`category:${option.id}`}>{option.label} · {option.count}</option>)}</optgroup>}
+        </select>
+        <span className="content-library-count" role="status">{items.length} 项</span>
+        <label className="content-library-updates"><input type="checkbox" checked={availableOnly} onChange={event => setAvailableOnly(event.target.checked)} />仅看可更新</label>
+      </div>
+    </div>
       {catalog.sync.running && <p className="text-xs text-[#736B60]">服务器正在同步，已有资料可继续下载。</p>}
       {catalog.sync.error && <p className="text-xs text-[#736B60]">部分杂志暂未同步成功，现有资料仍可下载。</p>}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#736B60]"><span>{items.length} 本 / 期</span><label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={availableOnly} onChange={event => setAvailableOnly(event.target.checked)} />仅看可更新</label></div>
       {!items.length && <p className="py-5 text-sm text-[#736B60]">{entry.sourceId && !catalog.items.some(item => item.id.startsWith(`${entry.sourceId}:`)) ? '官网暂未提供这一来源，可在外刊的更新详情中使用原来源更新。' : !catalog.items.length ? '资料正在整理，稍后再来。' : availableOnly && !query ? '当前范围未发现可更新的资料，可取消筛选查看已导入的版本。' : '没有找到相关资料。'}</p>}
       <div className="ra-book-grid">{items.map(item => {
         const state = libraryEditionState(item, history), cover = bookAppearance(item);

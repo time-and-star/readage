@@ -14,7 +14,7 @@ const groupsFor = {
 };
 const sourceRoots = {
   shared: ['src', 'public', 'packages', 'vendor/nextword-local-dictionary',
-    'website/book-presentation.js', 'website/bookshelf.css', 'website/update-protocol.mjs', 'website/patch-protocol.mjs', 'website/assets/wisdom.png', 'config/update-trust.json',
+    'website/book-presentation.js', 'website/bookshelf.css', 'website/update-protocol.mjs', 'website/installer-delta-protocol.mjs', 'website/patch-protocol.mjs', 'website/assets/wisdom.png', 'config/update-trust.json',
     'data/dictionary/readage', 'data/dictionary/revisions',
     'data/dictionary/imported/wordnet-3.1', 'data/dictionary/imported/wiktionary-fr',
     'data/dictionary/imported/wiktionary-fr-zh', 'data/dictionary/imported/wiktionary-ja-zh', 'prototypes/rec-particles',

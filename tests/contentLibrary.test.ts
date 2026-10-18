@@ -103,5 +103,5 @@ test('real hub → local transport → full EPUB import preserves splitting, ima
   const old = await prepare(first.sha256), newer = await prepare(second.sha256); old[0].status = 'Completed';
   const duplicate = await prepare(first.sha256); assert.equal(duplicate[0].id, old[0].id); assert.notEqual(newer[0].id, old[0].id);
   const groups = groupUserLibrary([...newer, ...old]); assert.equal(groups.length, 2); assert.equal(old[0].status, 'Completed');
-  assert.equal(withImportedLanguage(old[0], 'fr').importBatchId, `file-${first.sha256}-fr`);
+  assert.equal(withImportedLanguage(old[0], 'fr').importBatchId, `file-${first.sha256}-s2-fr`);
 });

@@ -4,19 +4,13 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Article, MagazineCatalogIndex, MagazineGalleryItem, MagazineIssue } from '../../src/types';
 import { issueFileKey } from './config';
 import { getDataRoot, readJsonFile, type StoredIssuePayload } from './store';
-import { applyMediaEntry, hydrateMagazineMedia } from './mediaUpgrade';
+import { applyMediaEntry, findMediaEntry, hydrateMagazineMedia, type IssueMediaManifest } from './mediaUpgrade';
 import { resolveArticleImage } from './assets';
 import { isNonStoryArticleTitle } from '../../src/lib/articleEligibility';
 
 const FILE_CONCURRENCY = 8;
 const CACHE_TTL_MS = 10 * 60_000;
 const LOCAL_IMAGE = /^\/api\/magazines\/assets\/([a-f0-9]{64}\.(?:jpg|png|gif|webp))$/;
-
-interface MediaManifest {
-  version: number;
-  sourceSha: string;
-  articles: Record<string, Parameters<typeof applyMediaEntry>[1]>;
-}
 
 interface GalleryCache {
   signature: string;
@@ -47,10 +41,10 @@ async function librarySignature(dataRoot: string): Promise<string> {
   return stamps.join('|');
 }
 
-async function readMediaManifest(issue: MagazineIssue, dataRoot: string): Promise<MediaManifest | null> {
-  const manifest = await readJsonFile<MediaManifest | null>(path.join(dataRoot, 'media_by_issue',
+async function readMediaManifest(issue: MagazineIssue, dataRoot: string): Promise<IssueMediaManifest | null> {
+  const manifest = await readJsonFile<IssueMediaManifest | null>(path.join(dataRoot, 'media_by_issue',
     `${issueFileKey(issue.sourceId, issue.issueLabel)}.json`), null).catch(() => null);
-  return manifest?.version === 1 && manifest.sourceSha === issue.remoteSha
+  return (manifest?.version === 1 || manifest?.version === 2) && manifest.sourceSha === issue.remoteSha
     && manifest.articles && typeof manifest.articles === 'object' ? manifest : null;
 }
 
@@ -87,7 +81,7 @@ async function loadIssueStories(
     const pictures = await Promise.all(articles.map(async stored => {
       if (!stored || seenArticles.has(stored.id)) return [];
       seenArticles.add(stored.id);
-      const entry = manifest?.articles[stored.id];
+      const entry = manifest && findMediaEntry(stored, manifest);
       let article = stored;
       if (!Array.isArray(stored.media) && entry) {
         try { article = applyMediaEntry(stored, entry); } catch { return []; }

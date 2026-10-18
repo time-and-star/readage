@@ -11,6 +11,7 @@ import { appendPreparedFileBatch, FILE_IMPORT_BATCH_SIZE, FILE_IMPORT_PREPARATIO
 import { ContentLibraryPicker } from './ContentLibraryPicker';
 import type { LibraryEntry } from '../lib/contentLibraryEntry';
 import { LibraryBookCover } from './LibraryBookCover';
+import { LibraryBookTitle } from './LibraryBookTitle';
 import { prepareSelectedLibraryBook } from '../lib/contentLibraryPreparation';
 
 interface EnterArticleModalProps {
@@ -289,7 +290,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
             </div></>}
 
             {(remotePrepared || localMode === 'file') && <div className={remotePrepared ? '' : 'rounded-xl border border-dashed border-[#DDD6C8] bg-white px-4 py-3'}>
-              {remotePrepared && <div className="ra-book-selection"><LibraryBookCover id={distributionRef.current.resourceId} title={distributionRef.current.title} kind={distributionRef.current.kind} /><div><h3>{distributionRef.current.title}</h3><p>{distributionRef.current.kind === 'magazine' ? '整期杂志' : '书籍'} · {languageName(sourceLanguage)}{prepared ? ` · 共 ${prepared.totalCount} ${prepared.format === 'pdf' ? '页' : '章 / 篇'}` : ''}</p><p>{isImportingFile ? '正在整理这本书的目录…' : prepared ? '按原有顺序阅读，插图、附件与学习进度一起保留。' : '准备完成后即可加入书架。'}</p><button type="button" disabled={busy} onClick={() => setActiveTab('library')} className="min-h-11 text-xs underline disabled:opacity-50">重新选书</button></div></div>}
+              {remotePrepared && <div className="ra-book-selection"><h3 className="library-book-selection-title"><LibraryBookTitle title={distributionRef.current.title} kind={distributionRef.current.kind} /></h3><LibraryBookCover id={distributionRef.current.resourceId} title={distributionRef.current.title} kind={distributionRef.current.kind} /><div><p>{distributionRef.current.kind === 'magazine' ? '整期杂志' : '书籍'} · {languageName(sourceLanguage)}{prepared ? ` · 共 ${prepared.totalCount} ${prepared.format === 'pdf' ? '页' : '章 / 篇'}` : ''}</p><p>{isImportingFile ? '正在整理这本书的目录…' : prepared ? '按原有顺序阅读，插图、附件与学习进度一起保留。' : '准备完成后即可加入书架。'}</p><button type="button" disabled={busy} onClick={() => setActiveTab('library')} className="min-h-11 text-xs underline disabled:opacity-50">重新选书</button></div></div>}
               <input
                 ref={fileInputRef}
                 type="file"

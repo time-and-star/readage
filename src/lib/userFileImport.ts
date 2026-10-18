@@ -7,6 +7,11 @@ export const FILE_IMPORT_BATCH_SIZE = 80;
 export const FILE_IMPORT_PREPARATION_LIMIT = 500;
 export const FILE_IMPORT_TIMEOUT_MS = 120_000;
 
+/** A changed chapter map must never reuse the learning identities of an older parse. */
+export function fileImportBatchId(sourceId: string, format: string): string {
+  return `file-${sourceId}${['epub', 'html', 'docx'].includes(format) ? '-s2' : ''}`;
+}
+
 interface ImportedFileArticle {
   title?: string;
   paragraphs: string[];
@@ -99,16 +104,17 @@ export function appendPreparedFileBatch(current: PreparedFileImport | null, file
   }
   const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const title = (file.name.split(/[/\\]/).pop() || file.name).replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim().slice(0, 200) || 'Imported file';
+  const batchId = fileImportBatchId(batch.sourceId, batch.format);
   const articles = batch.articles.map((item, index): Article => {
     const paragraphs = item.paragraphs.map(text => text.trim()).filter(Boolean);
     return {
-      id: `file-${batch.sourceId}-${batch.offset + index}`,
+      id: `${batchId}-${batch.offset + index}`,
       title: item.title?.trim() || 'Imported article',
       description: paragraphs.length ? `${paragraphs[0].slice(0, 90)}…` : 'PDF 原页', date,
       status: 'In Progress', source: 'user_input', content: paragraphs,
       media: item.media, sourceDocument: item.sourceDocument, keyWords: [],
       importEnrichmentStatus: paragraphs.length ? 'pending' : 'ready',
-      importBatchId: `file-${batch.sourceId}`, importBatchTitle: title, importBatchFormat: batch.format,
+      importBatchId: batchId, importBatchTitle: title, importBatchFormat: batch.format,
     };
   });
   return { file, format: batch.format, sourceId: batch.sourceId, totalCount: batch.totalCount,
