@@ -1,0 +1,95 @@
+name: Upload verified ReadAge 0.1.7 installers and APK deltas
+"on":
+  push:
+    branches:
+      - codex/full-installer-release-0.1.7
+    paths:
+      - .github/workflows/publish-full-installer-0.1.7.yml
+permissions: {}
+concurrency:
+  group: readage-full-installer-0.1.7
+  cancel-in-progress: false
+jobs:
+  upload:
+    if: github.repository == 'time-and-star/readage' && github.ref == 'refs/heads/codex/full-installer-release-0.1.7' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: time-and-star/readage
+      TARGET_COMMIT: 9a826a6f76ea6314de88983667739bfa6c0664b6
+      DRAFT_RELEASE_ID: "416554620"
+    steps:
+      - name: Download, verify and upload eight pinned assets to the fixed draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = time-and-star/readage
+          test "$GITHUB_REF" = refs/heads/codex/full-installer-release-0.1.7
+          test "$GITHUB_EVENT_NAME" = push
+          test "$TARGET_COMMIT" != __FIXED_SOURCE_COMMIT_REQUIRED__
+          test "$DRAFT_RELEASE_ID" != __FIXED_DRAFT_RELEASE_ID_REQUIRED__
+          work=$(mktemp -d -t readage-0.1.7.XXXXXXXX)
+          trap 'rm -rf -- "$work"' EXIT
+          cd "$work"
+          check_release() {
+            release=$(gh api "repos/time-and-star/readage/releases/$DRAFT_RELEASE_ID")
+            jq -e --argjson id "$DRAFT_RELEASE_ID" --arg target "$TARGET_COMMIT" \
+              '.id == $id and .draft == true and .tag_name == "v0.1.7" and .target_commitish == $target' \
+              <<< "$release" >/dev/null
+          }
+          verify_asset() {
+            jq -e --arg name "$name" --arg sha "sha256:$sha" --argjson bytes "$bytes" \
+              '[.assets[] | select(.name == $name)] as $items | ($items | length) == 1 and $items[0].state == "uploaded" and $items[0].size == $bytes and $items[0].digest == $sha' \
+              <<< "$release" >/dev/null
+          }
+          check_release
+          while read -r sha bytes name; do
+            check_release
+            count=$(jq -r --arg name "$name" '[.assets[] | select(.name == $name)] | length' <<< "$release")
+            if test "$count" -ne 0; then
+              verify_asset
+              printf 'Already verified: %s\n' "$name"
+              continue
+            fi
+            curl --fail --location --max-redirs 3 --proto '=https' --proto-redir '=https' \
+              --retry 5 --retry-all-errors --connect-timeout 30 --max-time 1800 \
+              --speed-time 60 --speed-limit 1024 --header 'Accept-Encoding: identity' \
+              --output "$name.part" "https://readage.xyz/downloads/$name"
+            test "$(stat -c '%s' "$name.part")" = "$bytes"
+            printf '%s  %s\n' "$sha" "$name.part" | sha256sum --check
+            check_release
+            uploaded=$(gh api --method POST "https://uploads.github.com/repos/time-and-star/readage/releases/$DRAFT_RELEASE_ID/assets?name=$name" \
+              --header 'Content-Type: application/octet-stream' --input "$name.part")
+            jq -e --arg name "$name" --arg sha "sha256:$sha" --argjson bytes "$bytes" \
+              '.name == $name and .size == $bytes and .state == "uploaded" and .digest == $sha' <<< "$uploaded" >/dev/null
+            check_release
+            verify_asset
+            rm -- "$name.part"
+            printf 'Uploaded and verified: %s\n' "$name"
+          done <<'READAGE_VERIFIED_ASSETS'
+          6800754ad357ed8034b518e61979b07046133c323f6c54aceb2e559f67411409 1335405981 ReadAge-0.1.7-windows-x64-setup.exe
+          1b5b332075ba2a513e907ca797bb6b0e6277834d5f7f3c99616259535338516c 1740942275 ReadAge-1.0.9-android.apk
+          3a715f126623785634916bfe6d8f0ac8582b8a31634a5cdbb81fbb6768ab6927 3051541 ReadAge-1.0.9-android.apk.from-b4b4467246f76c9da23c8bbf0df49b231d9e38254a4febd0fc5459f55c7ebefc.delta
+          2d982dcb9aee745689dec98d6958d3cb403de581b5b334fe576dde58366bf49b 1727 ReadAge-1.0.9-android.apk.from-b4b4467246f76c9da23c8bbf0df49b231d9e38254a4febd0fc5459f55c7ebefc.delta.json
+          06de55332026f5b6f7f27a2a1372652156c63fb1052fd1ee971b55ce072769d4 3052644 ReadAge-1.0.9-android.apk.from-75fb489acb13d79a0ceb1eec0b24754ee1b9a75e03f2a65db5301386d5dc9583.delta
+          826e6846311318c75d93db1af8f1fcd7203f87da241746226ab48a46d4a939d5 1768 ReadAge-1.0.9-android.apk.from-75fb489acb13d79a0ceb1eec0b24754ee1b9a75e03f2a65db5301386d5dc9583.delta.json
+          864365b78e61d23307306c4727cc57c5904e70e3420bd4a2089af3e1a89cdc18 3029892 ReadAge-1.0.9-android.apk.from-25c535a9595f7de4a2248ddfeb4b216f84f7624f68a1c164aaa2d512467392d8.delta
+          7e7b88350e70399adbdbcaa5e89082c28edb0876e975c8a91c73be0552b7b334 1811 ReadAge-1.0.9-android.apk.from-25c535a9595f7de4a2248ddfeb4b216f84f7624f68a1c164aaa2d512467392d8.delta.json
+          READAGE_VERIFIED_ASSETS
+          check_release
+          while read -r sha bytes name; do
+            verify_asset
+          done <<'READAGE_FINAL_ASSETS'
+          6800754ad357ed8034b518e61979b07046133c323f6c54aceb2e559f67411409 1335405981 ReadAge-0.1.7-windows-x64-setup.exe
+          1b5b332075ba2a513e907ca797bb6b0e6277834d5f7f3c99616259535338516c 1740942275 ReadAge-1.0.9-android.apk
+          3a715f126623785634916bfe6d8f0ac8582b8a31634a5cdbb81fbb6768ab6927 3051541 ReadAge-1.0.9-android.apk.from-b4b4467246f76c9da23c8bbf0df49b231d9e38254a4febd0fc5459f55c7ebefc.delta
+          2d982dcb9aee745689dec98d6958d3cb403de581b5b334fe576dde58366bf49b 1727 ReadAge-1.0.9-android.apk.from-b4b4467246f76c9da23c8bbf0df49b231d9e38254a4febd0fc5459f55c7ebefc.delta.json
+          06de55332026f5b6f7f27a2a1372652156c63fb1052fd1ee971b55ce072769d4 3052644 ReadAge-1.0.9-android.apk.from-75fb489acb13d79a0ceb1eec0b24754ee1b9a75e03f2a65db5301386d5dc9583.delta
+          826e6846311318c75d93db1af8f1fcd7203f87da241746226ab48a46d4a939d5 1768 ReadAge-1.0.9-android.apk.from-75fb489acb13d79a0ceb1eec0b24754ee1b9a75e03f2a65db5301386d5dc9583.delta.json
+          864365b78e61d23307306c4727cc57c5904e70e3420bd4a2089af3e1a89cdc18 3029892 ReadAge-1.0.9-android.apk.from-25c535a9595f7de4a2248ddfeb4b216f84f7624f68a1c164aaa2d512467392d8.delta
+          7e7b88350e70399adbdbcaa5e89082c28edb0876e975c8a91c73be0552b7b334 1811 ReadAge-1.0.9-android.apk.from-25c535a9595f7de4a2248ddfeb4b216f84f7624f68a1c164aaa2d512467392d8.delta.json
+          READAGE_FINAL_ASSETS
+          printf 'All 8 pinned installer/delta assets verified on the fixed draft release.\n'
