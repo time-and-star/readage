@@ -35,12 +35,12 @@ final class NativeMagazineStore {
     private volatile String progress;
     private volatile String lastRunAt;
     private volatile JSONObject lastResult;
-    private static final String REPO = "https://api.github.com/repos/hehonghui/awesome-english-ebooks/contents/";
+    private static final String LIBRARY_ORIGIN = "https://readage.xyz", LIBRARY_CATALOG = LIBRARY_ORIGIN+"/api/library/catalog";
     private static final String[][] SOURCES = {
-        {"economist", "The Economist", "01_economist", "C1", "Current Affairs", "issue"},
-        {"new_yorker", "The New Yorker", "02_new_yorker", "C1", "Culture & Literature", "issue"},
-        {"atlantic", "The Atlantic", "04_atlantic", "C1", "Ideas & Society", "issue"},
-        {"wired", "Wired", "05_wired", "B2", "Technology", "issue"},
+        {"economist", "The Economist", LIBRARY_CATALOG, "C1", "Current Affairs", "issue"},
+        {"new_yorker", "The New Yorker", LIBRARY_CATALOG, "C1", "Culture & Literature", "issue"},
+        {"atlantic", "The Atlantic", LIBRARY_CATALOG, "C1", "Ideas & Society", "issue"},
+        {"wired", "Wired", LIBRARY_CATALOG, "B2", "Technology", "issue"},
         {"news_in_levels_a2", "News in Levels - Level 1", "https://www.newsinlevels.com/level/level-1/", "A2", "Graded News", "graded_news"},
         {"news_in_levels_b1", "News in Levels - Level 2", "https://www.newsinlevels.com/level/level-2/", "B1", "Graded News", "graded_news"},
         {"conversation", "The Conversation", "https://theconversation.com/us/articles.atom", "B2", "Research & Society", "web_articles"},
@@ -257,14 +257,15 @@ final class NativeMagazineStore {
     private void sync(List<String> ids,int limit,boolean force) {
         JSONObject result; try { result=object("ok",true,"startedAt",lastRunAt,"importedIssues",0,"skippedIssues",0,"failedIssues",0,"errors",new JSONArray(),"perSource",new JSONObject()); }
         catch (Exception impossible) { running=false; return; }
+        WebsiteCatalog websiteCatalog=new WebsiteCatalog();
         try {
             for (String id:ids) {
                 ensureActive();
                 String[] source=source(id); JSONObject counts=object("imported",0,"skipped",0,"failed",0); result.getJSONObject("perSource").put(id,counts);
                 progress="正在检查 "+source[1]+"…";
                 try {
-                    List<JSONObject> candidates = source[5].equals("web_articles") ? feeds(source,limit) : source[5].equals("graded_news") ? news(source,limit) : github(source,limit);
-                    if (candidates.isEmpty()) throw new IOException("来源没有返回可下载的内容。");
+                    List<JSONObject> candidates = source[5].equals("web_articles") ? feeds(source,limit) : source[5].equals("graded_news") ? news(source,limit) : website(source,limit,websiteCatalog);
+                    if (candidates.isEmpty()) throw new IOException(source[5].equals("issue")?"ReadAge 官网暂未提供这一刊物的可下载期号。":"来源没有返回可下载的内容。");
                     for (JSONObject candidate:candidates) {
                         ensureActive();
                         if(candidate.has("error")) {
@@ -274,7 +275,8 @@ final class NativeMagazineStore {
                         String issueId=id+":"+candidate.getString("label");
                         JSONObject previous=findIssue(issueId);
                         if (!force && previous!=null && "ready".equals(previous.optString("status"))
-                            && previous.optString("remoteSha").equals(candidate.optString("sha")) && issueFile(previous).isFile()
+                            && (previous.optString("remoteSha").equals(candidate.optString("sha"))
+                                || candidate.optBoolean("website") && previous.optString("documentSourceId").equals(candidate.optString("sha"))) && issueFile(previous).isFile()
                             && (!"epub".equals(previous.optString("format")) || previous.optInt("epubStructureVersion")>=EPUB_STRUCTURE_VERSION)
                             && (!source[5].equals("web_articles") || completeWebArticle(previous,candidate))) {
                             increment(result,"skippedIssues"); increment(counts,"skipped"); continue;
@@ -299,28 +301,49 @@ final class NativeMagazineStore {
     }
     private static String message(Exception error) { String text=error.getMessage(); return text==null ? "更新失败，请重试。" : text.substring(0,Math.min(240,text.length())); }
     private static void increment(JSONObject value,String key) throws Exception { value.put(key,value.optInt(key)+1); }
-    private JSONArray contents(String path) throws Exception {
-        ensureActive();
-        if (path.isEmpty() || path.length()>500 || path.contains("..") || path.startsWith("/") || path.contains("\\") || path.matches(".*[\\p{Cntrl}?#].*")) throw new IOException("外刊目录地址无效。");
-        StringBuilder encoded=new StringBuilder(); for(String segment:path.split("/")) { if(encoded.length()>0)encoded.append('/'); encoded.append(URLEncoder.encode(segment,"UTF-8").replace("+","%20")); }
-        return new JSONArray(new String(network.fetch(REPO+encoded+"?ref=master",4*1024*1024),StandardCharsets.UTF_8));
+    /** One immutable official catalogue snapshot per sync, including a failed attempt. */
+    private static final class WebsiteCatalog { boolean loaded; JSONArray items; Exception error; }
+    private static boolean websiteDate(Object value) {
+        if(!(value instanceof String))return false;String date=(String)value;
+        try{java.time.OffsetDateTime.parse(date);return true;}catch(java.time.DateTimeException ignored){}
+        try{java.time.LocalDateTime.parse(date);return true;}catch(java.time.DateTimeException ignored){}
+        try{java.time.LocalDate.parse(date);return true;}catch(java.time.DateTimeException ignored){}
+        try{java.time.ZonedDateTime.parse(date,java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME);return true;}catch(java.time.DateTimeException ignored){return false;}
     }
-    private List<JSONObject> github(String[] source,int limit) throws Exception {
-        JSONArray entries=contents(source[2]); List<JSONObject> dirs=new ArrayList<>();
-        for(int i=0;i<entries.length();i++) { JSONObject entry=entries.getJSONObject(i); if("dir".equals(entry.optString("type")) && entry.optString("path").startsWith(source[2]+"/")) dirs.add(entry); }
-        dirs.sort((a,b)->b.optString("name").compareTo(a.optString("name")));
-        List<JSONObject> candidates=new ArrayList<>();
-        for(JSONObject dir:dirs.subList(0,Math.min(limit,dirs.size()))) {
-            JSONArray files=contents(dir.getString("path")); JSONObject preferred=null;
-            for(int i=0;i<files.length();i++) { JSONObject file=files.getJSONObject(i); String name=file.optString("name").toLowerCase(Locale.ROOT); if("file".equals(file.optString("type")) && (name.endsWith(".epub") || name.endsWith(".pdf"))) { if(preferred==null || name.endsWith(".epub"))preferred=file; } }
-            if(preferred!=null && !preferred.isNull("download_url")) {
-                Matcher date=Pattern.compile("(\\d{4})[._-](\\d{2})[._-](\\d{2})").matcher(dir.getString("name"));
-                String label=date.find() ? date.group(1)+"."+date.group(2)+"."+date.group(3) : dir.getString("name").replaceAll("^(?i:te|tny|ta|wired|the)[_-]?","");
-                if(!label.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,79}"))continue;
-                candidates.add(object("label",label,"name",preferred.getString("name"),"url",preferred.getString("download_url"),"sha",preferred.optString("sha"),"path",preferred.optString("path")));
-            }
+    private List<JSONObject> website(String[] source,int limit,WebsiteCatalog catalog) throws Exception {
+        ensureActive();
+        if(!catalog.loaded) {
+            catalog.loaded=true;
+            try {
+                JSONObject value=new JSONObject(new String(network.fetch(LIBRARY_CATALOG,2*1024*1024),StandardCharsets.UTF_8));
+                Object version=value.opt("schemaVersion");JSONArray items=value.optJSONArray("items");
+                if(!(version instanceof Number) || ((Number)version).doubleValue()!=1 || items==null || items.length()>2000)throw new IOException("ReadAge 官网外刊目录格式无效，请稍后重试。");
+                catalog.items=items;
+            }catch(Exception error){catalog.error=error;}
         }
-        return candidates;
+        if(catalog.error!=null)throw catalog.error;
+        Map<String,JSONObject> byLabel=new LinkedHashMap<>();
+        for(int i=0;i<catalog.items.length();i++) {
+            JSONObject item=catalog.items.optJSONObject(i);if(item==null || !"magazine".equals(item.optString("kind")))continue;
+            String id=item.optString("id");if(!id.startsWith(source[0]+":") || id.indexOf(':')!=id.lastIndexOf(':'))continue;
+            String suffix=id.substring(source[0].length()+1);if(!suffix.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,79}"))continue;
+            Matcher date=Pattern.compile("(\\d{4})[._-](\\d{2})[._-](\\d{2})").matcher(suffix);
+            String label=date.find()?date.group(1)+"."+date.group(2)+"."+date.group(3):suffix.replaceAll("^(?i:te|tny|ta|wired|the)[_-]?","");if(label.isEmpty())label=suffix;
+            if(!label.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,79}"))continue;
+            String name=item.optString("filename"), sha=item.optString("sha256"), path=item.optString("downloadPath");Object rawBytes=item.opt("bytes"),title=item.opt("title");
+            JSONObject candidate;
+            if(!(item.opt("filename") instanceof String) || name.length()>180 || Pattern.compile("[\\\\/\\x00-\\x1f]").matcher(name).find()
+                || !name.toLowerCase(Locale.ROOT).matches(".*\\.(epub|pdf)$") || !"en".equals(item.opt("language"))
+                || !(title instanceof String) || ((String)title).length()>240 || ((String)title).replaceAll("[\\s\\p{Z}]","").isEmpty() || !websiteDate(item.opt("updatedAt"))
+                || !(item.opt("sha256") instanceof String) || !sha.matches("[a-f0-9]{64}") || !path.equals("/api/library/files/"+sha) || !(rawBytes instanceof Number)
+                || ((Number)rawBytes).doubleValue()!=((Number)rawBytes).longValue() || ((Number)rawBytes).longValue()<1 || ((Number)rawBytes).longValue()>MAX_FILE) {
+                candidate=object("label",label,"error","官网期刊文件信息无效，请稍后重试。");
+            }else candidate=object("label",label,"name",name,"url",LIBRARY_ORIGIN+path,"sha",sha,"path",id,"bytes",((Number)rawBytes).longValue(),"website",true);
+            JSONObject previous=byLabel.get(label);
+            if(previous==null || previous.has("error") || !candidate.has("error") && name.toLowerCase(Locale.ROOT).endsWith(".epub") && !previous.optString("name").toLowerCase(Locale.ROOT).endsWith(".epub"))byLabel.put(label,candidate);
+        }
+        List<JSONObject> candidates=new ArrayList<>(byLabel.values());candidates.sort((a,b)->b.optString("label").compareTo(a.optString("label")));
+        return new ArrayList<>(candidates.subList(0,Math.min(limit,candidates.size())));
     }
     private List<JSONObject> news(String[] source,int limit) throws Exception {
         String level=source[0].endsWith("a2") ? "1" : "2";
@@ -407,20 +430,27 @@ final class NativeMagazineStore {
     }
     private void importIssue(String[] source,JSONObject candidate,String issueId) throws Exception {
         ensureActive();
-        JSONArray parsed=new JSONArray(); String filename=candidate.getString("name"), format=filename.toLowerCase(Locale.ROOT).endsWith(".epub") ? "epub" : filename.toLowerCase(Locale.ROOT).endsWith(".pdf") ? "pdf" : "html", documentSourceId="";
+        JSONArray parsed=new JSONArray(); String filename=candidate.getString("name"), format=filename.toLowerCase(Locale.ROOT).endsWith(".epub") ? "epub" : filename.toLowerCase(Locale.ROOT).endsWith(".pdf") ? "pdf" : "html", documentSourceId="", downloadedGitSha="";
         if(source[5].equals("web_articles")) {long[] imageBytes={0};parsed.put(NativeMagazineFeeds.parseArticle(source[0],candidate,url->saveWebImage(source[0],url,imageBytes)));}
         else if(candidate.has("parsed"))parsed.put(candidate.getJSONObject("parsed"));
         else {
             byte[] bytes=network.fetch(candidate.getString("url"),MAX_FILE); if(bytes.length==0)throw new IOException("下载的外刊文件为空。");
+            if(candidate.optBoolean("website") && (bytes.length!=candidate.getLong("bytes") || !NativeMagazineFeeds.hash(bytes).equals(candidate.getString("sha"))))throw new IOException("ReadAge 官网外刊下载校验失败，已保留原有内容，请刷新目录后重试。");
             File file=File.createTempFile("download-","."+format,root);
             try {
                 Files.write(file.toPath(),bytes);progress="正在整理 "+source[1]+" "+candidate.getString("label")+"…";
-                JSONObject result=parseFile(file,filename);parsed=result.getJSONArray("articles");documentSourceId=result.optString("sourceId");
+                if(candidate.optBoolean("website")){documentSourceId=candidate.getString("sha");downloadedGitSha=fileHash(file,"SHA-1",true);}
+                JSONObject result=parseFile(file,filename);parsed=result.getJSONArray("articles");
+                String parsedSourceId=result.optString("sourceId");if(!parsedSourceId.isEmpty()) {
+                    if(!documentSourceId.isEmpty() && !documentSourceId.equals(parsedSourceId))throw new IOException("外刊正文与下载文件标识不一致，已保留原有内容。");
+                    documentSourceId=parsedSourceId;
+                }
             } finally { Files.deleteIfExists(file.toPath()); }
         }
         if(parsed.length()==0)throw new IOException("这份外刊没有可提取的文字正文。");
         String label=candidate.getString("label"), importedAt=now();JSONObject previous=findIssue(issueId);JSONArray oldRows=null;
         if(previous!=null && (previous.optString("remoteSha").equals(candidate.optString("sha"))
+            || (!downloadedGitSha.isEmpty() && downloadedGitSha.equals(previous.optString("remoteSha")))
             || (!documentSourceId.isEmpty() && documentSourceId.equals(previous.optString("documentSourceId"))))) {
             // New remote content must not inherit unrelated old article IDs. A broken
             // old payload must still be replaceable by a successful explicit update.
@@ -435,6 +465,7 @@ final class NativeMagazineStore {
         String stored=hash(issueId+":"+candidate.optString("sha")+":"+UUID.randomUUID())+".json";
         JSONObject issue=object("id",issueId,"sourceId",source[0],"issueLabel",label,"title",source[1]+" "+label,"publishedAt",label,"importedAt",importedAt,"format",format,"remotePath",candidate.optString("path"),"remoteSha",candidate.optString("sha"),"articleCount",articles.length(),"status","ready","storedFile",stored);
         issue.put("sourceKind",source[5]);if(previous!=null)retainPreviousPayload(issue,previous);
+        if(documentSourceId.matches("[a-f0-9]{64}"))issue.put("documentSourceId",documentSourceId);
         if(source[5].equals("web_articles")) {
             byte[] html=candidate.getString("html").getBytes(StandardCharsets.UTF_8);String original=NativeMagazineFeeds.hash(html)+".html";
             atomicBytes(new File(webOriginals(),original),html);

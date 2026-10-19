@@ -1033,6 +1033,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     lookupLocationRef.current = getReadingTextLocation(e.currentTarget as HTMLElement);
     const clickedElement = e.currentTarget as HTMLElement;
     const speechTarget = createReadingWordSpeechTarget(readingArticle.id, clickedElement.dataset.speechStart, clickedElement.dataset.speechEnd);
+    if (wordCardSpeechOwnedRef.current) speech.stop();
+    wordCardSpeechOwnedRef.current = speech.preferences.autoPronounceWords;
+    if (speech.preferences.autoPronounceWords) speech.speak(cleanWord, speechTarget);
     setSelectionAction(null);
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setLookupAnchor({ left: rect.left, top: rect.top, bottom: rect.bottom });
@@ -1597,6 +1600,18 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               </div>
 
               <SpeechControls preferences={speech.preferences} onChange={speech.setPreferences} language={english ? undefined : language} />
+              <button
+                type="button"
+                role="switch"
+                aria-checked={speech.preferences.autoPronounceWords}
+                onClick={() => speech.setPreferences({ autoPronounceWords: !speech.preferences.autoPronounceWords })}
+                className="w-full min-h-11 px-3 py-2.5 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center justify-between gap-3 text-left"
+              >
+                <span>点击单词自动发音</span>
+                <span aria-hidden="true" className={`flex h-6 w-10 shrink-0 items-center rounded-full p-0.5 transition-colors ${speech.preferences.autoPronounceWords ? 'bg-[#C35E37]' : 'bg-[#D8D2C6]'}`}>
+                  <span className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${speech.preferences.autoPronounceWords ? 'translate-x-4' : 'translate-x-0'}`} />
+                </span>
+              </button>
               <button
                 type="button"
                 onClick={() => {

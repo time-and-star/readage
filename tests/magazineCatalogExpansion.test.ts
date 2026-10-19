@@ -4,6 +4,7 @@ import { getSourceById, MAGAZINE_SOURCES } from '../server/magazines/config';
 import { mergeConfiguredSourceSummaries } from '../server/magazines/store';
 import type { MagazineSourceSummary } from '../src/types';
 import fs from 'node:fs';
+import { DISTRIBUTED_MAGAZINE_IDS, MAGAZINE_LIBRARY_ORIGIN } from '../src/lib/magazineDistribution';
 
 const articleSourceIds = ['conversation', 'jstor_daily', 'science_news_explores', 'mit_press_reader'];
 
@@ -11,9 +12,14 @@ test('Android source names, topics, levels, formats and addresses match the Node
   const java = fs.readFileSync(new URL('../android/app/src/main/java/cn/readage/app/NativeMagazineStore.java', import.meta.url), 'utf8');
   const block = java.match(/String\[\]\[\] SOURCES\s*=\s*\{([\s\S]*?)\n\s*\};/)?.[1];
   assert.ok(block, 'native catalog definition is inspectable');
-  const rows = [...block.matchAll(/\{([^{}]+)\}/g)].map(match => JSON.parse(`[${match[1]}]`) as string[]);
+  const origin = java.match(/LIBRARY_ORIGIN\s*=\s*("[^"]+")/)?.[1];
+  const catalogPath = java.match(/LIBRARY_CATALOG\s*=\s*LIBRARY_ORIGIN\s*\+\s*("[^"]+")/)?.[1];
+  assert.ok(origin && catalogPath, 'native official catalog address is inspectable');
+  const catalog = JSON.stringify(JSON.parse(origin) + JSON.parse(catalogPath));
+  const rows = [...block.matchAll(/\{([^{}]+)\}/g)].map(match => JSON.parse(`[${match[1].replace(/\bLIBRARY_CATALOG\b/g, catalog)}]`) as string[]);
   assert.deepEqual(rows, MAGAZINE_SOURCES.map(source => [source.id, source.displayName,
-    source.sourceUrl || source.repoDir, source.levelHint, source.topic, source.sourceKind]));
+    (DISTRIBUTED_MAGAZINE_IDS as readonly string[]).includes(source.id) ? `${MAGAZINE_LIBRARY_ORIGIN}/api/library/catalog` : source.sourceUrl || source.repoDir,
+    source.levelHint, source.topic, source.sourceKind]));
 });
 
 test('new public article sources use complete official feeds with bounded image hosts', () => {

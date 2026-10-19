@@ -77,7 +77,7 @@ export function ContentLibraryPicker({ history, onSelect, entry = { intent: 'imp
     </div>
       {catalog.sync.running && <p className="text-xs text-[#736B60]">服务器正在同步，已有资料可继续下载。</p>}
       {catalog.sync.error && <p className="text-xs text-[#736B60]">部分杂志暂未同步成功，现有资料仍可下载。</p>}
-      {!items.length && <p className="py-5 text-sm text-[#736B60]">{entry.sourceId && !catalog.items.some(item => item.id.startsWith(`${entry.sourceId}:`)) ? '官网暂未提供这一来源，可在外刊的更新详情中使用原来源更新。' : !catalog.items.length ? '资料正在整理，稍后再来。' : availableOnly && !query ? '当前范围未发现可更新的资料，可取消筛选查看已导入的版本。' : '没有找到相关资料。'}</p>}
+      {!items.length && <p className="py-5 text-sm text-[#736B60]">{entry.sourceId && !catalog.items.some(item => item.id.startsWith(`${entry.sourceId}:`)) ? '官网暂未提供这一来源，请稍后刷新；已有内容仍可阅读。' : !catalog.items.length ? '资料正在整理，稍后再来。' : availableOnly && !query ? '当前范围未发现可更新的资料，可取消筛选查看已导入的版本。' : '没有找到相关资料。'}</p>}
       <div className="ra-book-grid">{items.map(item => {
         const state = libraryEditionState(item, history), cover = bookAppearance(item);
         return <button key={item.id} type="button" disabled={!!busy} onClick={() => void download(item)} className="ra-book-choice" aria-label={`选择${item.kind === 'book' ? '书籍' : '杂志'}：${item.title}`} title={`${item.filename.split('.').at(-1)?.toUpperCase()} · ${(item.bytes / 1048576).toFixed(1)} MB`}>

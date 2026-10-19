@@ -7,14 +7,16 @@ const api = 'https://api.github.com/repos/hehonghui/awesome-english-ebooks/conte
 
 test('the manual catalogue transport accepts configured sources and rejects arbitrary hosts, repositories and credentials', () => {
   for (const url of [api, archive, 'https://github.com/hehonghui/awesome-english-ebooks/raw/master/issue.epub',
-    'https://www.newsinlevels.com/level/level-1/', 'https://newsinlevels.com/products/harbor-level-1/']) {
+    'https://www.newsinlevels.com/level/level-1/', 'https://newsinlevels.com/products/harbor-level-1/',
+    'https://readage.xyz/api/library/catalog', `https://readage.xyz/api/library/files/${'a'.repeat(64)}`]) {
     assert.equal(validateMagazineNetworkUrl(url).href, url);
   }
   for (const url of ['http://127.0.0.1/private', 'https://127.0.0.1/private', 'https://api.openai.com/v1',
     'https://api.github.com/user', 'https://api.github.com/repos/attacker/repo/contents',
     'https://raw.githubusercontent.com/attacker/repo/file.epub', 'https://evil.githubusercontent.com/archive',
     'https://www.newsinlevels.com.attacker.example/story', 'https://user:password@www.newsinlevels.com/story',
-    'https://www.newsinlevels.com:444/story']) assert.throws(() => validateMagazineNetworkUrl(url), undefined, url);
+    'https://www.newsinlevels.com:444/story', 'https://readage.xyz/private', 'https://readage.xyz/api/library/catalog?x=1',
+    `https://readage.xyz/api/library/files/${'a'.repeat(64)}#x`, 'https://readage.xyz.evil.test/api/library/catalog']) assert.throws(() => validateMagazineNetworkUrl(url), undefined, url);
 });
 
 test('only the manual sync async chain can use the dedicated network, without changing global fetch', async () => {
@@ -93,4 +95,13 @@ test('publisher image redirects cannot cross to another configured publisher bef
   }, { offline: true, manualSyncEnabled: true });
   await assert.rejects(network.runManualSync(() => network.fetchScoped('https://images.theconversation.com/image.jpg', {}, ['images.theconversation.com'])), /重定向/);
   assert.deepEqual(calls, ['https://images.theconversation.com/image.jpg']);
+});
+
+test('official periodicals never follow a redirect back to the upstream publisher or GitHub', async () => {
+  let calls = 0;
+  const network = createMagazineNetwork(async () => {
+    calls++; return new Response(null, { status: 302, headers: { Location: archive } });
+  }, { offline: true, manualSyncEnabled: true });
+  await assert.rejects(network.runManualSync(() => network.fetch('https://readage.xyz/api/library/catalog')), /不接受重定向/);
+  assert.equal(calls, 1);
 });

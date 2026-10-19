@@ -5,7 +5,7 @@ import { IS_ANDROID, IS_OFFLINE_APP } from '../platform/runtime';
 import { nativeBundledSpeechAdapter } from '../platform/nativeBundledSpeech';
 
 export type SpeechLanguage = 'en-US' | 'en-GB';
-export interface SpeechPreferences { lang: SpeechLanguage; rate: number }
+export interface SpeechPreferences { lang: SpeechLanguage; rate: number; autoPronounceWords: boolean }
 export interface SpeechTarget {
   articleId: string;
   startOffset: number;
@@ -51,7 +51,7 @@ export interface NativeSpeechAdapter {
 
 const PREFERENCES_KEY = `${APP_STORAGE_PREFIX}:speech-preferences`;
 const FALLBACK_NOTICE = '语音服务暂不可用，已使用设备语音。';
-const DEFAULT_PREFERENCES: SpeechPreferences = { lang: 'en-US', rate: 1 };
+const DEFAULT_PREFERENCES: SpeechPreferences = { lang: 'en-US', rate: 1, autoPronounceWords: false };
 
 /** The transport and playback boundary also allows other client adapters to be tested independently. */
 export interface SpeechEnvironment {
@@ -72,6 +72,7 @@ function normalizePreferences(value: Partial<SpeechPreferences>, base = DEFAULT_
     lang: value.lang === 'en-GB' ? 'en-GB' : value.lang === 'en-US' ? 'en-US' : base.lang,
     rate: typeof value.rate === 'number' && Number.isFinite(value.rate)
       ? Math.max(0.5, Math.min(2, value.rate)) : base.rate,
+    autoPronounceWords: typeof value.autoPronounceWords === 'boolean' ? value.autoPronounceWords : base.autoPronounceWords,
   };
 }
 

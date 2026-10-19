@@ -12,6 +12,8 @@ import static org.junit.Assert.*;
 
 /** Regression fixtures use isolated host storage, without a phone or live source. */
 public class NativeMagazineRegressionTest {
+    private static final String CATALOG_URL="https://readage.xyz/api/library/catalog", FILE_URL="https://readage.xyz/api/library/files/";
+    private static final byte[] DOCUMENT_BYTES=bytes("fixture document");
     private File directory;
     private NativeMagazineStore store;
     private volatile String paragraph="old readable text";
@@ -20,11 +22,14 @@ public class NativeMagazineRegressionTest {
     }
     @After public void cleanup() { if(store!=null)store.close(); }
     private static byte[] bytes(String text) { return text.getBytes(StandardCharsets.UTF_8); }
+    private static String sha256(byte[] content) throws Exception { return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(content)); }
+    private static JSONObject catalogItem(String date,byte[] content) throws Exception {
+        String sha=sha256(content);return NativeMagazineStore.object("id","economist:te_"+date,"kind","magazine","title","The Economist "+date,"language","en","updatedAt","2026-10-19T00:00:00.000Z","filename","issue.pdf","sha256",sha,"bytes",content.length,"downloadPath","/api/library/files/"+sha);
+    }
     private byte[] fetch(String url,int maximum) throws Exception {
-        if(url.endsWith("01_economist?ref=master"))return bytes("[{\"name\":\"te_2026.10.10\",\"path\":\"01_economist/te_2026.10.10\",\"type\":\"dir\"}]");
-        if(url.contains("/contents/01_economist/te_2026.10.10?"))return bytes("[{\"name\":\"issue.pdf\",\"path\":\"01_economist/te_2026.10.10/issue.pdf\",\"type\":\"file\",\"sha\":\"same-remote-sha\",\"download_url\":\"https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/01_economist/te_2026.10.10/issue.pdf\"}]");
-        if(url.endsWith("issue.pdf"))return bytes("fixture document");
-        throw new IOException("Unexpected fixture URL");
+        if(url.equals(CATALOG_URL))return bytes(NativeMagazineStore.object("schemaVersion",1,"items",new JSONArray().put(catalogItem("2026.10.10",DOCUMENT_BYTES))).toString());
+        if(url.equals(FILE_URL+sha256(DOCUMENT_BYTES)))return DOCUMENT_BYTES.clone();
+        throw new IOException("Unexpected fixture URL: "+url);
     }
     private JSONObject part(String title,boolean hasText) throws Exception {
         return NativeMagazineStore.object("title",title,"paragraphs",hasText?new JSONArray().put(paragraph):new JSONArray(),"media",new JSONArray(),
@@ -72,6 +77,38 @@ public class NativeMagazineRegressionTest {
         store=new NativeMagazineStore(directory,(f,n,o,l)->{throw new AssertionError("Reading must not parse");},(u,m)->{throw new AssertionError("Reading must stay offline");});
         assertEquals("old readable text",query("/articles/"+id).getJSONObject("article").getJSONArray("content").getString(0));
         assertFalse(query("/articles/mag:unknown:2026.10.10:missing-1").getBoolean("ok"));
+    }
+    @Test public void oneIssueDownloadTimeoutKeepsOtherDiscoveriesAndExistingReadableCache() throws Exception {
+        create(false);update(false);
+        String oldId=query("/issues/economist:2026.10.10").getJSONArray("articles").getJSONObject(0).getString("id");
+        String oldPayload=query("/issues").getJSONArray("issues").getJSONObject(0).getString("storedFile");
+        byte[] failedReplacement=bytes("fixture changed document for 2026.10.10");
+        assertNotEquals(query("/issues").getJSONArray("issues").getJSONObject(0).getString("remoteSha"),sha256(failedReplacement));
+        byte[] oldBytes=Files.readAllBytes(new File(directory,oldPayload).toPath());store.close();
+        paragraph="new readable text";
+        store=new NativeMagazineStore(directory,(f,n,o,l)->NativeMagazineStore.object("nextOffset",JSONObject.NULL,"articles",new JSONArray().put(part("New text page",true))),(url,max)-> {
+            if(url.equals(CATALOG_URL)) {
+                JSONArray items=new JSONArray();
+                for(String date:Arrays.asList("2026.10.17","2026.10.10","2026.10.03"))items.put(catalogItem(date,date.equals("2026.10.10")?failedReplacement:bytes("fixture new document for "+date)));
+                return bytes(NativeMagazineStore.object("schemaVersion",1,"items",items).toString());
+            }
+            if(url.equals(FILE_URL+sha256(failedReplacement)))throw new java.net.SocketTimeoutException("fixture issue download timed out");
+            for(String date:Arrays.asList("2026.10.17","2026.10.03")) {
+                byte[] content=bytes("fixture new document for "+date);if(url.equals(FILE_URL+sha256(content)))return content;
+            }
+            throw new IOException("Unexpected fixture URL: "+url);
+        });
+        store.start(NativeMagazineStore.object("sources",new JSONArray().put("economist"),"maxIssuesPerSource",3));awaitComplete();
+        JSONObject result=store.status().getJSONObject("lastResult");
+        assertFalse(result.getBoolean("ok"));assertEquals(2,result.getInt("importedIssues"));assertEquals(1,result.getInt("failedIssues"));
+        assertEquals(1,result.getJSONArray("errors").length());
+        assertEquals("The Economist 2026.10.10：fixture issue download timed out",result.getJSONArray("errors").getString(0));
+        assertEquals(2,result.getJSONObject("perSource").getJSONObject("economist").getInt("imported"));
+        assertEquals(1,result.getJSONObject("perSource").getJSONObject("economist").getInt("failed"));
+        assertEquals(3,query("/issues").getJSONArray("issues").length());
+        assertEquals("old readable text",query("/articles/"+oldId).getJSONObject("article").getJSONArray("content").getString(0));
+        assertArrayEquals(oldBytes,Files.readAllBytes(new File(directory,oldPayload).toPath()));
+        for(String date:Arrays.asList("2026.10.17","2026.10.03"))assertEquals(1,query("/issues/economist:"+date).getJSONArray("articles").length());
     }
     @Test public void closingAWorkerDoesNotStartMoreSourceRequests() throws Exception {
         CountDownLatch entered=new CountDownLatch(1);AtomicInteger requests=new AtomicInteger(),closes=new AtomicInteger();

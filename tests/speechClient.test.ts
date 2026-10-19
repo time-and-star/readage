@@ -414,9 +414,31 @@ test('shared accent and speed preferences survive reload and select an explicit 
   assert.equal(f.utterances[0].voice?.name, 'British Natural');
   assert.equal(f.utterances[0].lang, 'en-GB');
   assert.equal(f.utterances[0].rate, 0.9);
-  assert.deepEqual(reloaded.getSpeechPreferences(), { lang: 'en-GB', rate: 0.9 });
+  assert.deepEqual(reloaded.getSpeechPreferences(), { lang: 'en-GB', rate: 0.9, autoPronounceWords: false });
   reloaded.setSpeechPreferences({ rate: Infinity });
   assert.equal(reloaded.getSpeechPreferences().rate, 0.9);
+});
+
+test('automatic word pronunciation is opt-in, survives reload, and preserves accent and speed updates', () => {
+  const f = fixture();
+  assert.equal(f.client.getSpeechPreferences().autoPronounceWords, false);
+  f.client.setSpeechPreferences({ autoPronounceWords: true });
+  const reloaded = createSpeechClient(f.environment);
+  reloaded.setSpeechPreferences({ lang: 'en-GB', rate: 1.25 });
+  assert.deepEqual(reloaded.getSpeechPreferences(), { lang: 'en-GB', rate: 1.25, autoPronounceWords: true });
+  reloaded.setSpeechPreferences({ autoPronounceWords: 'false' as unknown as boolean });
+  assert.equal(reloaded.getSpeechPreferences().autoPronounceWords, true);
+  reloaded.setSpeechPreferences({ autoPronounceWords: false });
+  assert.deepEqual(createSpeechClient(f.environment).getSpeechPreferences(), { lang: 'en-GB', rate: 1.25, autoPronounceWords: false });
+});
+
+test('older or malformed word-pronunciation preferences never opt users in', () => {
+  const f = fixture();
+  for (const value of [{ lang: 'en-GB', rate: 0.9 }, { autoPronounceWords: 'true' }, { autoPronounceWords: 1 }]) {
+    const client = createSpeechClient({ ...f.environment, storage: { getItem: () => JSON.stringify(value), setItem() {} } });
+    assert.equal(client.getSpeechPreferences().autoPronounceWords, false);
+    assert.equal(client.getSpeechPreferences().lang, 'lang' in value ? 'en-GB' : 'en-US');
+  }
 });
 
 test('device voices can load later, without choosing the system Chinese voice', async () => {

@@ -14,6 +14,7 @@ public class NativeMagazineStoreTest {
     private NativeMagazineStore store;
     private final List<String> calls = Collections.synchronizedList(new ArrayList<>());
     private volatile boolean failDownload;
+    private static final String CATALOG="https://readage.xyz/api/library/catalog", FILES="https://readage.xyz/api/library/files/";
     private static final String CONTENT = "Phones can read magazines offline.\nThe original words stay complete.";
     @Before public void setup() throws Exception {
         directory = Files.createTempDirectory(Paths.get(System.getProperty("readage.magazine.test.root")),"catalog-").toFile();
@@ -26,14 +27,21 @@ public class NativeMagazineStoreTest {
     @After public void cleanup() { if(store!=null)store.close(); }
     private byte[] fetch(String url,int maximum) throws Exception {
         NativeMagazineHttp.allowed(url); calls.add(url);
-        if(url.endsWith("01_economist?ref=master"))return bytes("[{\"name\":\"te_2026.10.10\",\"path\":\"01_economist/te_2026.10.10\",\"type\":\"dir\"}]");
-        if(url.contains("/contents/01_economist/te_2026.10.10?"))return bytes("[{\"name\":\"issue.epub\",\"path\":\"01_economist/te_2026.10.10/issue.epub\",\"type\":\"file\",\"sha\":\"fixture-sha\",\"download_url\":\"https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/01_economist/te_2026.10.10/issue.epub\"}]");
-        if(url.endsWith("issue.epub")) { if(failDownload)throw new IOException("下载超时"); return bytes(CONTENT); }
+        if(url.equals(CATALOG))return catalog(new JSONArray().put(item("economist:te_2026.10.10","issue.epub",bytes(CONTENT))));
+        if(url.equals(FILES+NativeMagazineFeeds.hash(bytes(CONTENT)))) { if(failDownload)throw new IOException("下载超时"); return bytes(CONTENT); }
         if(url.endsWith("/level/level-1/"))return bytes("<a href='/products/reading-offline-level-1/'>Read</a><a href='https://evil.example/products/evil-level-1/'>Ignore</a>");
         if(url.endsWith("/products/reading-offline-level-1/"))return bytes("<html><h1 class='article-title'>Reading offline</h1><div id='nContent'><p>10-10-2026</p><p>Phones can read news offline.</p><p>The article is complete.</p></div><p>Unrelated navigation.</p></html>");
         throw new IOException("Unexpected request: "+url);
     }
     private static byte[] bytes(String text) { return text.getBytes(StandardCharsets.UTF_8); }
+    private static JSONObject item(String id,String filename,byte[] bytes) throws Exception {
+        String sha=NativeMagazineFeeds.hash(bytes);
+        return NativeMagazineStore.object("id",id,"kind","magazine","title",id,"language","en","updatedAt","2026-10-19T00:00:00.000Z","filename",filename,"sha256",sha,"bytes",bytes.length,"downloadPath","/api/library/files/"+sha);
+    }
+    private static byte[] catalog(JSONArray items) throws Exception { return bytes(NativeMagazineStore.object("schemaVersion",1,"items",items).toString()); }
+    private static String gitBlobSha(byte[] bytes) throws Exception {
+        java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-1");digest.update(("blob "+bytes.length+"\0").getBytes(StandardCharsets.UTF_8));return HexFormat.of().formatHex(digest.digest(bytes));
+    }
     private void update(boolean force) throws Exception {
         assertTrue(store.start(NativeMagazineStore.object("sources",new JSONArray().put("economist"),"force",force,"maxIssuesPerSource",1)).getBoolean("running")); awaitComplete();
     }
@@ -58,7 +66,7 @@ public class NativeMagazineStoreTest {
         JSONArray content=query("/articles/"+id).getJSONObject("article").getJSONArray("content"); assertEquals("Phones can read magazines offline.",content.getString(0)); assertEquals("The original words stay complete.",content.getString(1)); assertEquals(0,calls.size());
     }
     @Test public void unchangedIssueSkipsDownloadAndFailedReplacementKeepsReadableOldIssue() throws Exception {
-        update(false); calls.clear(); update(false); assertEquals(1,store.status().getJSONObject("lastResult").getInt("skippedIssues")); assertFalse(calls.stream().anyMatch(url->url.endsWith("issue.epub")));
+        update(false); calls.clear(); update(false); assertEquals(1,store.status().getJSONObject("lastResult").getInt("skippedIssues")); assertFalse(calls.stream().anyMatch(url->url.startsWith(FILES)));
         failDownload=true; update(true); assertFalse(store.status().getJSONObject("lastResult").getBoolean("ok")); assertEquals(1,store.status().getJSONObject("lastResult").getInt("failedIssues"));
         assertEquals(2,query("/issues/economist:2026.10.10").getJSONArray("articles").length());
     }
@@ -98,5 +106,80 @@ public class NativeMagazineStoreTest {
             try{NativeMagazineHttp.allowed(url);fail("Unsafe source accepted: "+url);}catch(IOException expected){}
         }
         assertNotNull(NativeMagazineHttp.allowed("https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/01_economist/te_2026.10.10/issue.epub"));
+        assertNotNull(NativeMagazineHttp.allowed(CATALOG));assertNotNull(NativeMagazineHttp.allowed(FILES+"a".repeat(64)));
+        for(String url:Arrays.asList(CATALOG+"?redirect=evil",CATALOG+"/","https://readage.xyz/api/library/%63atalog",FILES+"../catalog",FILES+"a".repeat(63),"https://readage.xyz.evil.test/api/library/catalog","https://readage.xyz/private")) {
+            try{NativeMagazineHttp.allowed(url);fail("Unsafe official URL accepted: "+url);}catch(IOException expected){}
+        }
+    }
+
+    @Test public void fourMagazineSourcesShareOneOfficialCatalogAndKeepFilteringOrderAndParserPagination() throws Exception {
+        store.close();calls.clear();byte[] file=bytes("shared official fixture");JSONArray items=new JSONArray().put(item("wired:2026.10.16","invalid.epub",file).put("language","fr"));
+        String[] sources={"economist","new_yorker","atlantic","wired"}, labels={"2026.10.17","2026.10.19","2026.10.18","2026.10.16"};
+        for(int i=0;i<sources.length;i++) {
+            items.put(item(sources[i]+":2026.10.01",sources[i]+".epub",file));
+            items.put(item(sources[i]+":"+(i==0?"te_":"")+labels[i],sources[i]+(i==0?".pdf":".epub"),file));
+        }
+        items.put(item("economist:2026.10.31","book.epub",file).put("kind","book"));
+        items.put(item("other_source:2026.10.31","unrelated.epub",file));
+        items.put(item("economist:../../2026.10.31","unsafe.epub",file));
+        items.put(item("economist:2026.10.31:extra","unsafe.epub",file));
+        items.put(item("economist:2026.10.17","unsupported.html",file));
+        items.put(item("economist:2026-10-17","economist.epub",file));
+        items.put(item("economist:2026_10_17","invalid.epub",file).put("language","ja"));
+        final byte[] snapshot=catalog(items);List<Integer> offsets=new ArrayList<>();
+        store=new NativeMagazineStore(directory,(f,n,offset,limit)-> {
+            offsets.add(offset);assertEquals(80,limit);assertTrue("A usable EPUB must win duplicate normalized issue IDs",n.endsWith(".epub"));assertArrayEquals(file,Files.readAllBytes(f.toPath()));
+            return NativeMagazineStore.object("nextOffset",offset==0?1:JSONObject.NULL,"articles",new JSONArray().put(NativeMagazineStore.object("title","Story "+offset,"paragraphs",new JSONArray().put("Read: Related story").put("A complete illustrated reading article. ".repeat(24)),"media",new JSONArray().put(NativeMagazineStore.object("src","/api/magazines/assets/"+"b".repeat(64)+".png","caption","Original figure caption","afterParagraphIndex",1)))));
+        },(url,max)-> {
+            NativeMagazineHttp.allowed(url);calls.add(url);
+            if(url.equals(CATALOG))return snapshot;if(url.equals(FILES+NativeMagazineFeeds.hash(file)))return file.clone();throw new AssertionError("Unexpected source request: "+url);
+        });
+        store.start(NativeMagazineStore.object("sources",new JSONArray(Arrays.asList(sources)),"maxIssuesPerSource",1));awaitComplete();
+        JSONObject result=store.status().getJSONObject("lastResult");assertTrue(result.toString(),result.getBoolean("ok"));assertEquals(4,result.getInt("importedIssues"));
+        assertEquals(1,Collections.frequency(calls,CATALOG));assertEquals(5,calls.size());assertTrue(calls.stream().allMatch(url->url.equals(CATALOG)||url.startsWith(FILES)));
+        assertEquals(Arrays.asList(0,1,0,1,0,1,0,1),offsets);
+        for(int i=0;i<sources.length;i++) {
+            JSONArray articles=query("/issues/"+sources[i]+":"+labels[i]).getJSONArray("articles");assertEquals(2,articles.length());
+            assertEquals("Story 0",articles.getJSONObject(0).getString("title"));assertEquals("Story 1",articles.getJSONObject(1).getString("title"));
+            assertTrue(articles.getJSONObject(0).getString("id").startsWith("mag:"+sources[i]+":"+labels[i]+":"));
+            JSONObject article=query("/articles/"+articles.getJSONObject(0).getString("id")).getJSONObject("article");
+            assertEquals(1,article.getJSONArray("content").length());assertEquals("Original figure caption",article.getJSONArray("media").getJSONObject(0).getString("caption"));assertEquals(0,article.getJSONArray("media").getJSONObject(0).getInt("afterParagraphIndex"));
+        }
+    }
+    @Test public void invalidOfficialDownloadsNeverParseOrReplaceExistingReadableCache() throws Exception {
+        update(false);String oldId=query("/issues/economist:2026.10.10").getJSONArray("articles").getJSONObject(0).getString("id");
+        String oldPayload=query("/issues").getJSONArray("issues").getJSONObject(0).getString("storedFile");byte[] oldBytes=Files.readAllBytes(new File(directory,oldPayload).toPath());
+        byte[] file=bytes("different official fixture");
+        for(String mode:Arrays.asList("sha","length","oversized","path","format","language","title","date")) {
+            store.close();calls.clear();JSONObject entry=item("economist:te_2026.10.10","issue.epub",file);
+            if(mode.equals("length"))entry.put("bytes",file.length+1);if(mode.equals("oversized"))entry.put("bytes",NativeMagazineStore.MAX_FILE+1L);if(mode.equals("path"))entry.put("downloadPath","https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/issue.epub");
+            if(mode.equals("format"))entry.put("filename","issue.html");if(mode.equals("language"))entry.put("language","fr");if(mode.equals("title"))entry.put("title","   ");if(mode.equals("date"))entry.put("updatedAt","not a date");
+            byte[] snapshot=catalog(new JSONArray().put(entry));
+            store=new NativeMagazineStore(directory,(f,n,o,l)->{throw new AssertionError("Unverified bytes reached the parser");},(url,max)-> {
+                calls.add(url);if(url.equals(CATALOG))return snapshot;if(url.equals(FILES+NativeMagazineFeeds.hash(file)))return mode.equals("sha")?new byte[file.length]:file.clone();throw new AssertionError("Unexpected request: "+url);
+            });
+            update(false);JSONObject result=store.status().getJSONObject("lastResult");assertFalse(mode,result.getBoolean("ok"));assertEquals(mode,1,result.getInt("failedIssues"));assertEquals(0,result.getInt("importedIssues"));
+            assertEquals(mode.equals("sha")||mode.equals("length")?2:1,calls.size());
+            assertTrue(calls.stream().allMatch(url->url.equals(CATALOG)||url.startsWith(FILES)));
+            assertEquals("Phones can read magazines offline.",query("/articles/"+oldId).getJSONObject("article").getJSONArray("content").getString(0));assertArrayEquals(oldBytes,Files.readAllBytes(new File(directory,oldPayload).toPath()));
+            assertEquals(oldPayload,query("/issues").getJSONArray("issues").getJSONObject(0).getString("storedFile"));
+        }
+    }
+    @Test public void legacyGitShaWithMatchingDocumentHashSkipsOfficialRedownloadAndKeepsIdentity() throws Exception {
+        update(false);String oldId=query("/issues/economist:2026.10.10").getJSONArray("articles").getJSONObject(0).getString("id");store.close();
+        File indexFile=new File(directory,"catalog.json");JSONObject index=new JSONObject(Files.readString(indexFile.toPath()));JSONObject issue=index.getJSONArray("issues").getJSONObject(0);
+        issue.put("remoteSha",gitBlobSha(bytes(CONTENT))).put("documentSourceId",NativeMagazineFeeds.hash(bytes(CONTENT)));Files.writeString(indexFile.toPath(),index.toString());
+        calls.clear();store=new NativeMagazineStore(directory,(f,n,o,l)->{throw new AssertionError("Same verified document must not reparse");},(url,max)-> {
+            calls.add(url);if(url.equals(CATALOG))return catalog(new JSONArray().put(item("economist:te_2026.10.10","issue.epub",bytes(CONTENT))));throw new AssertionError("Same verified document must not download: "+url);
+        });
+        update(false);assertEquals(1,store.status().getJSONObject("lastResult").getInt("skippedIssues"));assertEquals(Collections.singletonList(CATALOG),calls);
+        assertEquals(oldId,query("/issues/economist:2026.10.10").getJSONArray("articles").getJSONObject(0).getString("id"));
+    }
+    @Test public void failedOfficialCatalogIsRequestedOnceWithoutAnyGithubFallback() throws Exception {
+        store.close();calls.clear();store=new NativeMagazineStore(directory,(f,n,o,l)->{throw new AssertionError("Failed catalogue must not parse");},(url,max)-> {
+            calls.add(url);if(!url.equals(CATALOG))throw new AssertionError("Failed official catalogue fell back to another source: "+url);throw new IOException("fixture official catalogue unavailable");
+        });
+        store.start(NativeMagazineStore.object("sources",new JSONArray(Arrays.asList("economist","new_yorker","atlantic","wired"))));awaitComplete();
+        JSONObject result=store.status().getJSONObject("lastResult");assertFalse(result.getBoolean("ok"));assertEquals(4,result.getInt("failedIssues"));assertEquals(4,result.getJSONArray("errors").length());assertEquals(Collections.singletonList(CATALOG),calls);
     }
 }

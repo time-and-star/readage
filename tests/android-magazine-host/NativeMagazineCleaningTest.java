@@ -10,6 +10,7 @@ import static org.junit.Assert.*;
 /** Existing magazine payloads are repaired only in isolated host directories. */
 public class NativeMagazineCleaningTest {
     private static final String ISSUE="economist:2026.10.03", OLD="a".repeat(64)+".json";
+    private static final byte[] SAME_BYTES={1}, CHANGED_BYTES={2};
     private File directory;
     private NativeMagazineStore store;
     private static String body(int words) {return String.join(" ",Collections.nCopies(words,"reading"));}
@@ -19,16 +20,20 @@ public class NativeMagazineCleaningTest {
     @Before public void setup() throws Exception {directory=Files.createTempDirectory(Path.of(System.getProperty("readage.magazine.test.root")),"cleaning-").toFile();}
     @After public void close() {if(store!=null)store.close();}
     private JSONObject seed(JSONArray articles,String format) throws Exception {
-        JSONObject issue=NativeMagazineStore.object("id",ISSUE,"sourceId","economist","issueLabel","2026.10.03","format",format,"remoteSha","same-sha","status","ready","storedFile",OLD,"articleCount",articles.length());
+        JSONObject issue=NativeMagazineStore.object("id",ISSUE,"sourceId","economist","issueLabel","2026.10.03","format",format,"remoteSha",gitBlobSha1(SAME_BYTES),"status","ready","storedFile",OLD,"articleCount",articles.length());
         Files.writeString(new File(directory,OLD).toPath(),NativeMagazineStore.object("issue",issue,"articles",articles).toString());
         Files.writeString(new File(directory,"catalog.json").toPath(),NativeMagazineStore.object("issues",new JSONArray().put(issue)).toString());return issue;
     }
     private void open() throws Exception {store=new NativeMagazineStore(directory,(f,n,o,l)->{throw new AssertionError("Cached repair must not reparse");},(u,m)->{throw new AssertionError("Cached repair must stay offline");});}
-    private NativeMagazineStore.Network network(String sha) {
+    private static String sha256(byte[] bytes) throws Exception {return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));}
+    private static String gitBlobSha1(byte[] bytes) throws Exception {
+        java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-1");digest.update(("blob "+bytes.length+"\0").getBytes(java.nio.charset.StandardCharsets.UTF_8));return HexFormat.of().formatHex(digest.digest(bytes));
+    }
+    private NativeMagazineStore.Network network(byte[] bytes) {
         return (url,max)->{
-            if(url.endsWith("01_economist?ref=master"))return "[{\"name\":\"te_2026.10.03\",\"path\":\"01_economist/te_2026.10.03\",\"type\":\"dir\"}]".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            if(url.contains("/contents/01_economist/te_2026.10.03?"))return ("[{\"name\":\"issue.epub\",\"path\":\"01_economist/te_2026.10.03/issue.epub\",\"type\":\"file\",\"sha\":\""+sha+"\",\"download_url\":\"https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/01_economist/te_2026.10.03/issue.epub\"}]").getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            if(url.endsWith("issue.epub"))return new byte[]{1};throw new IOException("Unexpected test URL");
+            String sha=sha256(bytes);
+            if(url.equals("https://readage.xyz/api/library/catalog"))return NativeMagazineStore.object("schemaVersion",1,"items",new JSONArray().put(NativeMagazineStore.object("id","economist:te_2026.10.03","kind","magazine","title","The Economist 2026.10.03","language","en","updatedAt","2026-10-19T00:00:00.000Z","filename","issue.epub","sha256",sha,"bytes",bytes.length,"downloadPath","/api/library/files/"+sha))).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            if(url.equals("https://readage.xyz/api/library/files/"+sha))return bytes.clone();throw new IOException("Unexpected test URL: "+url);
         };
     }
     private void sync() throws Exception {
@@ -75,7 +80,7 @@ public class NativeMagazineCleaningTest {
         seed(articles,"epub");File original=new File(directory,"original.epub"),picture=new File(directory,"picture.png");Files.writeString(original.toPath(),"retained original bytes");Files.writeString(picture.toPath(),"retained image bytes");
         byte[] old=Files.readAllBytes(new File(directory,OLD).toPath());open();JSONArray repaired=rows();assertEquals(1,repaired.length());assertEquals("politics-4",repaired.getJSONObject(0).getString("id"));assertEquals(90,repaired.getJSONObject(0).getInt("wordCount"));
         JSONObject issue=store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0);
-        assertEquals("same-sha",issue.getString("remoteSha"));assertEquals(NativeMagazineStore.EPUB_CLEANING_VERSION,issue.getInt("epubCleaningVersion"));assertEquals(1,issue.getInt("articleCount"));
+        assertEquals(gitBlobSha1(SAME_BYTES),issue.getString("remoteSha"));assertEquals(NativeMagazineStore.EPUB_CLEANING_VERSION,issue.getInt("epubCleaningVersion"));assertEquals(1,issue.getInt("articleCount"));
         assertArrayEquals(old,Files.readAllBytes(new File(directory,OLD).toPath()));assertEquals("retained original bytes",Files.readString(original.toPath()));assertEquals("retained image bytes",Files.readString(picture.toPath()));
         String pointer=issue.getString("storedFile"),catalog=Files.readString(new File(directory,"catalog.json").toPath());store.close();open();assertEquals(pointer,store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0).getString("storedFile"));assertEquals(catalog,Files.readString(new File(directory,"catalog.json").toPath()));
     }
@@ -118,27 +123,23 @@ public class NativeMagazineCleaningTest {
             .put(part("Cover",1,0,"Cover","Short cover."))
             .put(part("Main story",1,1,"Cover",body(90)))
             .put(part("Other story",1,2,"Cover",body(91)))
-            .put(part("Politics",2,0,"Politics",body(90)))),network("same-sha"));sync();
+            .put(part("Politics",2,0,"Politics",body(90)))),network(SAME_BYTES));sync();
         JSONArray fresh=rows();assertEquals(3,fresh.length());assertTrue(fresh.getJSONObject(0).getString("id").startsWith("mag:"+ISSUE+":combined-1-content-"));assertTrue(fresh.getJSONObject(1).getString("id").startsWith("mag:"+ISSUE+":combined-1-content-"));assertEquals("mag:"+ISSUE+":politics-2",fresh.getJSONObject(2).getString("id"));
-        JSONObject current=store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0);assertEquals(NativeMagazineStore.EPUB_STRUCTURE_VERSION,current.getInt("epubStructureVersion"));assertFalse(current.has("reparseRequired"));assertEquals(1,store.status().getJSONObject("lastResult").getInt("importedIssues"));
+        JSONObject current=store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0);assertEquals(ISSUE,current.getString("id"));assertEquals(sha256(SAME_BYTES),current.getString("remoteSha"));assertEquals(NativeMagazineStore.EPUB_STRUCTURE_VERSION,current.getInt("epubStructureVersion"));assertFalse(current.has("reparseRequired"));assertEquals(1,store.status().getJSONObject("lastResult").getInt("importedIssues"));
     }
     @Test public void changedRemoteContentDoesNotStealOldArticleIdsAndUnreadablePayloadCanBeRepaired() throws Exception {
         JSONArray oldRows=new JSONArray().put(article("mag:"+ISSUE+":politics-1","Politics",body(90)));JSONObject issue=seed(oldRows,"epub").put("epubCleaningVersion",2).put("epubStructureVersion",1);writeSeed(issue,oldRows);
         NativeMagazineStore.Parser parser=(file,name,offset,limit)->NativeMagazineStore.object("nextOffset",JSONObject.NULL,"articles",new JSONArray().put(part("Business",1,0,"Business",body(90))));
-        store=new NativeMagazineStore(directory,parser,network("changed-sha"));sync();assertEquals("mag:"+ISSUE+":business-1",rows().getJSONObject(0).getString("id"));
+        store=new NativeMagazineStore(directory,parser,network(CHANGED_BYTES));sync();assertEquals("mag:"+ISSUE+":business-1",rows().getJSONObject(0).getString("id"));assertEquals(sha256(CHANGED_BYTES),store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0).getString("remoteSha"));
         JSONObject historical=store.query("/articles/mag:"+ISSUE+":politics-1",Collections.emptyMap());assertTrue(historical.getBoolean("ok"));assertEquals("Politics",historical.getJSONObject("article").getString("title"));assertTrue(new File(directory,OLD).isFile());store.close();
         issue=seed(oldRows,"epub").put("epubCleaningVersion",2).put("epubStructureVersion",0);writeSeed(issue,oldRows);Files.writeString(new File(directory,OLD).toPath(),"broken JSON");
-        store=new NativeMagazineStore(directory,parser,network("same-sha"));sync();assertEquals("mag:"+ISSUE+":business-1",rows().getJSONObject(0).getString("id"));assertEquals(1,store.status().getJSONObject("lastResult").getInt("importedIssues"));
+        store=new NativeMagazineStore(directory,parser,network(SAME_BYTES));sync();assertEquals("mag:"+ISSUE+":business-1",rows().getJSONObject(0).getString("id"));assertEquals(1,store.status().getJSONObject("lastResult").getInt("importedIssues"));
     }
     @Test public void newDownloadCleansOnlyEpubAndKeepsUnfilteredSourceOrdinals() throws Exception {
         store=new NativeMagazineStore(directory,(file,name,offset,limit)->NativeMagazineStore.object("nextOffset",JSONObject.NULL,"articles",new JSONArray()
             .put(NativeMagazineStore.object("title","The world this week","paragraphs",new JSONArray().put("Politics").put("Business")))
             .put(NativeMagazineStore.object("title","An advertisement","paragraphs",new JSONArray().put("A short advert.")))
-            .put(NativeMagazineStore.object("title","Politics","paragraphs",new JSONArray().put(body(90)).put("This article was downloaded by calibre from https://example.invalid")))),(url,max)-> {
-            if(url.endsWith("01_economist?ref=master"))return "[{\"name\":\"te_2026.10.03\",\"path\":\"01_economist/te_2026.10.03\",\"type\":\"dir\"}]".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            if(url.contains("/contents/01_economist/te_2026.10.03?"))return "[{\"name\":\"issue.epub\",\"path\":\"01_economist/te_2026.10.03/issue.epub\",\"type\":\"file\",\"sha\":\"same-sha\",\"download_url\":\"https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/01_economist/te_2026.10.03/issue.epub\"}]".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            if(url.endsWith("issue.epub"))return new byte[]{1};throw new IOException("Unexpected test URL");
-        });
+            .put(NativeMagazineStore.object("title","Politics","paragraphs",new JSONArray().put(body(90)).put("This article was downloaded by calibre from https://example.invalid")))),network(SAME_BYTES));
         store.start(NativeMagazineStore.object("sources",new JSONArray().put("economist"),"maxIssuesPerSource",1));long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(5);while(store.status().getBoolean("running")&&System.nanoTime()<deadline)Thread.sleep(10);
         assertFalse(store.status().getBoolean("running"));assertTrue(store.status().getJSONObject("lastResult").getBoolean("ok"));JSONArray downloaded=rows();assertEquals(1,downloaded.length());assertEquals("mag:"+ISSUE+":politics-3",downloaded.getJSONObject(0).getString("id"));assertEquals(90,downloaded.getJSONObject(0).getInt("wordCount"));assertEquals(1,downloaded.getJSONObject(0).getJSONArray("content").length());
     }
@@ -185,10 +186,10 @@ public class NativeMagazineCleaningTest {
     @Test public void sameTitleWithRemovedOpeningGetsNewIdWhileTheOldBookmarkStillOpensTheCompleteArticle() throws Exception {
         String oldId="mag:"+ISSUE+":same-title-1";JSONArray oldRows=new JSONArray().put(article(oldId,"Same title","An original opening remains in history.",body(90)));
         JSONObject issue=seed(oldRows,"epub").put("epubCleaningVersion",NativeMagazineStore.EPUB_CLEANING_VERSION).put("epubStructureVersion",0);writeSeed(issue,oldRows);
-        store=new NativeMagazineStore(directory,(file,name,offset,limit)->NativeMagazineStore.object("nextOffset",JSONObject.NULL,"articles",new JSONArray().put(part("Same title",1,0,"Same title",body(90)))),network("same-sha"));sync();
+        store=new NativeMagazineStore(directory,(file,name,offset,limit)->NativeMagazineStore.object("nextOffset",JSONObject.NULL,"articles",new JSONArray().put(part("Same title",1,0,"Same title",body(90)))),network(SAME_BYTES));sync();
         JSONObject fresh=rows().getJSONObject(0);assertNotEquals(oldId,fresh.getString("id"));assertTrue(fresh.getString("id").contains("-content-"));
         JSONObject historical=store.query("/articles/"+oldId,Collections.emptyMap());assertTrue(historical.getBoolean("ok"));JSONArray content=historical.getJSONObject("article").getJSONArray("content");assertEquals(2,content.length());assertEquals("An original opening remains in history.",content.getString(0));assertEquals(body(90),content.getString(1));
-        String pointer=store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0).getString("storedFile");store.close();store=new NativeMagazineStore(directory,(file,name,offset,limit)->{throw new AssertionError("A current cache must not reparse");},network("same-sha"));assertEquals(pointer,store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0).getString("storedFile"));assertTrue(store.query("/articles/"+oldId,Collections.emptyMap()).getBoolean("ok"));
+        String pointer=store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0).getString("storedFile");store.close();store=new NativeMagazineStore(directory,(file,name,offset,limit)->{throw new AssertionError("A current cache must not reparse");},network(SAME_BYTES));assertEquals(pointer,store.query("/issues",Collections.emptyMap()).getJSONArray("issues").getJSONObject(0).getString("storedFile"));assertTrue(store.query("/articles/"+oldId,Collections.emptyMap()).getBoolean("ok"));
     }
 
 }

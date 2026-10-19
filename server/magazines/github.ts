@@ -30,6 +30,8 @@ export interface RemoteIssueCandidate {
   /** In-memory body for web sources that do not have a downloadable archive. */
   content?: string;
   feedEntry?: FullTextFeedEntry;
+  distributedFile?: { sha256: string; bytes: number };
+  discoveryError?: string;
 }
 
 const MAX_REDIRECTS = 5;

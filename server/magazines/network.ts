@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { GITHUB_REPO_NAME, GITHUB_REPO_OWNER, MAGAZINE_SOURCES } from './config';
+import { MAGAZINE_LIBRARY_ORIGIN } from '../../src/lib/magazineDistribution';
 
 const MAX_REDIRECTS = 5;
 const repository = `/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}`;
@@ -16,7 +17,9 @@ export function validateMagazineNetworkUrl(input: string | URL): URL {
     throw new Error('外刊来源必须使用不含凭据的 HTTPS 地址。');
   }
   const host = url.hostname.toLowerCase();
-  const allowed = configuredWebHosts.has(host)
+  const official = url.origin === MAGAZINE_LIBRARY_ORIGIN && !url.search && !url.hash
+    && (url.pathname === '/api/library/catalog' || /^\/api\/library\/files\/[a-f0-9]{64}$/.test(url.pathname));
+  const allowed = official || configuredWebHosts.has(host)
     || (host === 'api.github.com' && (url.pathname === `/repos${repository}/contents`
       || url.pathname.startsWith(`/repos${repository}/contents/`)))
     || (['github.com', 'raw.githubusercontent.com', 'codeload.github.com'].includes(host)
@@ -53,6 +56,7 @@ export function createMagazineNetwork(fetcher: typeof fetch, options: {
       const response = await fetcher(url, { ...init, method, headers: outgoingHeaders, signal, redirect: 'manual', credentials: 'omit' });
       if (response.status < 300 || response.status >= 400) return response;
       await response.body?.cancel().catch(() => {});
+      if (url.origin === MAGAZINE_LIBRARY_ORIGIN) throw new Error('官网期刊下载不接受重定向。');
       if (redirects === MAX_REDIRECTS) throw new Error('外刊来源的重定向次数过多。');
       const location = response.headers.get('location');
       if (!location) throw new Error('外刊来源没有返回有效的重定向地址。');

@@ -7,7 +7,8 @@ import {
   MAGAZINE_SOURCES,
   makeIssueId,
 } from './config';
-import { discoverIssues, downloadFile } from './github';
+import { downloadFile, type RemoteIssueCandidate } from './github';
+import { createOfficialMagazineSource, validDistributedMagazineBytes } from './officialLibrary';
 import { discoverNewsInLevelsIssues, parseNewsInLevelsArticle } from './newsInLevels';
 import { discoverFullTextIssues, materializeFullTextArticle, parseFullTextArticle, type FullTextFeedEntry } from './fullTextFeeds';
 import { resolveArticleImage, imageExtension } from './assets';
@@ -44,6 +45,15 @@ export function getSyncStatus(): MagazineSyncStatus {
 export interface SyncOptions {
   sources?: string[];
   maxIssuesPerSource?: number;
+}
+
+/** A transport change alone must not re-import an unchanged cached issue or change its IDs. */
+async function unchangedLegacyDistribution(issue: MagazineIssue, candidate: RemoteIssueCandidate): Promise<boolean> {
+  if (!candidate.distributedFile || !/^[a-f0-9]{40}$/.test(issue.remoteSha || '')) return false;
+  try {
+    return await blobExists(issue.remoteSha!, candidate.format)
+      && validDistributedMagazineBytes(candidate, await readBlob(issue.remoteSha!, candidate.format));
+  } catch { return false; }
 }
 
 /** Matching feed fingerprints alone cannot prove that the offline files still exist. */
@@ -84,6 +94,7 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
   lastRunAt = startedAt;
 
   const maxIssues = getMaxIssuesPerSource(options.maxIssuesPerSource);
+  const officialMagazines = createOfficialMagazineSource();
   const sourceIds = options.sources?.length
     ? options.sources
     : MAGAZINE_SOURCES.map((s) => s.id);
@@ -123,9 +134,9 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
           : source.provider === 'rss_fulltext'
             ? await discoverFullTextIssues(source, maxIssues)
           : source.repoDir
-            ? await discoverIssues(source.repoDir, maxIssues)
+            ? await officialMagazines.discover(source, maxIssues)
             : (() => {
-                throw new Error(`GitHub source ${source.id} is missing repoDir`);
+                throw new Error(`期刊来源 ${source.id} 未配置。`);
               })();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -137,13 +148,20 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
       }
 
       for (const candidate of candidates) {
+        if (candidate.discoveryError) {
+          result.errors.push(`${source.displayName} ${candidate.issueLabel}：${candidate.discoveryError}`);
+          result.failedIssues += 1; result.perSource[sourceId].failed += 1; result.ok = false;
+          continue;
+        }
         const issueId = makeIssueId(source.id, candidate.issueLabel);
         const sha = candidate.preferredFile.sha;
         progress = `processing ${issueId}`;
 
         const cachedIssue = issueMap.get(issueId);
-        if (syncState.importedShas[issueId] === sha && cachedIssue?.status === 'ready'
+        if (cachedIssue?.status === 'ready'
+          && (syncState.importedShas[issueId] === sha || await unchangedLegacyDistribution(cachedIssue, candidate))
           && (!candidate.feedEntry || await completeFullTextCache(cachedIssue, candidate.feedEntry, source))) {
+          syncState.importedShas[issueId] = sha;
           result.skippedIssues += 1;
           result.perSource[sourceId].skipped += 1;
           continue;
@@ -158,12 +176,16 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
             if (candidate.feedEntry) await writeBlob(sha, ext, buffer);
           } else if (await blobExists(sha, ext)) {
             buffer = await readBlob(sha, ext);
+            if (candidate.distributedFile && !validDistributedMagazineBytes(candidate, buffer)) {
+              buffer = await officialMagazines.download(candidate);
+              await writeBlob(sha, ext, buffer);
+            }
           } else {
             if (!candidate.preferredFile.download_url) {
               throw new Error('No download_url for file');
             }
             progress = `downloading ${issueId}`;
-            buffer = await downloadFile(candidate.preferredFile.download_url);
+            buffer = candidate.distributedFile ? await officialMagazines.download(candidate) : await downloadFile(candidate.preferredFile.download_url);
             await writeBlob(sha, ext, buffer);
           }
 

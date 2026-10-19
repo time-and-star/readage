@@ -702,7 +702,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
               {syncStatus?.lastResult?.errors?.length && !syncStatus.running ? <ul className="library-failed" aria-label="外刊更新失败详情">{syncStatus.lastResult.errors.map((message, index) => <li key={`${index}:${message}`}>{message}</li>)}</ul> : null}
               {syncCounts && !syncStatus?.running && <p>新增 {syncCounts.imported} {syncCountUnit} · 已有 {syncCounts.skipped} {syncCountUnit}{syncCounts.failed > 0 && ` · 失败 ${syncCounts.failed} ${syncCountUnit}`}</p>}
               <button type="button" className="library-text-action" onClick={() => onInsertArticle({ intent: 'local' })}><FilePlus2 size={13} aria-hidden="true" />导入本地 EPUB / PDF 杂志文件</button>
-              <p>更新直接下载并整理外刊，完成后在当前目录阅读；“导入”可从 ReadAge 官网选择其他资料。{IS_OFFLINE_APP ? '已下载内容可离线阅读。' : '外刊内容用于个人学习，请支持原刊订阅。'}</p>
+              <p>Economist、New Yorker、Atlantic、Wired 从 ReadAge 官网已保存的期刊导入；网站文章仍连接对应来源。更新后在当前目录阅读，“导入”可选择其他资料。{IS_OFFLINE_APP ? '已下载内容可离线阅读。' : '外刊内容用于个人学习，请支持原刊订阅。'}</p>
             </div>
           </details>
         </footer>}
