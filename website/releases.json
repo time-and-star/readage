@@ -2,74 +2,59 @@
   "schemaVersion": 1,
   "releases": {
     "web": {
-      "version": "0.1.7",
+      "version": "0.1.8",
       "build": 0,
-      "publishedAt": "2026-10-18T16:05:28.052Z",
+      "publishedAt": "2026-10-19T03:29:30.198Z",
       "notes": [
-        "完善 EPUB、HTML、DOCX 的章节拆分、正文清洗、标题与图片说明，保护已有附件和学习进度。",
-        "改进书库封面、双语标题、删除确认与段落阅读位置恢复。",
-        "应用内更新支持后台下载、暂停续传、下载后离线安装及损坏缓存修复。",
-        "新增完整安装包差分下载；自动选择已缓存基线，无合适差分时回到完整包。",
-        "修复 Windows 旧目录过长路径的升级失败；逐文件校验与复用离线资源，优化启动校验。",
-        "保留全部正式离线模型、音色、词典、许可证及用户学习数据。"
+        "阅读设置新增点击单词自动发音开关，保存选择并使用当前口音与语速。",
+        "Economist、New Yorker、Atlantic、Wired 改从官网缓存导入，保留外刊清洗、附件与学习进度。",
+        "保留全部正式离线模型、音色、词典与用户数据。"
       ]
     },
     "windows": {
-      "version": "0.1.7",
+      "version": "0.1.8",
       "build": 0,
-      "publishedAt": "2026-10-18T16:05:28.056Z",
+      "publishedAt": "2026-10-19T03:29:30.199Z",
       "notes": [
-        "完善 EPUB、HTML、DOCX 的章节拆分、正文清洗、标题与图片说明，保护已有附件和学习进度。",
-        "改进书库封面、双语标题、删除确认与段落阅读位置恢复。",
-        "应用内更新支持后台下载、暂停续传、下载后离线安装及损坏缓存修复。",
-        "新增完整安装包差分下载；自动选择已缓存基线，无合适差分时回到完整包。",
-        "修复 Windows 旧目录过长路径的升级失败；逐文件校验与复用离线资源，优化启动校验。",
-        "保留全部正式离线模型、音色、词典、许可证及用户学习数据。"
+        "阅读设置新增点击单词自动发音开关，保存选择并使用当前口音与语速。",
+        "Economist、New Yorker、Atlantic、Wired 改从官网缓存导入，保留外刊清洗、附件与学习进度。",
+        "保留全部正式离线模型、音色、词典与用户数据。"
       ],
       "installer": {
-        "filename": "ReadAge-0.1.7-windows-x64-setup.exe",
-        "bytes": 1335405981,
-        "sha256": "6800754ad357ed8034b518e61979b07046133c323f6c54aceb2e559f67411409",
-        "deltas": []
+        "filename": "ReadAge-0.1.8-windows-x64-setup.exe",
+        "bytes": 1335407891,
+        "sha256": "411f0ee5782d6a222840a1f8d307ddf99fa8d3bdcfe7c39600d7192726eb7a5a",
+        "deltas": [
+          {
+            "baseSha256": "6800754ad357ed8034b518e61979b07046133c323f6c54aceb2e559f67411409",
+            "bytes": 33362163,
+            "sha256": "41a6da7d3a4df762c832abcb8e7ea059e490a0aa4e7e8c92b79af4425dbfa60d",
+            "manifestBytes": 1421,
+            "manifestSha256": "2d7d9ac20b526fadf337666368633a20d382f2f60ebd9752889b81eed42efed0"
+          }
+        ]
       }
     },
     "android": {
-      "version": "1.0.9",
-      "build": 10,
-      "publishedAt": "2026-10-18T16:05:28.058Z",
+      "version": "1.0.10",
+      "build": 11,
+      "publishedAt": "2026-10-19T03:29:30.200Z",
       "notes": [
-        "完善 EPUB、HTML、DOCX 的章节拆分、正文清洗、标题与图片说明，保护已有附件和学习进度。",
-        "改进书库封面、双语标题、删除确认与段落阅读位置恢复。",
-        "应用内更新支持后台下载、暂停续传、下载后离线安装及损坏缓存修复。",
-        "新增完整安装包差分下载；自动选择已缓存基线，无合适差分时回到完整包。",
-        "修复 Windows 旧目录过长路径的升级失败；逐文件校验与复用离线资源，优化启动校验。",
-        "保留全部正式离线模型、音色、词典、许可证及用户学习数据。"
+        "阅读设置新增点击单词自动发音开关，保存选择并使用当前口音与语速。",
+        "Economist、New Yorker、Atlantic、Wired 改从官网缓存导入，保留外刊清洗、附件与学习进度。",
+        "保留全部正式离线模型、音色、词典与用户数据。"
       ],
       "installer": {
-        "filename": "ReadAge-1.0.9-android.apk",
-        "bytes": 1740942275,
-        "sha256": "1b5b332075ba2a513e907ca797bb6b0e6277834d5f7f3c99616259535338516c",
+        "filename": "ReadAge-1.0.10-android.apk",
+        "bytes": 1740942711,
+        "sha256": "c735f54a30c8e98fea0bdbe16a54eca543879a698601fa608c5521d20bd72737",
         "deltas": [
           {
-            "baseSha256": "b4b4467246f76c9da23c8bbf0df49b231d9e38254a4febd0fc5459f55c7ebefc",
-            "bytes": 3051541,
-            "sha256": "3a715f126623785634916bfe6d8f0ac8582b8a31634a5cdbb81fbb6768ab6927",
-            "manifestBytes": 1727,
-            "manifestSha256": "2d982dcb9aee745689dec98d6958d3cb403de581b5b334fe576dde58366bf49b"
-          },
-          {
-            "baseSha256": "75fb489acb13d79a0ceb1eec0b24754ee1b9a75e03f2a65db5301386d5dc9583",
-            "bytes": 3052644,
-            "sha256": "06de55332026f5b6f7f27a2a1372652156c63fb1052fd1ee971b55ce072769d4",
-            "manifestBytes": 1768,
-            "manifestSha256": "826e6846311318c75d93db1af8f1fcd7203f87da241746226ab48a46d4a939d5"
-          },
-          {
-            "baseSha256": "25c535a9595f7de4a2248ddfeb4b216f84f7624f68a1c164aaa2d512467392d8",
-            "bytes": 3029892,
-            "sha256": "864365b78e61d23307306c4727cc57c5904e70e3420bd4a2089af3e1a89cdc18",
-            "manifestBytes": 1811,
-            "manifestSha256": "7e7b88350e70399adbdbcaa5e89082c28edb0876e975c8a91c73be0552b7b334"
+            "baseSha256": "1b5b332075ba2a513e907ca797bb6b0e6277834d5f7f3c99616259535338516c",
+            "bytes": 1662626,
+            "sha256": "487a93b8240f21906fc982926fd62bdf4110b26f68f92e0cb20ff9142ba54b1e",
+            "manifestBytes": 1679,
+            "manifestSha256": "d36fbc1d38966022df8f5bcc13542af676c75786d3afcf05fbd86bc1f0ed959f"
           }
         ]
       }
