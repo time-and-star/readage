@@ -358,6 +358,8 @@ Windows 专属 NSIS 宏为旧卸载器子进程设置用户目录下的短临时
 
 2026-10-16 后续 CPU 实测：用户只要求补测手机正式 CPU，其他性能复用旧记录。vivo V2190A / Exynos 1080 / Mali-G78 已保留数据覆盖安装 Release 的 Android 1.0.4 / 5，并确认实际 APK SHA 为 `9059894f87c028d064e808e524fdb48f157438f4b19a3ba3ab575fb672838942`。独立档案中的 5 个翻译、3 个正式语音请求完成，原档案逻辑表不变并已恢复；长段落仍有两次缓冲、合计约 4.01 秒，听感未通过验收。浏览器 / Windows 没有新增设备测试，本次没有产品构建、Capacitor 同步或源码功能修改。详见 [实测性能](performance.md) 与 [逐项限定范围](user-feature-acceptance.md#2026-10-16-android-cpu-性能实测)；下方记录保留其历史时间范围。
 
+2026-10-16 后续 CPU 实测：用户只要求补测手机正式 CPU，其他性能复用旧记录。vivo V2190A / Exynos 1080 / Mali-G78 已保留数据覆盖安装 Release 的 Android 1.0.4 / 5，并确认实际 APK SHA 为 `9059894f87c028d064e808e524fdb48f157438f4b19a3ba3ab575fb672838942`。独立档案中的 5 个翻译、3 个正式语音请求完成，原档案逻辑表不变并已恢复；长段落仍有两次缓冲、合计约 4.01 秒，听感未通过验收。浏览器 / Windows 没有新增设备测试，本次没有产品构建、Capacitor 同步或源码功能修改。详见 [实测性能](performance.md) 与 [逐项限定范围](user-feature-acceptance.md#2026-10-16-android-cpu-性能实测)；下方记录保留其历史时间范围。
+
 2026-10-16 用户明确授权提交全部应用源码并发布 Release，当前进入集中编译与交付阶段。Windows 版本为 0.1.2，Android 为 1.0.4 / 5；加入 Apache 2.0 许可证、发行包许可与全新图文 README。三端源码、测试、构建、包校验、安装和设备验收分别记于 [本轮发布记录](release-2026-10-16.md)，不将新包生成视为设备已更新。
 
 2026-10-16 用户将名称改回 **ReadAge**（R、A 大写）：共用界面、HTML / PWA 名称、词典展示及导出文件名对应三端；Windows 窗口、菜单、安装显示名 / 快捷方式及后续安装包文件名已对应，保留 `com.readge.local`、`readge.exe` 和原数据目录用于升级连续性；Android `cn.readage.app` 与原生 `ReadAge` 标签保持，原生词典及导出默认名对应更新。浏览器插件名称同步改为 ReadAge，兼容下载地址保留。按“先检测、后编译”执行：三端产物均需重建，Android 资源同步、插件包、安装及设备验收等待对应交付阶段。验收范围见 [N15](user-feature-acceptance.md)。
