@@ -48,6 +48,19 @@ test('continued import starts at the first missing chapter instead of preparing 
   assert.equal(nextLibraryOffset({ ...item, language: 'fr' }, [chapter(0)]), 0);
 });
 
+test('HTML filename aliases find canonical saved chapters and resume at the missing chapter', () => {
+  const first = chapter(0), second = chapter(1);
+  for (const extension of ['html', 'htm', 'xhtml', 'HTM', 'XHTML']) {
+    const htmlItem = { ...item, filename: `reading.${extension}` };
+    assert.equal(libraryEditionState(htmlItem, []), 'new', extension);
+    assert.equal(libraryEditionState(htmlItem, [first]), 'partial', extension);
+    assert.equal(nextLibraryOffset(htmlItem, [first]), 1, extension);
+    assert.equal(libraryEditionState(htmlItem, [first, second]), 'saved', extension);
+    assert.equal(nextLibraryOffset(htmlItem, [first, second]), 2, extension);
+    assert.equal(libraryEditionState({ ...htmlItem, sha256: 'b'.repeat(64) }, [first, second]), 'revision', extension);
+  }
+});
+
 test('a reorganised EPUB is a separate edition and never resumes at the old chapter offset', () => {
   const old = [0, 1].map(index => ({ ...chapter(index), id: `file-${item.sha256}-${index}`, importBatchId: `file-${item.sha256}` }));
   const snapshot = structuredClone(old);

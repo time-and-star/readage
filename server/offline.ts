@@ -7,7 +7,7 @@ export function isOfflineApiAllowed(pathname: string, method: string, options: {
   if (pathname === '/api/magazines/sync') return method === 'POST' && options.manualMagazineSync === true;
   if (['/api/local-data/', '/api/dictionary/', '/api/tts/', '/api/translation'].some(prefix => pathname.startsWith(prefix))) return true;
   if (pathname === '/api/import/file') return method === 'POST';
-  if (['/api/library/catalog', '/api/library/file'].includes(pathname)) return method === 'POST';
+  if (['/api/library/catalog', '/api/library/file', '/api/library/progress'].includes(pathname)) return method === 'POST';
   if (/^\/api\/app-updates\/(?:check|status|prepare|cancel|activate|ready)$/.test(pathname)) return method === 'POST';
   if (/^\/api\/import\/(?:images|documents)\//.test(pathname)) return method === 'GET';
   if (['/api/import/backfill-results', '/api/import/pause'].includes(pathname)) return method === 'GET';

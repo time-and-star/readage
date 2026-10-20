@@ -2,6 +2,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { FILE_IMPORT_BATCH_SIZE, FILE_IMPORT_TIMEOUT_MS, type ImportedFileBatch } from '../userFileImport';
 import { documentMaxBytes, documentSizeError } from '../documentLimits';
 import type { DictionaryImportOptions, DictionaryImportSnapshot } from '../dictionarySettingsClient';
+import type { LibraryDownloadProgress } from '../contentLibrary';
 
 export interface NativePickedFile {
   handle: string;
@@ -13,7 +14,8 @@ export interface NativePickedFile {
   url?: string;
   path?: string;
 }
-interface NativeFilesPlugin {
+export interface NativeFilesPlugin {
+  addListener(name: 'libraryDownloadProgress', listener: (event: LibraryDownloadProgress & { requestId: string }) => void): Promise<{ remove(): Promise<void> }>;
   remoteLibrary(options: { operation: 'catalog' | 'file'; serverUrl: string; requestId: string; sha256?: string; bytes?: number; filename?: string }): Promise<unknown>;
   pickFile(options: { kind: 'document' | 'backup' | 'dictionary' }): Promise<NativePickedFile | { cancelled: true }>;
   readText(options: { handle: string }): Promise<{ text: string }>;

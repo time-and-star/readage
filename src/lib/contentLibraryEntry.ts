@@ -28,8 +28,13 @@ export function initialLibraryServer(): string {
   let saved = ''; try { saved = localStorage.getItem('readage.library.server') || ''; } catch { /* Storage may be unavailable. */ }
   return resolveLibraryServer({ saved, configured: String(environment?.VITE_READAGE_LIBRARY_URL || ''), development: environment?.DEV === true, android: environment?.VITE_APP_PLATFORM === 'android' });
 }
+/** File aliases must use the parser's canonical format to find the saved chapter identities. */
+function libraryBatchId(item: Pick<LibraryItem, 'sha256' | 'filename'>): string {
+  const extension = item.filename.split('.').pop()?.toLowerCase() || '';
+  return fileImportBatchId(item.sha256, ['htm', 'xhtml'].includes(extension) ? 'html' : extension);
+}
 export function libraryEditionState(item: LibraryItem, history: readonly Article[]): 'new' | 'revision' | 'partial' | 'saved' {
-  const currentBatch = fileImportBatchId(item.sha256, item.filename.split('.').pop()?.toLowerCase() || '');
+  const currentBatch = libraryBatchId(item);
   const same = history.filter(article => (article.language || 'en').split('-')[0] === item.language
     && (article.importBatchId === currentBatch || article.importBatchId === `${currentBatch}-${item.language}`));
   if (same.length) {
@@ -46,7 +51,7 @@ export function selectLibraryItems(items: readonly LibraryItem[], history: reado
 }
 /** Resume at the first missing chapter, including imports that began in the middle. */
 export function nextLibraryOffset(item: LibraryItem, history: readonly Article[]): number {
-  const currentBatch = fileImportBatchId(item.sha256, item.filename.split('.').pop()?.toLowerCase() || '');
+  const currentBatch = libraryBatchId(item);
   const indices = new Set(history.filter(article => (article.language || 'en').split('-')[0] === item.language
     && (article.importBatchId === currentBatch || article.importBatchId === `${currentBatch}-${item.language}`))
     .map(article => Number(article.id.match(/-(\d+)$/)?.[1])).filter(Number.isSafeInteger));

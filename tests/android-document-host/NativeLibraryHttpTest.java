@@ -26,10 +26,19 @@ public final class NativeLibraryHttpTest {
         Fake ok=new Fake(bytes,200,bytes.length);ByteArrayOutputStream out=new ByteArrayOutputStream();
         require(NativeLibraryHttp.transfer(NativeLibraryHttp.url("https://library.example",sha.toString()),out,64,bytes.length,sha.toString(),new Cancel(),url->ok)==bytes.length);
         require(Arrays.equals(bytes,out.toByteArray()));require(ok.closed);require(!ok.getInstanceFollowRedirects());
+        List<String> phases=new ArrayList<>();List<Long> received=new ArrayList<>();
+        require(NativeLibraryHttp.transfer(ok.getURL(),new ByteArrayOutputStream(),64,bytes.length,sha.toString(),new Cancel(),url->new Fake(bytes,200,bytes.length),
+            (phase,count,total)->{phases.add(phase);received.add(count);require(total==bytes.length);})==bytes.length);
+        require(phases.equals(Arrays.asList("connecting","downloading","verifying")));
+        require(received.equals(Arrays.asList(0L,(long)bytes.length,(long)bytes.length)));
         rejected(()->NativeLibraryHttp.transfer(ok.getURL(),new ByteArrayOutputStream(),64,bytes.length,"a".repeat(64),new Cancel(),url->new Fake(bytes,200,bytes.length)));
         rejected(()->NativeLibraryHttp.transfer(ok.getURL(),new ByteArrayOutputStream(),3,-1,null,new Cancel(),url->new Fake(bytes,200,-1)));
         rejected(()->NativeLibraryHttp.transfer(ok.getURL(),new ByteArrayOutputStream(),64,-1,null,new Cancel(),url->new Fake(bytes,302,0)));
         Cancel cancelled=new Cancel();cancelled.stop=true;rejected(()->NativeLibraryHttp.transfer(ok.getURL(),new ByteArrayOutputStream(),64,-1,null,cancelled,url->ok));
+        Cancel during=new Cancel();List<String> stopped=new ArrayList<>();
+        rejected(()->NativeLibraryHttp.transfer(ok.getURL(),new ByteArrayOutputStream(),64,bytes.length,sha.toString(),during,url->new Fake(bytes,200,bytes.length),
+            (phase,count,total)->{stopped.add(phase);if(phase.equals("downloading"))during.stop=true;}));
+        require(!stopped.contains("verifying"));
         System.out.println("Native library HTTP host checks passed: "+checked+". No Android device acceptance.");
     }
 }

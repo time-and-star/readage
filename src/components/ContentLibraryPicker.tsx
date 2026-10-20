@@ -8,10 +8,13 @@ import { initialLibraryServer, libraryEditionState, nextLibraryOffset, selectLib
 import { LibraryBookCover } from './LibraryBookCover';
 import { LibraryBookTitle } from './LibraryBookTitle';
 import { bookAppearance, bookCategoryLabel, filterLibraryItems, libraryBookCategories } from '../../website/book-presentation.js';
+import type { BookImportActivity } from '../lib/bookImportActivity';
 
-export function ContentLibraryPicker({ history, onSelect, entry = { intent: 'import' } }: {
+export function ContentLibraryPicker({ history, onSelect, onDownloadActivity, onBackground, entry = { intent: 'import' } }: {
   history: Article[];
   entry?: LibraryEntry;
+  onDownloadActivity?: (activity: BookImportActivity | null) => void;
+  onBackground?: () => void;
   onSelect: (selection: { file: File; picked?: NativePickedFile; item: LibraryItem; serverUrl: string; resumeOffset?: number }) => void;
 }) {
   const [initialServer] = useState(initialLibraryServer);
@@ -22,6 +25,8 @@ export function ContentLibraryPicker({ history, onSelect, entry = { intent: 'imp
   const [category, setCategory] = useState('');
   const [availableOnly, setAvailableOnly] = useState(entry.intent === 'updates');
   const [busy, setBusy] = useState(''); const [error, setError] = useState('');
+  const [downloadDetail, setDownloadDetail] = useState('');
+  const [downloadPercent, setDownloadPercent] = useState<number | null>(null);
   const operation = useRef<AbortController | null>(null);
   const connect = async (event?: React.FormEvent) => {
     event?.preventDefault(); if (operation.current) return;
@@ -42,10 +47,29 @@ export function ContentLibraryPicker({ history, onSelect, entry = { intent: 'imp
   const download = async (item: LibraryItem) => {
     if (operation.current) return;
     const controller = new AbortController(); operation.current = controller; setBusy(`正在下载 ${item.title}…`); setError('');
+    setDownloadDetail('正在连接资料服务器…'); setDownloadPercent(null);
+    onDownloadActivity?.({ phase: 'downloading', title: item.title, detail: '正在连接资料服务器…', receivedBytes: 0, totalBytes: item.bytes });
     try {
-      const selection = await downloadLibraryFile(connectedUrl, item, AbortSignal.any([controller.signal, AbortSignal.timeout(120_000)]));
-      if (!controller.signal.aborted) onSelect({ ...selection, item, serverUrl: connectedUrl, resumeOffset: libraryEditionState(item, history) === 'partial' ? nextLibraryOffset(item, history) : undefined });
-    } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '下载失败。'); }
+      const selection = await downloadLibraryFile(connectedUrl, item, AbortSignal.any([controller.signal, AbortSignal.timeout(120_000)]), progress => {
+        if (operation.current !== controller || controller.signal.aborted) return;
+        const divisor = progress.totalBytes >= 1048576 ? 1048576 : progress.totalBytes >= 1024 ? 1024 : 1;
+        const unit = divisor === 1048576 ? 'MB' : divisor === 1024 ? 'KB' : 'B';
+        const received = (progress.receivedBytes / divisor).toFixed(divisor === 1 ? 0 : 1), total = (progress.totalBytes / divisor).toFixed(divisor === 1 ? 0 : 1);
+        const detail = progress.phase === 'connecting' ? '正在连接资料服务器…'
+          : progress.phase === 'verifying' ? '下载完成，正在校验原文件…'
+          : progress.phase === 'downloaded' ? '原文件已下载，准备整理目录…' : `已下载 ${received} / ${total} ${unit}`;
+        setDownloadDetail(detail);
+        setDownloadPercent(progress.phase === 'connecting' ? null : Math.min(100, progress.receivedBytes / progress.totalBytes * 100));
+        onDownloadActivity?.({ phase: 'downloading', title: item.title, detail, receivedBytes: progress.receivedBytes, totalBytes: progress.totalBytes });
+      });
+      if (!controller.signal.aborted) {
+        onDownloadActivity?.(null);
+        onSelect({ ...selection, item, serverUrl: connectedUrl, resumeOffset: libraryEditionState(item, history) === 'partial' ? nextLibraryOffset(item, history) : undefined });
+      }
+    } catch (cause) { if (!controller.signal.aborted) {
+      const message = cause instanceof Error ? cause.message : '下载失败。'; setError(message);
+      onDownloadActivity?.({ phase: 'error', title: item.title, detail: message });
+    } }
     finally { if (operation.current === controller) { operation.current = null; setBusy(''); } }
   };
   const inputClass = 'mt-1 w-full min-h-11 rounded-xl border border-[#DDD6C8] bg-white px-3 py-2 text-base text-[#2B2723]';
@@ -55,8 +79,8 @@ export function ContentLibraryPicker({ history, onSelect, entry = { intent: 'imp
   return <section aria-label="服务器资料库" className="content-library-picker">
     <p className="ra-shelf-note">选好之后查看目录，加入自己的书架。</p>
     {!initialServer && <p role="status" className="text-xs text-[#736B60]">官网地址尚未配置。可在下方设置检测地址，或使用本地导入。</p>}
-    {busy && <div role="status" className="flex items-center justify-between gap-2 text-xs"><span><LibraryBookTitle title={busy} /></span><button type="button" className="min-h-11 shrink-0 underline" onClick={() => { operation.current?.abort(); operation.current = null; setBusy(''); }}>取消</button></div>}
-    {error && <p role="alert" className="text-sm text-red-800 break-words">{error}</p>}
+    {busy && <div role="status" className="content-library-download"><div className="flex items-center justify-between gap-2 text-xs"><span><LibraryBookTitle title={busy} /></span><button type="button" className="min-h-11 shrink-0 underline" onClick={() => { operation.current?.abort(); operation.current = null; setBusy(''); setDownloadDetail(''); setDownloadPercent(null); onDownloadActivity?.(null); }}>取消</button></div>{downloadDetail && <><p className="text-xs">{downloadDetail}</p><progress aria-label="书籍下载进度" max={100} value={downloadPercent ?? undefined} className="w-full" /><p className="text-xs">收起后下载和目录整理继续，请保持应用开启。</p>{onBackground && <button type="button" onClick={onBackground} className="min-h-11 text-sm underline">后台继续，先做其他事</button>}</>}</div>}
+    {error && <div role="alert" className="text-sm text-red-800 break-words"><p>{error}</p><button type="button" className="min-h-11 text-xs underline" onClick={() => { setError(''); onDownloadActivity?.(null); }}>结束本次下载</button></div>}
     {catalog && <><div className="content-library-toolbar" role="group" aria-label="搜索和筛选资料">
       <div className="content-library-search-row">
         <label className="content-library-search"><Search size={16} aria-hidden="true" /><input type="search" aria-label="搜索服务器资料" placeholder="搜索书名、作者或刊名" value={query} onChange={e => setQuery(e.target.value)} /></label>

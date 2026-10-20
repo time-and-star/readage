@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppUpdates } from './lib/useAppUpdates';
 import { AppUpdateCard, AppUpdateNotice } from './components/AppUpdateCard';
+import { ArticleImportHost } from './components/ArticleImportHost';
 import type { LibraryEntry } from './lib/contentLibraryEntry';
 import {
   Article,
@@ -75,7 +76,7 @@ import { useReadingStudyEvidence } from './lib/useReadingStudyEvidence';
 import { useFlashcardLearningActivity } from './lib/useFlashcardLearningActivity';
 import { loadReadingScreen } from './lib/readingScreenModule';
 import { scheduleIdleWork } from './lib/idleWork';
-import { ArticleImportLoading, PageLoadBoundary } from './components/PageLoadBoundary';
+import { PageLoadBoundary } from './components/PageLoadBoundary';
 import {
   suggestedWordCountRange,
 } from './lib/userReadingProfile';
@@ -110,7 +111,6 @@ const DictionarySettingsScreen = lazy(() => import('./components/DictionarySetti
 const DictionaryTrialScreen = lazy(() => import('./components/DictionaryTrialScreen').then(module => ({ default: module.DictionaryTrialScreen })));
 const ReadingStudyScreen = lazy(() => import('./components/ReadingStudyScreen').then(module => ({ default: module.ReadingStudyScreen })));
 const LibraryScreen = lazy(() => import('./components/LibraryScreen').then(module => ({ default: module.LibraryScreen })));
-const EnterArticleModal = lazy(() => import('./components/EnterArticleModal').then(module => ({ default: module.EnterArticleModal })));
 const pageLoading = <p role="status" className="px-6 py-12 text-center text-sm text-[#8E857A]">正在打开页面…</p>;
 
 function emptySession(articleId: string): ArticleSession {
@@ -1702,12 +1702,9 @@ export default function App() {
         </Suspense></PageLoadBoundary>
       </div>
 
-      {showEnterArticle && (
-        <PageLoadBoundary onClose={() => setShowEnterArticle(false)}><Suspense fallback={<ArticleImportLoading onClose={() => setShowEnterArticle(false)} />}><EnterArticleModal history={history} entry={articleImportEntry}
-          onClose={() => setShowEnterArticle(false)}
-          onSubmitCustomArticles={handleAddImportedArticles}
-        /></Suspense></PageLoadBoundary>
-      )}
+      <ArticleImportHost open={showEnterArticle} history={history} entry={articleImportEntry}
+        onOpen={() => setShowEnterArticle(true)} onClose={() => setShowEnterArticle(false)}
+        onSubmitCustomArticles={handleAddImportedArticles} />
 
     </div>
   );

@@ -152,17 +152,21 @@ public class ReadageFilesPlugin extends Plugin {
                     String sha=call.getString("sha256", ""), name=call.getString("filename", "");
                     long max=NativeFileStore.documentMaxBytes(name);
                     long expected=NativeFileStore.integer(call.getData().opt("bytes"),1,max);
+                    NativeLibraryHttp.Progress progress=(phase,receivedBytes,totalBytes)->{
+                        if(!operation.settled.get())notifyListeners("libraryDownloadProgress",new JSObject().put("requestId",id)
+                            .put("phase",phase).put("receivedBytes",receivedBytes).put("totalBytes",totalBytes));
+                    };
                     java.net.URL url=NativeLibraryHttp.url(origin,sha);
                     if(name.length()>180||!name.matches("(?i)[^/\\\\\\x00-\\x1f]+\\.(epub|pdf|docx|html?|xhtml|txt|md|text)"))throw new IOException("资料文件名无效。");
                     NativeFileStore resources=store(); File target=new File(resources.imports,sha);
                     if(!target.isFile()||target.length()!=expected||!NativeFileStore.hash(target).equals(sha)){
                         temporary=File.createTempFile("download-", ".tmp", resources.imports);
                         try(FileOutputStream out=new FileOutputStream(temporary)){
-                            NativeLibraryHttp.transfer(url,out,max,expected,sha,cancellation,factory);out.getFD().sync();
+                            NativeLibraryHttp.transfer(url,out,max,expected,sha,cancellation,factory,progress);out.getFD().sync();
                         }
                         if(operation.settled.get())throw new InterruptedIOException("资料下载已取消。");
                         NativeFileStore.move(temporary,target);
-                    }
+                    }else progress.update("verifying",expected,expected);
                     result=new JSObject().put("handle",sha).put("sha256",sha).put("bytes",expected).put("name",name);
                 }else throw new IOException("资料请求无效。");
                 if(operation.settled.compareAndSet(false,true))call.resolve(result);

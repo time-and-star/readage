@@ -87,13 +87,15 @@
     Exch $0
     Push $1
     Push $2
+    Push $3
     StrCpy $1 $0
     ${Do}
-      System::Call 'kernel32::GetFileAttributesW(w r1) i.r2'
+      ; Capture the OS error in this call: a later System invocation may reset it.
+      System::Call 'kernel32::GetFileAttributesW(w r1) i.r2 ?e'
+      Pop $3
       ${If} $2 == -1
-        System::Call 'kernel32::GetLastError() i.r2'
-        ${If} $2 != 2
-        ${AndIf} $2 != 3
+        ${If} $3 != 2
+        ${AndIf} $3 != 3
           StrCpy $0 ""
           Goto readageAssetsEnsureDone
         ${EndIf}
@@ -116,6 +118,7 @@
       Pop $0
     ${EndIf}
     readageAssetsEnsureDone:
+    Pop $3
     Pop $2
     Pop $1
     Exch $0

@@ -2,59 +2,59 @@
   "schemaVersion": 1,
   "releases": {
     "web": {
-      "version": "0.1.8",
+      "version": "0.1.9",
       "build": 0,
-      "publishedAt": "2026-10-19T03:29:30.198Z",
+      "publishedAt": "2026-10-20T04:42:15.791Z",
       "notes": [
-        "阅读设置新增点击单词自动发音开关，保存选择并使用当前口音与语速。",
-        "Economist、New Yorker、Atlantic、Wired 改从官网缓存导入，保留外刊清洗、附件与学习进度。",
-        "保留全部正式离线模型、音色、词典与用户数据。"
+        "修复 Windows 首次安装及新增资源目录时离线资源安装失败。",
+        "书籍下载和章节整理可收起到后台，保留任务进度，不再因误触重新开始。",
+        "固定导入标题栏，优化收起按钮和滚动条；保留全部离线模型、音色、词典与学习数据。"
       ]
     },
     "windows": {
-      "version": "0.1.8",
+      "version": "0.1.9",
       "build": 0,
-      "publishedAt": "2026-10-19T03:29:30.199Z",
+      "publishedAt": "2026-10-20T04:42:15.792Z",
       "notes": [
-        "阅读设置新增点击单词自动发音开关，保存选择并使用当前口音与语速。",
-        "Economist、New Yorker、Atlantic、Wired 改从官网缓存导入，保留外刊清洗、附件与学习进度。",
-        "保留全部正式离线模型、音色、词典与用户数据。"
+        "修复 Windows 首次安装及新增资源目录时离线资源安装失败。",
+        "书籍下载和章节整理可收起到后台，保留任务进度，不再因误触重新开始。",
+        "固定导入标题栏，优化收起按钮和滚动条；保留全部离线模型、音色、词典与学习数据。"
       ],
       "installer": {
-        "filename": "ReadAge-0.1.8-windows-x64-setup.exe",
-        "bytes": 1335407891,
-        "sha256": "411f0ee5782d6a222840a1f8d307ddf99fa8d3bdcfe7c39600d7192726eb7a5a",
+        "filename": "ReadAge-0.1.9-windows-x64-setup.exe",
+        "bytes": 1335415446,
+        "sha256": "d750de8ad7d3ade8d7b57857a3b16fd43578b3967e86beecb2a981a3f565a00e",
         "deltas": [
           {
-            "baseSha256": "6800754ad357ed8034b518e61979b07046133c323f6c54aceb2e559f67411409",
-            "bytes": 33362163,
-            "sha256": "41a6da7d3a4df762c832abcb8e7ea059e490a0aa4e7e8c92b79af4425dbfa60d",
-            "manifestBytes": 1421,
-            "manifestSha256": "2d7d9ac20b526fadf337666368633a20d382f2f60ebd9752889b81eed42efed0"
+            "baseSha256": "411f0ee5782d6a222840a1f8d307ddf99fa8d3bdcfe7c39600d7192726eb7a5a",
+            "bytes": 135351828,
+            "sha256": "0ceaac4c0ae62a1a24f5563d225e14c52f31ad61b7d1da12a6fa5a3b2e0061cb",
+            "manifestBytes": 5027,
+            "manifestSha256": "efa905cdca30205973a5da131bfc50448e195b2cffbcdddbe17308acb6cb50c0"
           }
         ]
       }
     },
     "android": {
-      "version": "1.0.10",
-      "build": 11,
-      "publishedAt": "2026-10-19T03:29:30.200Z",
+      "version": "1.0.11",
+      "build": 12,
+      "publishedAt": "2026-10-20T04:42:15.793Z",
       "notes": [
-        "阅读设置新增点击单词自动发音开关，保存选择并使用当前口音与语速。",
-        "Economist、New Yorker、Atlantic、Wired 改从官网缓存导入，保留外刊清洗、附件与学习进度。",
-        "保留全部正式离线模型、音色、词典与用户数据。"
+        "修复 Windows 首次安装及新增资源目录时离线资源安装失败。",
+        "书籍下载和章节整理可收起到后台，保留任务进度，不再因误触重新开始。",
+        "固定导入标题栏，优化收起按钮和滚动条；保留全部离线模型、音色、词典与学习数据。"
       ],
       "installer": {
-        "filename": "ReadAge-1.0.10-android.apk",
-        "bytes": 1740942711,
-        "sha256": "c735f54a30c8e98fea0bdbe16a54eca543879a698601fa608c5521d20bd72737",
+        "filename": "ReadAge-1.0.11-android.apk",
+        "bytes": 1740948318,
+        "sha256": "2686057a00fadd3d71f182e21bad56a0283eca21f2f0017195c8a38e9efe3fbe",
         "deltas": [
           {
-            "baseSha256": "1b5b332075ba2a513e907ca797bb6b0e6277834d5f7f3c99616259535338516c",
-            "bytes": 1662626,
-            "sha256": "487a93b8240f21906fc982926fd62bdf4110b26f68f92e0cb20ff9142ba54b1e",
-            "manifestBytes": 1679,
-            "manifestSha256": "d36fbc1d38966022df8f5bcc13542af676c75786d3afcf05fbd86bc1f0ed959f"
+            "baseSha256": "c735f54a30c8e98fea0bdbe16a54eca543879a698601fa608c5521d20bd72737",
+            "bytes": 3053163,
+            "sha256": "25cde774464682c03b1f97663068a9f7d3cc4f13899dbbd90af68b9c43274f60",
+            "manifestBytes": 1726,
+            "manifestSha256": "321856e6a09b5ef19746bfd897ffc1cf88cffadb6c52542bb095dc7f9b4431e1"
           }
         ]
       }

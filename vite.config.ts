@@ -20,6 +20,9 @@ export default defineConfig(() => {
       // Layer priorities must be converted after the complete stylesheet has been bundled.
       cssCodeSplit: false,
     } } : {}),
+    // This repository also contains native SDK docs and archived test pages.
+    // Dependency discovery belongs to the app entry, not every saved HTML file.
+    optimizeDeps: { entries: ['index.html'] },
     plugins: [react(), tailwindcss(), ...(offline ? [{
       name: 'readage-offline-policy',
       transformIndexHtml() {

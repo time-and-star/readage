@@ -11,12 +11,13 @@ const skip = !enabled && 'Set READAGE_NSIS_COMPILER to run isolated NSIS payload
 const artifacts = path.resolve('output/installer-recurrence-2026-10-18/agent');
 const include = path.resolve('desktop/resources/installer-assets.nsh');
 const templateDirectory = path.resolve('node_modules/app-builder-lib/templates/nsis');
-const plugins = compiler && path.resolve(path.dirname(compiler), '../../nsis-resources-3.4.1');
+const pluginRoots = compiler && ['../../nsis-resources-3.4.1', '../../../nsis-resources-3.4.1']
+  .map(relative => path.resolve(path.dirname(compiler), relative));
 const literal = value => value.replaceAll('/', '\\').replaceAll('$', '$$');
 const digest = value => createHash('sha256').update(value).digest('hex');
 const relatives = ['resources/offline-resources/workspace/local-data/model.onnx', 'resources/released-dictionaries/dictionaries/test/dictionary.sqlite'];
 
-async function fixture(t, { old = ['old model', 'old dictionary'], expected = ['new model', 'new dictionary'], legacy = true } = {}) {
+async function fixture(t, { old = ['old model', 'old dictionary'], expected = ['new model', 'new dictionary'], legacy = true, createResourceParents = true } = {}) {
   await fs.mkdir(artifacts, { recursive: true });
   const directory = await fs.mkdtemp(path.join(artifacts, 'assets-test-'));
   const root = path.join(directory, 'install');
@@ -29,7 +30,7 @@ async function fixture(t, { old = ['old model', 'old dictionary'], expected = ['
   const entries = [];
   for (let index = 0; index < relatives.length; index++) {
     const target = path.join(root, relatives[index]);
-    await fs.mkdir(path.dirname(target), { recursive: true });
+    if (createResourceParents || old[index] !== null) await fs.mkdir(path.dirname(target), { recursive: true });
     if (old[index] !== null) await fs.writeFile(target, old[index]);
     const file = path.join(source, `${index}.bin`);
     await fs.writeFile(file, expected[index]);
@@ -47,6 +48,12 @@ async function fixture(t, { old = ['old model', 'old dictionary'], expected = ['
 }
 
 async function toolPaths() {
+  const candidates = await Promise.all(pluginRoots.map(async directory => {
+    const exists = await fs.stat(directory).then(stat => stat.isDirectory()).catch(() => false);
+    return exists ? directory : null;
+  }));
+  const plugins = candidates.find(Boolean);
+  assert.ok(plugins, `Cannot find nsis-resources-3.4.1 beside compiler: ${compiler}`);
   const [bundle] = (await fs.readdir(plugins)).filter(name => name.startsWith('nsis-resources-'));
   return { plugins: path.join(plugins, bundle, 'plugins/x86-unicode'), include: path.join(templateDirectory, 'include') };
 }
@@ -133,6 +140,29 @@ test('complete offline first installation writes every embedded asset', { skip }
   assert.equal(result.status, 0);
   assert.equal(result.written, '2');
   assert.equal(result.reused, '0');
+  for (const entry of sample.entries) assert.equal(await fs.readFile(path.join(sample.root, entry.relative), 'utf8'), entry.value);
+  await assert.rejects(fs.stat(result.stash), { code: 'ENOENT' });
+});
+
+test('first installation creates resource roots and all missing nested directories', { skip }, async t => {
+  const sample = await fixture(t, { old: [null, null], legacy: false, createResourceParents: false });
+  await assert.rejects(fs.stat(path.join(sample.root, 'resources')), { code: 'ENOENT' });
+  const result = await probe(sample);
+  assert.equal(result.status, 0, JSON.stringify(result));
+  assert.equal(result.written, '2');
+  assert.equal(result.reused, '0');
+  for (const entry of sample.entries) assert.equal(await fs.readFile(path.join(sample.root, entry.relative), 'utf8'), entry.value);
+  await assert.rejects(fs.stat(result.stash), { code: 'ENOENT' });
+});
+
+test('an existing installation creates a missing new resource subtree while reusing its old asset', { skip }, async t => {
+  const sample = await fixture(t, { old: ['new model', null], createResourceParents: false });
+  sample.entries[1].relative = 'resources/offline-resources/workspace/local-data/new-runtime/deep/new-model.onnx';
+  await assert.rejects(fs.stat(path.join(sample.root, 'resources/offline-resources/workspace/local-data/new-runtime')), { code: 'ENOENT' });
+  const result = await probe(sample);
+  assert.equal(result.status, 0, JSON.stringify(result));
+  assert.equal(result.written, '1');
+  assert.equal(result.reused, '1');
   for (const entry of sample.entries) assert.equal(await fs.readFile(path.join(sample.root, entry.relative), 'utf8'), entry.value);
   await assert.rejects(fs.stat(result.stash), { code: 'ENOENT' });
 });

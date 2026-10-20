@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, FileText, Loader2, Upload, ClipboardPaste } from 'lucide-react';
+import { X, ChevronDown, FileText, Loader2, Upload, ClipboardPaste } from 'lucide-react';
 import { Article } from '../types';
 import { splitArticleParagraphs } from '../lib/articleImport';
 import { ON_DEMAND_TRANSLATION } from '../lib/localTranslation';
@@ -13,10 +13,14 @@ import type { LibraryEntry } from '../lib/contentLibraryEntry';
 import { LibraryBookCover } from './LibraryBookCover';
 import { LibraryBookTitle } from './LibraryBookTitle';
 import { prepareSelectedLibraryBook } from '../lib/contentLibraryPreparation';
+import type { BookImportActivity } from '../lib/bookImportActivity';
+import './enterArticleModal.css';
 
 interface EnterArticleModalProps {
   history?: Article[];
   entry?: LibraryEntry;
+  visible?: boolean;
+  onActivityChange?: (activity: BookImportActivity | null) => void;
   onClose: () => void;
   /** Store-first: parent ingests into history and enqueues the import module. */
   onSubmitCustomArticles: (articles: Article[], notice?: string) => void;
@@ -25,6 +29,8 @@ interface EnterArticleModalProps {
 export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
   history = [],
   entry = { intent: 'import' },
+  visible = true,
+  onActivityChange,
   onClose,
   onSubmitCustomArticles,
 }: EnterArticleModalProps) => {
@@ -36,6 +42,8 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
 
   const [localMode, setLocalMode] = useState<'file' | 'paste'>('file');
   const [isImportingFile, setIsImportingFile] = useState(false);
+  const [downloadActivity, setDownloadActivity] = useState<BookImportActivity | null>(null);
+  const [preparationSeconds, setPreparationSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [startChapter, setStartChapter] = useState('1');
   const [startChapterTouched, setStartChapterTouched] = useState(false);
@@ -50,13 +58,14 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const nativeSelectionRef = useRef<{ picked: NativePickedFile; file: File } | null>(null);
   const distributionRef = useRef<Article['distribution']>();
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   const remotePrepared = Boolean(selectedFile && distributionRef.current);
-  const busy = isImportingFile;
+  const busy = isImportingFile || downloadActivity?.phase === 'downloading';
+  const hasDraft = Boolean(selectedFile || downloadActivity);
 
   useEffect(() => {
     mountedRef.current = true;
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    closeButtonRef.current?.focus();
     return () => {
       mountedRef.current = false;
       operationRef.current?.abort();
@@ -64,18 +73,72 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
       const selected = nativeSelectionRef.current;
       nativeSelectionRef.current = null;
       if (selected) void nativeFiles.releaseFile({ handle: selected.picked.handle }).catch(() => {});
-      previousFocus?.focus({ preventScroll: true });
     };
   }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    const root = document.documentElement;
+    const body = document.body;
+    const rootOverflow = root.style.overflow;
+    const bodyOverflow = body.style.overflow;
+    const bodyPaddingRight = body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - root.clientWidth;
+    if (scrollbarWidth > 0) body.style.paddingRight = `${(Number.parseFloat(getComputedStyle(body).paddingRight) || 0) + scrollbarWidth}px`;
+    root.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    return () => {
+      root.style.overflow = rootOverflow;
+      body.style.overflow = bodyOverflow;
+      body.style.paddingRight = bodyPaddingRight;
+    };
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus({ preventScroll: true });
+    return () => {
+      if (previousFocus?.isConnected && (document.activeElement === document.body || dialogRef.current?.contains(document.activeElement))) previousFocus.focus({ preventScroll: true });
+    };
+  }, [visible]);
+
+  useEffect(() => {
+    if (!isImportingFile) return;
+    const started = Date.now();
+    setPreparationSeconds(0);
+    const timer = setInterval(() => setPreparationSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [isImportingFile]);
+
+  useEffect(() => {
+    const title = distributionRef.current?.title || selectedFile?.name || '';
+    const count = prepared ? `已整理 ${prepared.articles.length} / ${prepared.totalCount} ${prepared.format === 'pdf' ? '页' : '章 / 篇'}` : '';
+    onActivityChange?.(downloadActivity || (selectedFile ? {
+      phase: isImportingFile ? 'preparing' : error ? 'error' : prepared ? 'ready' : 'paused', title,
+      detail: isImportingFile ? `${count || '正在读取正文、插图和章节'} · 已用 ${preparationSeconds} 秒`
+        : error || (prepared ? `${count}，等待确认加入书架` : '已保留原文件，可继续整理目录'),
+      preparedCount: prepared?.articles.length, totalCount: prepared?.totalCount,
+    } : null));
+  }, [downloadActivity, selectedFile, prepared, isImportingFile, error, preparationSeconds, onActivityChange]);
 
   const cancelOperation = () => {
     operationRef.current?.abort();
     operationRef.current = null;
     setIsImportingFile(false);
   };
-  const close = () => { cancelOperation(); onClose(); };
+  const close = () => { onClose(); };
+  const discardFile = () => {
+    cancelOperation();
+    const selected = nativeSelectionRef.current; nativeSelectionRef.current = null;
+    if (selected) void nativeFiles.releaseFile({ handle: selected.picked.handle }).catch(() => {});
+    distributionRef.current = undefined; preparedRef.current = null;
+    setPrepared(null); setSelectedFile(null); setError(null); setDownloadActivity(null);
+    setActiveTab('library');
+  };
   const openLocalImport = () => {
     if (busy) return;
+    setDownloadActivity(null); setError(null);
     if (distributionRef.current) {
       const selected = nativeSelectionRef.current; nativeSelectionRef.current = null;
       if (selected) void nativeFiles.releaseFile({ handle: selected.picked.handle }).catch(() => {});
@@ -187,7 +250,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in">
+    <div style={visible ? undefined : { display: 'none' }} aria-hidden={!visible || undefined} className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in">
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="import-article-title"
         onKeyDown={event => {
           if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
@@ -198,21 +261,25 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
             else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
           }
         }}
-        className={`bg-[#FAF8F3] border border-[#E0DBCF] w-full ${activeTab === 'library' ? 'max-w-2xl' : 'max-w-lg'} rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 sm:p-8 relative max-h-[min(92dvh,100%)] overflow-y-auto safe-pb`}>
+        className={`article-import-dialog bg-[#FAF8F3] border border-[#E0DBCF] w-full ${activeTab === 'library' ? 'max-w-2xl' : 'max-w-lg'} rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 sm:p-8 relative max-h-[min(92dvh,100%)]`}>
+        <div className="article-import-header">
         <button
           ref={closeButtonRef}
           type="button"
           onClick={close}
-          className="absolute top-3 right-3 sm:top-4 sm:right-4 tap-target inline-flex items-center justify-center p-2 text-[#777] hover:bg-[#EFEAE0] rounded-full disabled:opacity-40"
-          aria-label={busy ? '取消并关闭导入' : '关闭导入'}
+          className="article-import-close"
+          aria-label={hasDraft ? '收起导入，保留任务' : '关闭导入'}
+          title={hasDraft ? '收起导入，保留任务' : '关闭导入'}
         >
-          <X className="w-5 h-5" />
+          {hasDraft ? <ChevronDown size={20} strokeWidth={1.75} aria-hidden="true" /> : <X size={20} strokeWidth={1.75} aria-hidden="true" />}
         </button>
 
-        <h2 id="import-article-title" className="font-serif text-xl sm:text-2xl font-semibold text-[#2A2621] mb-4 pr-10">
+        <h2 id="import-article-title" className="font-serif text-xl sm:text-2xl font-semibold text-[#2A2621] mb-4 pr-20 min-h-11 flex items-center">
           {activeTab === 'library' ? entry.intent === 'updates' ? '书架更新' : '导入' : remotePrepared ? '加入书架' : '本地导入'}
         </h2>
+        </div>
 
+        <div className="article-import-content">
         <div className="flex bg-[#EFECE3] p-1 rounded-xl mb-6">
           <button type="button" disabled={busy} onClick={() => setActiveTab('library')} className={`flex-1 min-h-11 py-2 text-xs font-semibold rounded-lg disabled:opacity-50 ${activeTab === 'library' || remotePrepared ? 'bg-white text-[#2B2723] shadow-2xs' : 'text-[#736B60]'}`}>书籍与杂志</button>
           <button
@@ -235,13 +302,13 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
           </div>
         )}
 
-        {activeTab === 'library' ? <><ContentLibraryPicker history={history} entry={entry} onSelect={selection => {
+        {activeTab === 'library' ? <>{selectedFile && <button type="button" disabled={busy} className="mb-3 min-h-11 text-sm underline disabled:opacity-50" onClick={() => { setDownloadActivity(null); setError(null); setActiveTab('paste'); }}>返回已保留的导入任务</button>}<ContentLibraryPicker history={history} entry={entry} onDownloadActivity={setDownloadActivity} onBackground={close} onSelect={selection => {
           const previous = nativeSelectionRef.current;
           if (previous && previous.picked.handle !== selection.picked?.handle) void nativeFiles.releaseFile({ handle: previous.picked.handle }).catch(() => {});
           nativeSelectionRef.current = selection.picked ? { picked: selection.picked, file: selection.file } : null;
           distributionRef.current = { resourceId: selection.item.id, version: selection.item.sha256, serverUrl: selection.serverUrl, title: selection.item.title, kind: selection.item.kind };
           setSourceLanguage(selection.item.language); setSelectedFile(selection.file); preparedRef.current = null; setPrepared(null); setActiveTab('paste');
-          closeButtonRef.current?.focus({ preventScroll: true });
+          if (visibleRef.current) closeButtonRef.current?.focus({ preventScroll: true });
           const offset = startChapterTouched ? (/^[1-9]\d*$/.test(startChapter) ? Number(startChapter) - 1 : -1) : selection.resumeOffset ?? 0;
           if (offset >= 0) setStartChapter(String(offset + 1));
           if (selection.picked) void handleNativeDocument(false, true, offset); else void handleFile(selection.file, false, offset);
@@ -327,17 +394,19 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
               </label>}
               {selectedFile && !remotePrepared && <p className="mt-2 break-all text-xs text-[#666056]">{selectedFile.name}</p>}
               {isImportingFile && <div className="mt-2 flex items-center justify-between gap-2 text-xs text-[#666056]" role="status">
-                <span>{remotePrepared ? `正在整理目录${prepared ? ` · ${prepared.articles.length} / ${prepared.totalCount}` : ''}` : IS_ANDROID ? '正在本机解析，最多等待 2 分钟。' : '上传并解析中，最多等待 2 分钟。'}</span>
-                <button type="button" onClick={cancelOperation} className="min-h-11 px-2 underline">取消准备</button>
+                <span>{prepared ? `正在整理目录 · ${prepared.articles.length} / ${prepared.totalCount}` : '正在读取正文、插图和章节'} · 已用 {preparationSeconds} 秒</span>
+                <button type="button" onClick={cancelOperation} className="min-h-11 shrink-0 px-2 underline">暂停整理</button>
               </div>}
+              {selectedFile && <div className="mt-2 text-xs text-[#666056]"><p>{remotePrepared ? '原文件已下载。' : ''}收起后可继续阅读、查词或复习；任务和已整理目录会保留，请保持应用开启。{isImportingFile ? '完成后从进度入口确认加入书架。' : ''}</p><button type="button" onClick={close} className="min-h-11 underline">{busy ? '后台继续，先做其他事' : '收起，稍后继续'}</button></div>}
               {prepared && <div className="mt-3 space-y-2" aria-live="polite">
                 {remotePrepared ? <details className="ra-book-contents"><summary>查看目录 · 已整理 {prepared.articles.length} / {prepared.totalCount} {prepared.format === 'pdf' ? '页' : '章 / 篇'}</summary><ol>{prepared.articles.map((article, index) => <li key={article.id}><span>{String(prepared.startOffset + index + 1).padStart(2, '0')}</span><span>{article.title}</span></li>)}</ol></details> : <><p className="text-sm text-[#2B2723]">已准备 {prepared.articles.length} {prepared.format === 'pdf' ? '页' : '篇'}，文件共 {prepared.totalCount} {prepared.format === 'pdf' ? '页' : '篇'}。</p><p className="text-xs text-[#8C8478]">第 {prepared.startOffset + 1}–{prepared.startOffset + prepared.articles.length} {prepared.format === 'pdf' ? '页' : '篇'} · {prepared.articles[0].title}</p></>}
                 {prepared.nextOffset !== null && (prepared.articles.length < FILE_IMPORT_PREPARATION_LIMIT
-                  ? <button type="button" disabled={busy} onClick={() => IS_ANDROID ? void handleNativeDocument(true) : void handleFile(prepared.file, true)} className="min-h-11 text-sm underline disabled:opacity-50">继续添加下一批</button>
+                  ? <button type="button" disabled={busy} onClick={() => IS_ANDROID ? void handleNativeDocument(true) : void handleFile(prepared.file, true)} className="min-h-11 text-sm underline disabled:opacity-50">{remotePrepared ? '继续整理目录' : '继续添加下一批'}</button>
                   : <p className="text-xs text-[#8C8478]">本次已准备 {FILE_IMPORT_PREPARATION_LIMIT} 篇。{remotePrepared ? '先导入，再从官网资料库继续。' : `先导入，再选择原文件从第 ${prepared.nextOffset + 1} 篇 / 页继续。`}</p>)}
                 <button type="button" disabled={busy} onClick={submitPrepared} className="app-primary-action w-full min-h-11 rounded-xl px-3 text-sm disabled:opacity-50">{remotePrepared ? prepared.nextOffset !== null ? `加入书架 · 先导入第 ${prepared.startOffset + 1}–${prepared.startOffset + prepared.articles.length} ${prepared.format === 'pdf' ? '页' : '章 / 篇'}` : prepared.startOffset > 0 ? '补齐这本书' : '加入书架' : `导入已准备的 ${prepared.articles.length} ${prepared.format === 'pdf' ? '页' : '篇'}`}</button>
               </div>}
               {selectedFile && !prepared && !busy && <button type="button" onClick={() => IS_ANDROID ? void handleNativeDocument(false, true) : void handleFile(selectedFile)} className="mt-2 min-h-11 text-sm underline">重新准备文件</button>}
+              {selectedFile && <button type="button" onClick={discardFile} className="mt-2 min-h-11 px-2 text-sm underline">取消本次导入</button>}
             </div>}
 
             {remotePrepared && <details className="ra-shelf-options"><summary>阅读语言</summary><label className="block py-2">阅读语言<select aria-label="文章语言" value={sourceLanguage} disabled={busy} onChange={event => setSourceLanguage(event.target.value)} className="mt-2 block w-full min-h-11 border border-[#DDD6C8] bg-white px-3 text-sm"><option value="en">英语</option><option value="fr">法语</option><option value="ja">日语</option></select></label></details>}
@@ -350,6 +419,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
             </button> : null}
           </form>
         )}
+        </div>
       </div>
     </div>
   );
