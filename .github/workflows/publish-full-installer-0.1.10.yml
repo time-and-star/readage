@@ -1,0 +1,91 @@
+name: Upload verified ReadAge 0.1.10 installers and APK deltas
+"on":
+  push:
+    branches:
+      - codex/full-installer-release-0.1.9
+    paths:
+      - .github/workflows/publish-full-installer-0.1.10.yml
+permissions: {}
+concurrency:
+  group: readage-full-installer-0.1.10
+  cancel-in-progress: false
+jobs:
+  upload:
+    if: github.repository == 'time-and-star/readage' && github.ref == 'refs/heads/codex/full-installer-release-0.1.9' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: time-and-star/readage
+      TARGET_COMMIT: a87fe98d54cabd3f156f73efe71a2c6e7847df9a
+      DRAFT_RELEASE_ID: "424434528"
+    steps:
+      - name: Download, verify and upload six pinned assets to the fixed draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = time-and-star/readage
+          test "$GITHUB_REF" = refs/heads/codex/full-installer-release-0.1.9
+          test "$GITHUB_EVENT_NAME" = push
+          test "$TARGET_COMMIT" != __FIXED_SOURCE_COMMIT_REQUIRED__
+          test "$DRAFT_RELEASE_ID" != __FIXED_DRAFT_RELEASE_ID_REQUIRED__
+          work=$(mktemp -d -t readage-0.1.10.XXXXXXXX)
+          trap 'rm -rf -- "$work"' EXIT
+          cd "$work"
+          check_release() {
+            release=$(gh api "repos/time-and-star/readage/releases/$DRAFT_RELEASE_ID")
+            jq -e --argjson id "$DRAFT_RELEASE_ID" --arg target "$TARGET_COMMIT" \
+              '.id == $id and .draft == true and .tag_name == "v0.1.10" and .target_commitish == $target' \
+              <<< "$release" >/dev/null
+          }
+          verify_asset() {
+            jq -e --arg name "$name" --arg sha "sha256:$sha" --argjson bytes "$bytes" \
+              '[.assets[] | select(.name == $name)] as $items | ($items | length) == 1 and $items[0].state == "uploaded" and $items[0].size == $bytes and $items[0].digest == $sha' \
+              <<< "$release" >/dev/null
+          }
+          check_release
+          while read -r sha bytes name; do
+            check_release
+            count=$(jq -r --arg name "$name" '[.assets[] | select(.name == $name)] | length' <<< "$release")
+            if test "$count" -ne 0; then
+              verify_asset
+              printf 'Already verified: %s\n' "$name"
+              continue
+            fi
+            curl --fail --location --max-redirs 3 --proto '=https' --proto-redir '=https' \
+              --retry 5 --retry-all-errors --connect-timeout 30 --max-time 1800 \
+              --speed-time 60 --speed-limit 1024 --header 'Accept-Encoding: identity' \
+              --output "$name.part" "https://readage.xyz/downloads/$name"
+            test "$(stat -c '%s' "$name.part")" = "$bytes"
+            printf '%s  %s\n' "$sha" "$name.part" | sha256sum --check
+            check_release
+            uploaded=$(gh api --method POST "https://uploads.github.com/repos/time-and-star/readage/releases/$DRAFT_RELEASE_ID/assets?name=$name" \
+              --header 'Content-Type: application/octet-stream' --input "$name.part")
+            jq -e --arg name "$name" --arg sha "sha256:$sha" --argjson bytes "$bytes" \
+              '.name == $name and .size == $bytes and .state == "uploaded" and .digest == $sha' <<< "$uploaded" >/dev/null
+            check_release
+            verify_asset
+            rm -- "$name.part"
+            printf 'Uploaded and verified: %s\n' "$name"
+          done <<'READAGE_VERIFIED_ASSETS'
+          f843014b73653ac8fdb4b2d3b17c31887158e6347c42ef7ca5ed9f55e0bf0299 1343920251 ReadAge-0.1.10-windows-x64-setup.exe
+          c1d03b05c6b30a10b385bd6f4c2bd9a56b81615ef91afac5e796706052fc9102 147608625 ReadAge-0.1.10-windows-x64-setup.exe.from-d750de8ad7d3ade8d7b57857a3b16fd43578b3967e86beecb2a981a3f565a00e.delta
+          44c774e87ec3efd03d864f914d22ec23fa531b2007b55451e3ee92824206f121 3107 ReadAge-0.1.10-windows-x64-setup.exe.from-d750de8ad7d3ade8d7b57857a3b16fd43578b3967e86beecb2a981a3f565a00e.delta.json
+          d8d2a7d619ebe07d30e21fafdfb53a3ca632ce5336e759ab9ab9141f2f639384 1749382534 ReadAge-1.0.14-android.apk
+          18bf7ac6f962300df08b3bbe1eff2e36a8f64f50e15ba0da786e5f1b5449c75c 16212272 ReadAge-1.0.14-android.apk.from-2686057a00fadd3d71f182e21bad56a0283eca21f2f0017195c8a38e9efe3fbe.delta
+          06b5bdb09fdf2e224dbc34b5a50bbab75ea0fe9d12a29d6767c3f152f0aa3810 1952 ReadAge-1.0.14-android.apk.from-2686057a00fadd3d71f182e21bad56a0283eca21f2f0017195c8a38e9efe3fbe.delta.json
+          READAGE_VERIFIED_ASSETS
+          check_release
+          while read -r sha bytes name; do
+            verify_asset
+          done <<'READAGE_FINAL_ASSETS'
+          f843014b73653ac8fdb4b2d3b17c31887158e6347c42ef7ca5ed9f55e0bf0299 1343920251 ReadAge-0.1.10-windows-x64-setup.exe
+          c1d03b05c6b30a10b385bd6f4c2bd9a56b81615ef91afac5e796706052fc9102 147608625 ReadAge-0.1.10-windows-x64-setup.exe.from-d750de8ad7d3ade8d7b57857a3b16fd43578b3967e86beecb2a981a3f565a00e.delta
+          44c774e87ec3efd03d864f914d22ec23fa531b2007b55451e3ee92824206f121 3107 ReadAge-0.1.10-windows-x64-setup.exe.from-d750de8ad7d3ade8d7b57857a3b16fd43578b3967e86beecb2a981a3f565a00e.delta.json
+          d8d2a7d619ebe07d30e21fafdfb53a3ca632ce5336e759ab9ab9141f2f639384 1749382534 ReadAge-1.0.14-android.apk
+          18bf7ac6f962300df08b3bbe1eff2e36a8f64f50e15ba0da786e5f1b5449c75c 16212272 ReadAge-1.0.14-android.apk.from-2686057a00fadd3d71f182e21bad56a0283eca21f2f0017195c8a38e9efe3fbe.delta
+          06b5bdb09fdf2e224dbc34b5a50bbab75ea0fe9d12a29d6767c3f152f0aa3810 1952 ReadAge-1.0.14-android.apk.from-2686057a00fadd3d71f182e21bad56a0283eca21f2f0017195c8a38e9efe3fbe.delta.json
+          READAGE_FINAL_ASSETS
+          printf 'All 6 pinned installer/delta assets verified on the fixed draft release.\n'
