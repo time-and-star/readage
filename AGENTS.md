@@ -1,5 +1,9 @@
 # 跨端修改规则
 
+## Bot 工作树隔离（2026-10-25）
+
+用户要求先不接入 Bot，并让 Bot 的工作树独立。当前目录保留 `codex/full-installer-release-0.1.9` 的阅读 / 背词 / 熟练度工作；Bot 会话“添加手机端 API Bot”已迁到 `C:/Users/19891/.codex/worktrees/c639/english-ai---active-reading-app`，使用 `codex/api-bot`。Bot 专属模块、测试、预览和 Android 插件仅保留在该工作树。后续 Bot 开发在该目录内进行，不切换或修改本目录来代替分支隔离；用户另行要求产品接入前，本目录保持未接入。迁移记录见 [Bot 工作树隔离](docs/bot-worktree-isolation.md)。
+
 本项目同时交付本地浏览器、Windows Electron 和 Android。用户要求每次修改后逐项对应三端，落实到受影响端；默认把三端作为同一个产品维护。具体架构和交付状态见 [跨端修改与交付](docs/platform-parity.md)。
 
 ## 跨端功能不得删减
