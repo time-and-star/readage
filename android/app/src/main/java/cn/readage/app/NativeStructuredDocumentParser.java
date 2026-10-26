@@ -440,7 +440,7 @@ public final class NativeStructuredDocumentParser {
     }
 
     /** Remove declared navigation/hidden publisher furniture without guessing from prose. */
-    private static Document readingDocument(String source) {
+    static Document readingDocument(String source) {
         Document document=Jsoup.parse(source);
         document.select("script,style,nav,noscript,iframe,object,template,svg,rt,rp,[hidden],[aria-hidden=true]").remove();
         for(Element element:new ArrayList<>(document.getAllElements())) {

@@ -151,10 +151,9 @@ export function ForgettingCurvePanel({ states, currentWordId, currentWordLabel, 
           <div className="forgetting-garden__chart-card">
             <div className="forgetting-garden__toolbar"><div className="forgetting-garden__segmented" role="group" aria-label="个人曲线范围"><button type="button" aria-pressed={scope === 'all'} onClick={() => setScope('all')}>我的词库</button><button type="button" disabled={!currentWordId} aria-pressed={scope === 'current'} onClick={() => setScope('current')}>当前词</button></div><div className="forgetting-garden__horizons" role="group" aria-label="观察时间范围">{([1, 7, 30] as const).map(days => <button type="button" key={days} aria-pressed={horizon === days} onClick={() => changeHorizon(days)}>{days} 天</button>)}</div></div>
 
-            <h3 className="forgetting-garden__chart-title">词卡回忆率预测</h3>
+            <h3 className="forgetting-garden__chart-title">预计回忆率（%）</h3>
             {scope === 'current' && <p className="forgetting-garden__word" lang="en">{currentWordLabel || currentWordId}</p>}
-            <p className="forgetting-garden__metric">预计回忆成功率 %</p>
-            <p className="forgetting-garden__data-note">默认 FSRS 模型估计，并非实测成绩；尚未拟合个人遗忘参数。</p>
+            <p className="forgetting-garden__data-note">模型估计，非实测成绩。</p>
             {personal.status === 'limited' && <p className="forgetting-garden__data-note"><strong>初步估计 · 数据仍少</strong>，预测会随正式复习更新。</p>}
             {personal.currentPercent !== null && <p className="forgetting-garden__data-note">按各词实际距上次回忆的时间计算，当前预计回忆率 {percentLabel(personal.currentPercent)}。</p>}
 
@@ -168,9 +167,12 @@ export function ForgettingCurvePanel({ states, currentWordId, currentWordLabel, 
             <div className="forgetting-garden__explorer"><div className="forgetting-garden__readout"><span className="forgetting-garden__time">复习后 <strong>{timeLabel(activeTime)}</strong></span><span className="forgetting-garden__personal-value">预计回忆成功率 <strong>{percentLabel(personalValue)}</strong></span></div><label className="sr-only" htmlFor={`${id}-time`}>探索复习后的时间</label><input id={`${id}-time`} type="range" min={0} max={horizon} step="any" value={activeTime} onChange={event => setSelectedTime(Number(event.target.value))} aria-valuetext={`复习后 ${timeLabel(activeTime)}，预计回忆成功率 ${percentLabel(personalValue)}`} /></div>
 
             <p className="forgetting-garden__data-note">{personal.wordCount} 个词 · {personal.reviewCount} 条正式回忆记录</p>
-            <p className="forgetting-garden__data-note">{personal.dataNote}</p>
-            <p className="forgetting-garden__assumption">假设此后不再学习；0 天的 100% 是模型起点，并非实测。</p>
             </>}
+            <details className="forgetting-garden__explanation"><summary>预测说明</summary>
+              <p>采用默认 FSRS 参数，尚未拟合个人遗忘参数；预测不代表实测成绩。</p>
+              <p>{personal.dataNote}</p>
+              <p>假设此后不再学习；0 天的 100% 是模型起点，并非实测。</p>
+            </details>
           </div>
         </div>
       </div>

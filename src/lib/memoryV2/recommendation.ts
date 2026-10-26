@@ -366,7 +366,8 @@ export class RecommendationEngine {
       totalMemoryScore += proficiency.memoryScore;
 
       // 检查是否到�?
-      if (new Date(proficiency.nextReview) <= now) {
+      if (proficiency.isFlashcardEligible !== false && (proficiency.isIntroduced !== true || proficiency.hasPractice)
+        && new Date(proficiency.nextReview) <= now) {
         dueWordsCount++;
       }
 

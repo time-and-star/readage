@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { ReadAgeExample, ReadAgeSense, ReadAgeWord } from '../../packages/dictionary/readage';
 import { DictionaryOriginalContent } from './DictionaryOriginalContent';
 import { WordCardRelatedButton } from './WordCardRelatedButton';
@@ -184,12 +184,28 @@ type Tab = typeof tabs[number]['id'];
 /** Give the full authored entry clear reading and practice paths, without flattening its fields. */
 export function ReadAgeEntrySections({ word, onLookupRelated: onLookup }: { word: ReadAgeWord; onLookupRelated?: (word: string) => void }) {
   const [activeTab, setActiveTab] = useState<Tab>('meanings');
+  const entryRef = useRef<HTMLDivElement>(null);
+  const previousTab = useRef(activeTab);
+  useLayoutEffect(() => {
+    if (previousTab.current === activeTab) return;
+    previousTab.current = activeTab;
+    const entry = entryRef.current;
+    // Reset an obscured entry in its own scroller without moving the page behind a card.
+    for (let scroller = entry?.parentElement; entry && scroller; scroller = scroller.parentElement) {
+      const style = getComputedStyle(scroller);
+      if (!/^(auto|scroll|overlay)$/.test(style.overflowY)) continue;
+      const top = scroller.getBoundingClientRect().top + scroller.clientTop + parseFloat(style.paddingTop);
+      const offset = entry.getBoundingClientRect().top - top;
+      if (offset < 0) scroller.scrollTop += offset;
+      break;
+    }
+  }, [activeTab]);
   const entryId = useId();
   const contexts = items(word.contexts);
   const relations = [...items(word.relations), ...items(word.confused)];
   const collocationCount = word.senses.reduce((sum, sense) => sum + sense.collocations.length, 0);
   const comparisons = word.senses.filter(sense => items(sense.synonyms).length || items(sense.antonyms).length);
-  return <div className="readage-entry" aria-label="ReadAge 完整词条">
+  return <div ref={entryRef} className="readage-entry" aria-label="ReadAge 完整词条">
     <div className="readage-tabs" role="tablist" aria-label="词条内容">{tabs.map((tab, i) => <button type="button" key={tab.id} id={`${entryId}-tab-${tab.id}`}
       role="tab" aria-selected={activeTab === tab.id} aria-controls={`${entryId}-${tab.id}`} tabIndex={activeTab === tab.id ? 0 : -1}
       onClick={() => setActiveTab(tab.id)} onKeyDown={event => {
@@ -198,7 +214,7 @@ export function ReadAgeEntrySections({ word, onLookupRelated: onLookup }: { word
         if (event.key === 'ArrowLeft') next = (i + tabs.length - 1) % tabs.length;
         if (event.key === 'Home') next = 0;
         if (event.key === 'End') next = tabs.length - 1;
-        if (next !== undefined) { event.preventDefault(); setActiveTab(tabs[next].id); const buttons = event.currentTarget.parentElement?.querySelectorAll('[role="tab"]'); (buttons?.[next] as HTMLButtonElement | undefined)?.focus(); }
+        if (next !== undefined) { event.preventDefault(); setActiveTab(tabs[next].id); const buttons = event.currentTarget.parentElement?.querySelectorAll('[role="tab"]'); (buttons?.[next] as HTMLButtonElement | undefined)?.focus({ preventScroll: true }); }
       }}>{tab.label}</button>)}</div>
     <section className="readage-panel" role="tabpanel" tabIndex={0} id={`${entryId}-meanings`} aria-labelledby={`${entryId}-tab-meanings`} hidden={activeTab !== 'meanings'}>
       <div className="readage-core"><Prose value={word.coreMeaning.zh} onLookup={onLookup} className="readage-core-meaning" />

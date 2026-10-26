@@ -393,3 +393,282 @@ test('historical optional FSRS fields and null RME remain readable and round-tri
   assert.deepEqual(target.stores, source.stores);
   assert.ok(submitFsrsReview(state, 3, new Date('2026-09-03T12:00:00Z')).fsrsReviews.length > state.fsrsReviews.length);
 });
+
+test('scheduling audit and before-card snapshots round-trip while malformed new fields stop before browser access', async () => {
+  const fresh = memoryRow().state;
+  const reviewed = submitFsrsReview(fresh, 3, new Date('2026-09-02T12:00:00Z'));
+  const review = { ...reviewed.fsrsReviews[0], scheduling: { version: 1, desiredRetention: 0.95 }, beforeCard: fresh.fsrsCard };
+  const stores = Object.fromEntries(storeNames.map(name => [name, [] as unknown[]]));
+  stores.memoryState = [{ key: 'u|run', state: { ...reviewed, fsrsReviews: [review] } }];
+  const backup = { format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION, memoryStorage: 'indexedDB', localStorage: {},
+    indexedDb: { name: MEMORY_IDB_NAME, version: MEMORY_IDB_VERSION, stores } };
+  assert.deepEqual(validateLocalDataBackup(backup).indexedDb?.stores, stores);
+  const invalidReviews = [
+    ...[null, {}, { version: 7, desiredRetention: 0.95 }, { version: 1, desiredRetention: 0.99 },
+      { version: 1, desiredRetention: 0.905 }, { version: 1, desiredRetention: '0.95' }].map(scheduling => ({ ...review, scheduling })),
+    ...[null, {}, { ...fresh.fsrsCard, stability: Infinity }, { ...fresh.fsrsCard, reps: -1 },
+      { ...fresh.fsrsCard, lapses: 0.5 }, { ...fresh.fsrsCard, learningSteps: -1 },
+      { ...fresh.fsrsCard, state: 2 }, { ...fresh.fsrsCard, state: 99 },
+      { ...fresh.fsrsCard, due: 'invalid' }, { ...fresh.fsrsCard, lastReview: null }].map(beforeCard => ({ ...review, beforeCard })),
+  ];
+  const factory = new FakeIndexedDb(); installBrowser(undefined, factory);
+  for (const invalidReview of invalidReviews) {
+    const candidate = structuredClone(backup);
+    candidate.indexedDb.stores.memoryState = [{ key: 'u|run', state: { ...reviewed, fsrsReviews: [invalidReview] } }];
+    await assert.rejects(importLocalDataBackup(candidate), /记录无效/);
+  }
+  assert.equal(factory.opened, 0);
+});
+
+for (const version of [3, 4] as const) test(`policy v${version} learning and relearning states survive browser backups with due dates, steps and journals intact`, async () => {
+  const scheduling = { version, desiredRetention: 0.93 };
+  const at = new Date('2026-09-02T12:00:00.000Z');
+  const learning = submitFsrsReview(memoryRow('learning').state, 3, at, scheduling);
+  const review = submitFsrsReview(memoryRow('relearning').state, 3, new Date('2026-09-01T12:00:00.000Z'));
+  const relearning = submitFsrsReview(review, 1, at, scheduling);
+  const states = [learning, relearning];
+  assert.equal(learning.fsrsCard.state, 1);
+  assert.equal(relearning.fsrsCard.state, 3);
+  assert.ok(states.every(state => Date.parse(state.nextReview) - at.getTime() < 86_400_000));
+  if (version === 4) for (const state of states) assert.equal(state.nextReview, state.lastReview);
+  assert.ok(learning.fsrsCard.learningSteps > 0);
+  const source = new FakeIndexedDb();
+  source.stores.memoryState = states.map(state => ({ key: `u|${state.wordId}`, state }));
+  source.stores.meta = [
+    { key: 'reading-verification:u', value: { version: 1, userId: 'u', attempts: states.map(state => ({
+      attemptId: `card:${state.wordId}`, wordId: state.wordId, scheduling,
+    })) } },
+    { key: 'extension-journal:["u","learning"]', value: { version: 1, userId: 'u', wordId: 'learning',
+      baselineState: learning, baselineDaily: [], baselineRaw: [], events: [] } },
+  ];
+  const localStorage = Object.fromEntries(states.map(state => [`english-ai:v2:memory:state:u:${state.wordId}`, JSON.stringify(state)]));
+  const storage = installBrowser(undefined, source);
+  applyAppLocalStorage(localStorage);
+  const backup = await exportLocalDataBackup({ memoryStorage: 'indexedDB' });
+  const target = new FakeIndexedDb(); installBrowser(storage, target);
+  await importLocalDataBackup(backup);
+  assert.deepEqual(target.stores, source.stores);
+  assert.deepEqual(collectAppLocalStorage(), localStorage);
+  const legacyBackup = { ...backup, memoryStorage: 'localStorage' as const, indexedDb: null,
+    localStorage: { ...localStorage,
+      'english-ai:v2:memory:meta:reading-verification:u': JSON.stringify((source.stores.meta[0] as any).value),
+      'english-ai:v2:memory:meta:extension-journal:["u","learning"]': JSON.stringify((source.stores.meta[1] as any).value) } };
+  assert.deepEqual(validateLocalDataBackup(legacyBackup).localStorage, legacyBackup.localStorage);
+});
+
+test('v6 browser backups preserve mixed policies, FSRS due dates and both journal storage layouts', async () => {
+  let state = submitFsrsReview(memoryRow('mixed').state, 3, new Date('2026-09-01T12:00:00Z'), { version: 1, desiredRetention: 0.9 });
+  state = submitFsrsReview(state, 2, new Date('2026-09-02T12:00:00Z'), { version: 5, desiredRetention: 0.93 });
+  const scheduling = { version: 6 as const, desiredRetention: 0.95 };
+  state = submitFsrsReview(state, 3, new Date('2026-09-03T12:00:00Z'), scheduling);
+  state.fsrsCard.confirmationDue = '2026-09-04T12:00:00.000Z';
+  const evidence = { kind: 'answer_rehearsal' as const, answerExposedAt: '2026-09-03T12:00:00.000Z' };
+  state = submitFsrsReview(state, 3, new Date('2026-09-03T12:00:30Z'), scheduling, evidence);
+  // Persistence fixtures retain the supplied checkpoint independently of scheduler behavior.
+  state.fsrsCard.confirmationDue = '2026-09-04T12:00:00.000Z';
+  assert.deepEqual(state.fsrsReviews.map(review => review.scheduling?.version), [1, 5, 6, 6]);
+  assert.equal(state.fsrsCard.confirmationDue, '2026-09-04T12:00:00.000Z');
+  assert.equal(state.fsrsReviews.at(-1)?.modelApplied, false);
+  assert.deepEqual(state.fsrsReviews.at(-1)?.evidence, evidence);
+  assert.equal(state.fsrsReviews.at(-1)?.beforeCard?.confirmationDue, state.fsrsCard.confirmationDue);
+  const readingTask = { type: 'context_choice' as const, contextVisible: true as const,
+    answerExposed: false, mapping: 'hard_on_correct' as const };
+  const practiceTask = { ...readingTask, answerExposed: true, mapping: 'practice_only' as const };
+  Object.assign(state.fsrsReviews.at(-1)!, { readingTask: practiceTask });
+  const verification = { version: 1, userId: 'u', attempts: [
+    { attemptId: 'v6-recall', wordId: 'mixed', scheduling, readingTask },
+    { attemptId: 'v6-practice', wordId: 'mixed', scheduling, readingTask: practiceTask },
+    { attemptId: 'legacy-recall', wordId: 'mixed' },
+  ] };
+  const extension = { version: 1, userId: 'u', wordId: 'mixed', baselineState: state,
+    baselineDaily: [], baselineRaw: [], events: [] };
+  const localStorage = {
+    'english-ai:v2:memory:state:u:mixed': JSON.stringify(state),
+    'english-ai:v2:memory:meta:reading-verification:u': JSON.stringify(verification),
+    'english-ai:v2:memory:meta:extension-journal:["u","mixed"]': JSON.stringify(extension),
+  };
+  const source = new FakeIndexedDb();
+  source.stores.memoryState = [{ key: 'u|mixed', state }];
+  source.stores.meta = [{ key: 'reading-verification:u', value: verification },
+    { key: 'extension-journal:["u","mixed"]', value: extension }];
+  const storage = installBrowser(undefined, source);
+  applyAppLocalStorage(localStorage);
+  const backup = await exportLocalDataBackup({ memoryStorage: 'indexedDB' });
+  const target = new FakeIndexedDb(); installBrowser(storage, target);
+  await importLocalDataBackup(backup);
+  assert.deepEqual(target.stores, source.stores);
+  assert.deepEqual(collectAppLocalStorage(), localStorage);
+  assert.deepEqual(validateLocalDataBackup({ ...backup, memoryStorage: 'localStorage', indexedDb: null }).localStorage, localStorage);
+});
+
+test('v6 backup validation rejects malformed confirmation checkpoints and recall audit fields before replacement', () => {
+  const state = submitFsrsReview(memoryRow('audit').state, 3, new Date('2026-09-03T12:00:00Z'),
+    { version: 6, desiredRetention: 0.93 });
+  const readingTask = { type: 'context_choice', contextVisible: true, answerExposed: false, mapping: 'hard_on_correct' };
+  const invalidReadingTasks = [null, [], {}, { ...readingTask, type: 'free_recall' },
+    { ...readingTask, contextVisible: false }, { ...readingTask, answerExposed: 'false' },
+    { ...readingTask, mapping: 'good_on_correct' },
+    ...Object.keys(readingTask).map(missing => Object.fromEntries(Object.entries(readingTask).filter(([key]) => key !== missing)))];
+  const malformed: Array<(value: typeof state) => void> = [
+    ...['invalid', '2026-02-30T12:00:00Z', null, 1].map(confirmationDue => (value: typeof state) => {
+      Object.assign(value.fsrsCard, { confirmationDue });
+    }),
+    value => { Object.assign(value.fsrsReviews[0].beforeCard!, { confirmationDue: '2026-02-30T12:00:00Z' }); },
+    ...[null, {}, { kind: 'unknown' }, { kind: 'answer_rehearsal', answerExposedAt: 'invalid' },
+      { kind: 'independent_recall', interveningWord: '' }].map(evidence => (value: typeof state) => {
+      Object.assign(value.fsrsReviews[0], { evidence });
+    }),
+    ...[true, null, 'false'].map(modelApplied => (value: typeof state) => { Object.assign(value.fsrsReviews[0], { modelApplied }); }),
+    ...invalidReadingTasks.map(readingTask => (value: typeof state) => { Object.assign(value.fsrsReviews[0], { readingTask }); }),
+  ];
+  for (const corrupt of malformed) {
+    const candidate = structuredClone(state); corrupt(candidate);
+    const localStorage = { 'english-ai:v2:memory:state:u:audit': JSON.stringify(candidate) };
+    const backup = { format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION, memoryStorage: 'indexedDB', localStorage: {},
+      indexedDb: { name: MEMORY_IDB_NAME, version: MEMORY_IDB_VERSION, stores: {
+        ...Object.fromEntries(storeNames.map(name => [name, [] as unknown[]])), memoryState: [{ key: 'u|audit', state: candidate }],
+      } } };
+    assert.throws(() => validateLocalDataBackup(backup), /记录无效/);
+    assert.throws(() => validateLocalDataBackup({ ...backup, indexedDb: null, memoryStorage: 'localStorage', localStorage }), /记录无效/);
+  }
+  for (const readingTask of invalidReadingTasks) {
+    const value = { version: 1, userId: 'u', attempts: [{ attemptId: 'invalid-task', readingTask }] };
+    const backup = { format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION, memoryStorage: 'indexedDB', localStorage: {},
+      indexedDb: { name: MEMORY_IDB_NAME, version: MEMORY_IDB_VERSION, stores: {
+        ...Object.fromEntries(storeNames.map(name => [name, [] as unknown[]])), meta: [{ key: 'reading-verification:u', value }],
+      } } };
+    assert.throws(() => validateLocalDataBackup(backup), /记录无效/);
+    assert.throws(() => validateLocalDataBackup({ ...backup, indexedDb: null, memoryStorage: 'localStorage',
+      localStorage: { 'english-ai:v2:memory:meta:reading-verification:u': JSON.stringify(value) } }), /记录无效/);
+  }
+});
+
+test('V2 practice-only New cards keep zero formal memory and positive attempt counts through browser backup', async () => {
+  const state = memoryRow('practice-only').state;
+  state.fsrsCard.reps = 1;
+  const review = { rating: 3, state: 0, due: state.fsrsCard.due, stability: 0, difficulty: 0, elapsedDays: 0,
+    lastElapsedDays: 0, scheduledDays: 0, learningSteps: 0, review: '2026-09-03T12:00:00.000Z',
+    scheduling: { version: 6, desiredRetention: 0.93 }, modelApplied: false,
+    evidence: { kind: 'answer_rehearsal', answerExposedAt: '2026-09-03T12:00:00.000Z' },
+    readingTask: { type: 'context_choice', contextVisible: true, answerExposed: true, mapping: 'practice_only' },
+    beforeCard: { ...state.fsrsCard, reps: 0 } };
+  Object.assign(state, { fsrsReviews: [review] });
+  const source = new FakeIndexedDb(); source.stores.memoryState = [{ key: 'u|practice-only', state }];
+  const storage = installBrowser(undefined, source);
+  const localStorage = { 'english-ai:v2:memory:state:u:practice-only': JSON.stringify(state) };
+  applyAppLocalStorage(localStorage);
+  const backup = await exportLocalDataBackup({ memoryStorage: 'indexedDB' });
+  const target = new FakeIndexedDb(); installBrowser(storage, target);
+  await importLocalDataBackup(backup);
+  assert.deepEqual(target.stores.memoryState, source.stores.memoryState);
+  assert.equal(state.lastReview, null); assert.equal(state.fsrsCard.lastReview, undefined);
+  assert.equal(state.fsrsCard.state, 0); assert.equal(state.stability, 0); assert.equal(state.fsrsCard.reps, 1);
+  assert.deepEqual(validateLocalDataBackup({ ...backup, indexedDb: null, memoryStorage: 'localStorage' }).localStorage, localStorage);
+});
+
+test('lookup-only clicks and bounded explicit recall failures are retained and invalid evidence is rejected', () => {
+  const event = { userId: 'u', wordId: 'run', articleId: 'a', occurrenceId: 'a:1', localDate: '2026-09-02',
+    occurredAt: '2026-09-02T12:00:00Z', eventType: 'click', lookupOnly: true };
+  const evidence = { userId: 'u', wordId: 'run', articleId: 'a', localDate: '2026-09-02',
+    firstSeenAt: event.occurredAt, lastSeenAt: event.occurredAt, lastRecallFailureAt: event.occurredAt,
+    clickedOccurrenceCount: 2, recallFailureCount: 1 };
+  const stores = Object.fromEntries(storeNames.map(name => [name, [] as unknown[]]));
+  stores.rawEvents = [{ key: 'u|run|2026-09-02', events: [event] }];
+  stores.articleEvidence = [{ key: 'u|run|a|2026-09-02', evidence }];
+  stores.dailyEvidence = [{ key: 'u|run|2026-09-02', evidence: { ...evidence, articleEvidence: [evidence] } }];
+  const backup = { format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION, localStorage: {},
+    indexedDb: { name: MEMORY_IDB_NAME, version: MEMORY_IDB_VERSION, stores } };
+  assert.deepEqual(validateLocalDataBackup(backup).indexedDb?.stores, stores);
+  for (const lookupOnly of [false, null, 'true', 1]) {
+    const candidate = structuredClone(backup);
+    candidate.indexedDb.stores.rawEvents = [{ key: 'u|run|2026-09-02', events: [{ ...event, lookupOnly }] }];
+    assert.throws(() => validateLocalDataBackup(candidate), /记录无效/);
+  }
+  for (const table of ['articleEvidence', 'dailyEvidence']) for (const recallFailureCount of [-1, 0.5, 3, null, '1']) {
+    const candidate = structuredClone(backup);
+    candidate.indexedDb.stores[table] = [{ key: table === 'articleEvidence' ? 'u|run|a|2026-09-02' : 'u|run|2026-09-02',
+      evidence: { ...evidence, recallFailureCount, articleEvidence: [evidence] } }];
+    assert.throws(() => validateLocalDataBackup(candidate), /记录无效/);
+  }
+  for (const lastRecallFailureAt of ['invalid', '2026-02-30T12:00:00Z', null, 1]) {
+    const candidate = structuredClone(backup);
+    candidate.indexedDb.stores.articleEvidence = [{ key: 'u|run|a|2026-09-02', evidence: { ...evidence, lastRecallFailureAt } }];
+    assert.throws(() => validateLocalDataBackup(candidate), /记录无效/);
+  }
+});
+
+test('legacy localStorage backups validate added scheduling and evidence fields without requiring modern record shapes', () => {
+  const prefix = 'english-ai:v2:memory:';
+  const localStorage = {
+    [`${prefix}state:u:run`]: JSON.stringify({ wordId: 'run' }),
+    [`${prefix}raw:u:run:2026-09-02`]: JSON.stringify([{ eventType: 'click', lookupOnly: true }]),
+    [`${prefix}article:u:run:a:2026-09-02`]: JSON.stringify({ clickedOccurrenceCount: 2, recallFailureCount: 0 }),
+  };
+  const backup = { format: LOCAL_BACKUP_FORMAT, version: LOCAL_BACKUP_VERSION, memoryStorage: 'localStorage', localStorage, indexedDb: null };
+  assert.deepEqual(validateLocalDataBackup(backup).localStorage, localStorage);
+  const malformed = [
+    [`${prefix}state:u:run`, { fsrsReviews: [{ scheduling: { version: 1, desiredRetention: 0.905 } }] }],
+    [`${prefix}state:u:run`, { passiveReadingReviews: [{ beforeCard: {} }] }],
+    [`${prefix}raw:u:run:2026-09-02`, [{ eventType: 'click', lookupOnly: false }]],
+    [`${prefix}article:u:run:a:2026-09-02`, { clickedOccurrenceCount: 1, recallFailureCount: 2 }],
+    [`${prefix}daily:u:run:2026-09-02`, { articleEvidence: [{ clickedOccurrenceCount: 1, recallFailureCount: -1 }] }],
+    [`${prefix}article:u:run:a:2026-09-02`, { lastRecallFailureAt: 'invalid' }],
+  ] as const;
+  for (const [key, value] of malformed) assert.throws(() => validateLocalDataBackup({ ...backup, localStorage: { ...localStorage, [key]: JSON.stringify(value) } }), /记录无效/);
+});
+
+test('known recall journals preserve valid new metadata across backup and reject corrupt policies without restricting generic metadata', async () => {
+  const scheduling = { version: 1, desiredRetention: 0.95 };
+  const conservativeScheduling = { version: 2, desiredRetention: 0.95 };
+  const intradayScheduling = { version: 3, desiredRetention: 0.95 };
+  const roundScheduling = { version: 4, desiredRetention: 0.95 };
+  const beforeCard = memoryRow().state.fsrsCard;
+  const intradayBeforeCard = { ...beforeCard, state: 1, learningSteps: 2, reps: 2,
+    due: '2026-09-02T12:10:00.000Z', lastReview: '2026-09-02T12:00:00.000Z' };
+  const roundBeforeCard = { ...intradayBeforeCard, due: intradayBeforeCard.lastReview };
+  const verification = { version: 1, userId: 'u', attempts: [{ attemptId: 'recall-v1', scheduling },
+    { attemptId: 'recall-v2', scheduling: conservativeScheduling },
+    { attemptId: 'recall-v3', scheduling: intradayScheduling },
+    { attemptId: 'recall-v4', scheduling: roundScheduling }, { attemptId: 'legacy' }] };
+  const extension = { version: 1, userId: 'u', wordId: 'run',
+    pendingFailureDates: ['2026-09-02'],
+    baselineState: { fsrsReviews: [{ scheduling, beforeCard }, { scheduling: conservativeScheduling, beforeCard },
+      { scheduling: intradayScheduling, beforeCard: intradayBeforeCard },
+      { scheduling: roundScheduling, beforeCard: roundBeforeCard }] },
+    baselineDaily: [{ clickedOccurrenceCount: 1, recallFailureCount: 1,
+      articleEvidence: [{ clickedOccurrenceCount: 1, recallFailureCount: 1, lastRecallFailureAt: '2026-09-02T12:00:00Z' }] }],
+    baselineRaw: [{ eventType: 'click', lookupOnly: true }], events: [{ eventType: 'click', lookupOnly: true }] };
+  const source = new FakeIndexedDb();
+  source.stores.meta = [
+    { key: 'reading-verification:u', value: verification }, { key: 'extension-journal:["u","run"]', value: extension },
+    { key: 'generic', value: { attempts: [{ scheduling: 'extensible custom value' }] } }, { key: 'nullable', value: null },
+  ];
+  const storage = installBrowser(undefined, source);
+  const backup = await exportLocalDataBackup({ memoryStorage: 'indexedDB' });
+  const target = new FakeIndexedDb(); installBrowser(storage, target);
+  await importLocalDataBackup(backup);
+  assert.deepEqual(target.stores, source.stores);
+  const invalidJournals: Array<[string, unknown]> = [
+    ['reading-verification:u', { ...verification, attempts: [{ scheduling: { version: 1, desiredRetention: 0.905 } }] }],
+    ['reading-verification:u', { ...verification, attempts: [{ scheduling: null }] }],
+    ['extension-journal:["u","run"]', { ...extension, baselineState: { fsrsReviews: [{ beforeCard: {} }] } }],
+    ['extension-journal:["u","run"]', { ...extension, baselineState: { fsrsReviews: [{ scheduling: { version: 7, desiredRetention: 0.95 } }] } }],
+    ['reading-verification:u', { ...verification, attempts: [{ scheduling: { version: 7, desiredRetention: 0.95 } }] }],
+    ...[null, '2026-09-02', ['2026-02-30'], [1]].map(pendingFailureDates =>
+      ['extension-journal:["u","run"]', { ...extension, pendingFailureDates }] as [string, unknown]),
+    ['extension-journal:["u","run"]', { ...extension, baselineDaily: [{ articleEvidence: [{ clickedOccurrenceCount: 1, recallFailureCount: 2 }] }] }],
+    ['extension-journal:["u","run"]', { ...extension, baselineDaily: [{ articleEvidence: [{ lastRecallFailureAt: 'invalid' }] }] }],
+    ['extension-journal:["u","run"]', { ...extension, baselineRaw: [{ eventType: 'click', lookupOnly: false }] }],
+    ['extension-journal:["u","run"]', { ...extension, events: [{ eventType: 'click', lookupOnly: false }] }],
+  ];
+  for (const [key, value] of invalidJournals) {
+    const candidate = structuredClone(backup);
+    candidate.indexedDb!.stores.meta = [{ key, value }];
+    assert.throws(() => validateLocalDataBackup(candidate), /记录无效/);
+    assert.throws(() => validateLocalDataBackup({ ...candidate, memoryStorage: 'localStorage', indexedDb: null,
+      localStorage: { [`english-ai:v2:memory:meta:${key}`]: JSON.stringify(value) } }), /记录无效/);
+  }
+  const legacy = { version: 1, attempts: [{}] };
+  assert.doesNotThrow(() => validateLocalDataBackup({ ...backup, indexedDb: null, memoryStorage: 'localStorage',
+    localStorage: { 'english-ai:v2:memory:meta:reading-verification:u': JSON.stringify(legacy) } }));
+});

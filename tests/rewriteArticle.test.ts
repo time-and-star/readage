@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { register } from 'node:module';
 import type { Article } from '../src/types';
 import type { RecommendedArticleCandidate } from '../src/lib/articleValidation';
 import { buildLevelRewriteArticle } from '../src/lib/rewriteArticle';
-import { getArticleHighlightTerms } from '../src/components/ReadingScreen';
+register('./helpers/style-loader.mjs', import.meta.url);
+const { getArticleHighlightTerms } = await import('../src/components/ReadingScreen');
 
 function sourceArticle(): Article {
   return {

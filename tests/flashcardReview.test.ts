@@ -135,17 +135,17 @@ test('concurrent retries preserve one grade, timestamp and schedule, while confl
   assert.equal((await readVerificationHistory(storage, 'u')).length, 1);
   assert.equal(retry.fsrsReviews.length, 1);
   await assert.rejects(submitFlashcardRating(store, { ...input, rating: 'again' }), /冲突/);
-  await assert.rejects(submitFlashcardRating(store, { ...input, attemptId: 'stale-other-tab' }), /尚未到期/);
+  await assert.rejects(submitFlashcardRating(store, { ...input, attemptId: 'stale-other-tab', expectedReps: 0 }), /已在其他页面更新.*刷新词卡/);
   assert.deepEqual(await storage.getMemoryState('u', 'resilient'), first);
 });
 
-test('forgotten cards reappear after three other cards as practice without modifying memory', () => {
+test('advancing a forgotten card leaves its persisted minute schedule in charge without an immediate copy', () => {
   const queue = buildFlashcardQueue(['a', 'b', 'c', 'd', 'e'].map(newWord), { now: at, timezone: 'UTC' });
   const before = structuredClone(queue.cards[0].state);
   const practiceQueue = advanceFlashcardSession(queue.cards, 'a', 'again');
-  assert.deepEqual(practiceQueue.map(card => card.wordId), ['b', 'c', 'd', 'a', 'e']);
-  assert.equal(practiceQueue[3].isPractice, true);
-  assert.deepEqual(practiceQueue[3].state, before);
+  assert.deepEqual(practiceQueue.map(card => card.wordId), ['b', 'c', 'd', 'e']);
+  assert.equal(practiceQueue.some(card => card.isPractice), false);
+  assert.deepEqual(queue.cards[0].state, before);
   assert.equal(advanceFlashcardSession(practiceQueue, 'a', 'good').length, 4);
 });
 
@@ -274,7 +274,7 @@ test('first and recently rehearsed word-card success cannot earn delayed recover
   assert.equal(saved.rme!.recoveryStreak, 0);
 });
 
-test('interrupted chronology repair keeps imported-card lookup evidence pending for retry', async () => {
+for (const persistedBeforeFailure of [false, true]) test(`interrupted chronology write ${persistedBeforeFailure ? 'after' : 'before'} persistence keeps imported-card lookup evidence pending for retry`, async () => {
   const { storage, store } = setup();
   const imported = submitFsrsReview(newWord('resilient'), 3, at);
   imported.fsrsReviews[0].source = 'flashcard';
@@ -286,10 +286,12 @@ test('interrupted chronology repair keeps imported-card lookup evidence pending 
       clickedOccurrenceCount: 1, validExposureCount: 1 }], articleCount: 1,
     clickedOccurrenceCount: 1, validExposureCount: 1, pendingGrade: 'Again', finalizedAt: null });
   const save = storage.saveMemoryState.bind(storage);
-  let writes = 0;
   storage.saveMemoryState = async state => {
-    if (++writes === 2) throw new Error('interrupted chronology repair');
-    await save(state);
+    // Chronology is now repaired before the first durable write. Cover both a
+    // failed write and a storage acknowledgment lost after that write commits.
+    assert.deepEqual(state.fsrsReviews.map(review => review.review), ['2026-09-06T10:01:00.000Z', at.toISOString()]);
+    if (persistedBeforeFailure) await save(state);
+    throw new Error('interrupted chronology repair');
   };
   await assert.rejects(store.system.finalizeHistoricalDates('u', 'UTC'), /chronology/);
   assert.equal((await storage.getDailyEvidence('u', 'resilient', '2026-09-06'))!.finalizedAt, null);

@@ -55,6 +55,13 @@ test('builds stable paths for every route kind', () => {
   assert.equal(buildAppPath({ kind: 'dictionary-trial', language: 'ja' }), '/settings/dictionaries/try/ja');
 });
 
+test('experimental Bot deep links return to the library while Bot is disconnected', () => {
+  for (const path of ['/settings/bot-avatar', '/settings/bot-avatar/']) {
+    assert.deepEqual(parseAppPath(path), { kind: 'library' });
+    assert.deepEqual(resolveInitialAppRoute(path), { kind: 'library' });
+  }
+});
+
 test('Japanese dictionary trial deep links retain their language after refresh', () => {
   const route = { kind: 'dictionary-trial' as const, language: 'ja' as const };
   assert.deepEqual(resolveInitialAppRoute('/settings/dictionaries/try/ja/'), route);

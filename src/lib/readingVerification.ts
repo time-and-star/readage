@@ -1,5 +1,6 @@
 import type { WordMemoryState } from './memoryV2/types';
 import { getLocalDateInTimeZone } from './memoryV2/dateUtils';
+import { selectCanonicalMemoryState } from './memoryV2/wordIdentity';
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const PAUSE_GAP_MS = 10 * 60 * 1_000;
@@ -94,12 +95,12 @@ export function selectReadingVerificationCandidates({
     const checkTimes = validTimes(priorChecks.map(item => item.occurredAt));
     const latestLearning = Math.max(...learningTimes, ...checkTimes);
     if (nowMs - latestLearning < DAY_MS) continue;
-    const dueTimes = validTimes(group.map(state => state.nextReview));
+    const owner = selectCanonicalMemoryState(group, wordId)!;
     candidates.push({
       wordId,
       contextTexts: [...new Set(contexts.map(item => item.contextText?.trim()).filter(Boolean))],
       lastSeenAt: new Date(latestLearning).toISOString(),
-      due: group.every(state => !state.lastReview) || dueTimes.some(time => time <= nowMs),
+      due: !owner.lastReview || Date.parse(owner.nextReview) <= nowMs,
       checkedAt: checkTimes.length ? Math.max(...checkTimes) : 0,
     });
   }

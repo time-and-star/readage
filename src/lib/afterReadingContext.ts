@@ -1,8 +1,7 @@
 import type { ReadingLearnerWord, ReadingLearnerSummary } from '../types';
 import type { WordMemoryState } from './memoryV2/types';
-import { calculateMemoryScore } from './memoryV2/memoryScore';
-import { calculateConfidence } from './memoryV4/confidence';
-import { hasFormalRecallEvidence, rmeProfileForState } from './memoryV2/rmeV4Bridge';
+import { selectCanonicalMemoryState } from './memoryV2/wordIdentity';
+import { buildWordMemoryDetails } from './wordMemoryDetails';
 import { toLemma } from './proficiency.legacy';
 import type { ReadingVerificationCandidate, ReadingVerificationAttemptSummary } from './readingVerification';
 import { shouldTrackMemoryWord } from './memoryV2/stopWords';
@@ -48,8 +47,8 @@ export function buildAfterReadingContext({ states, history, candidates, articleT
   const learnerWords = selected.map((wordId): ReadingLearnerWord => {
     const group = grouped.get(wordId) ?? [];
     // Prefer a canonical state; aliases contribute recency but never add stability/repetitions.
-    const state = group.find(row => row.wordId === wordId)
-      ?? [...group].sort((a, b) => (b.lastReview ?? '').localeCompare(a.lastReview ?? ''))[0];
+    const state = selectCanonicalMemoryState(group, wordId);
+    const memory = buildWordMemoryDetails(state, { dailyNewWordLimit: 10, importedWordIds: [] }, now, wordId);
     const latest = (times: Array<string | null | undefined>) => times.filter((at): at is string =>
       Boolean(at) && Number.isFinite(Date.parse(at!))).sort().at(-1) ?? null;
     const last = [...history].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
@@ -57,14 +56,14 @@ export function buildAfterReadingContext({ states, history, candidates, articleT
     const recentContext = group.flatMap(row => row.rme?.contextHistory ?? [])
       .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)).find(row => row.contextText)?.contextText?.slice(0, 500);
     return { wordId, inArticle: articleIds.includes(wordId), eligibleDelayed: eligible.has(wordId),
-      memoryScore: state && hasFormalRecallEvidence(state) ? Math.round(calculateMemoryScore(state, undefined, now)) : null,
-      confidence: state && hasFormalRecallEvidence(state) ? Math.round(calculateConfidence(rmeProfileForState(state),
-        { lastReview: state.lastReview, stabilityDays: state.stability, hasRecallEvidence: true }, now)) : null,
+      memoryScore: memory.score === null ? null : Math.round(memory.score),
+      confidence: memory.recallPercent === null ? null : Math.round(memory.recallPercent),
       exposureCount: state?.rme?.exposureHistory.length ?? 0,
-      reviewCount: state?.fsrsReviews.length ?? 0,
-      lastSeenAt: latest(group.flatMap(row => [row.rme?.lastExposureAt, row.lastAssistedAt, row.lastReview])),
+      reviewCount: memory.reviewCount,
+      lastSeenAt: latest(group.flatMap(row => [row.rme?.lastExposureAt, row.lastAssistedAt, row.lastReview,
+        ...row.fsrsReviews.map(review => review.review)])),
       lastAssistedAt: latest(group.map(row => row.lastAssistedAt)),
-      lastReviewAt: state?.lastReview ?? null,
+      lastReviewAt: memory.lastReviewAt,
       ...(last ? { lastOutcome: last.outcome, lastOutcomePurpose: last.purpose ?? 'delayed_verification' } : {}),
       ...(recentContext ? { recentContext } : {}) };
   });

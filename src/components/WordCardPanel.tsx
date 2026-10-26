@@ -14,10 +14,11 @@ import { WordCardInteractions } from './WordCardInteractions';
 import { WordCardText } from './WordCardText';
 import { isTopWordCard } from '../lib/wordCardInteractions';
 import { WordMemoryDetailsPanel } from './WordMemoryDetailsPanel';
-import { WordCardOriginalSentence } from './WordCardOriginalSentence';
+import { ReadingContextExcerpt } from './ReadingContextExcerpt';
 import { DictionarySourceProvenance } from './DictionarySourceProvenance';
 import { WordCardRelatedButton } from './WordCardRelatedButton';
 import { LookupFlashcardControl } from './LookupFlashcardControl';
+import { lockDocumentScroll } from '../lib/documentScrollLock';
 
 export interface WordCardPanelProps {
   open: boolean;
@@ -65,6 +66,9 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
 }) => {
   const scopeId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open) return lockDocumentScroll(document);
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -265,10 +269,7 @@ export const WordCardPanel: React.FC<WordCardPanelProps> = ({
             {result.readingOriginalSentence && (
               <section className="word-card-section word-card-original-sentence">
                 <span className="word-card-section__eyebrow">阅读原句</span>
-                <p className="word-card-copy"><WordCardOriginalSentence text={result.readingOriginalSentence} word={result.readingOriginalWord || selectedText} /></p>
-                <button type="button" className="word-card-action" aria-label="朗读阅读原句" onClick={() => onSpeak(result.readingOriginalSentence!)}>
-                  <Volume2 className="h-4 w-4" aria-hidden="true" />朗读原句
-                </button>
+                <ReadingContextExcerpt text={result.readingOriginalSentence} word={result.readingOriginalWord || selectedText || result.wordOrPhrase} onSpeak={onSpeak} />
               </section>
             )}
 

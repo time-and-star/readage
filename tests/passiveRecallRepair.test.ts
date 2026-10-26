@@ -140,6 +140,7 @@ test('protects minute-based Learning and Relearning schedules absent from partia
     baseline.fsrsCard.scheduledDays = 0;
     baseline.fsrsCard.due = baseline.nextReview = '2026-08-01T12:10:00.000Z';
     const state = review(baseline, '2026-09-01T12:00:00.000Z', 3);
+    delete state.fsrsReviews[0].beforeCard; // Simulate old partial logs without the newly saved exact input card.
     assert.equal(state.fsrsReviews[0].state, stateCode);
     const before = structuredClone(state);
     assert.strictEqual(repairPassiveReadingRecall(freeze(state), [day('2026-09-01')], 'UTC', now), state);

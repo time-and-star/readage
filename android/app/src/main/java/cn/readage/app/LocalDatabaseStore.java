@@ -474,6 +474,7 @@ final class LocalDatabaseStore {
             if (!appKey(key)) continue;
             if (!(inputSettings.get(key) instanceof String)) throw invalid("备份中的键 " + key + " 不是字符串。");
             settings.put(key, inputSettings.getString(key));
+            validateLegacyMemoryFields(key, inputSettings.getString(key));
         }
         Object memoryStorage = raw.opt("memoryStorage");
         if (raw.has("memoryStorage") && !"indexedDB".equals(memoryStorage) && !"localStorage".equals(memoryStorage)) throw invalid("备份中的记忆存储类型无效。");
@@ -507,6 +508,7 @@ final class LocalDatabaseStore {
         String key = record.getString("key"), message = "词汇记忆备份中的 " + table + " 记录无效：" + key + "。";
         if ("meta".equals(table)) {
             if (!record.has("value")) throw invalid(message);
+            validateKnownBackupMetadata(key, record.opt("value"), message);
             return; // Any JSON value, including null, is valid metadata.
         }
         if ("rawEvents".equals(table)) {
@@ -519,6 +521,7 @@ final class LocalDatabaseStore {
                 String date = backupDate(event, "localDate", message);
                 if (!key.equals(userId + "|" + wordId + "|" + date)) throw invalid(message);
                 if (!"exposure".equals(event.opt("eventType")) && !"click".equals(event.opt("eventType"))) throw invalid(message);
+                if (event.has("lookupOnly") && (!Boolean.TRUE.equals(event.opt("lookupOnly")) || !"click".equals(event.opt("eventType")))) throw invalid(message);
                 backupTimestamp(event, "occurredAt", message);
             }
             return;
@@ -541,12 +544,7 @@ final class LocalDatabaseStore {
             backupTimestamp(payload, "nextReview", message);
             optionalBackupTimestamp(payload, "lastReview", message);
             optionalBackupTimestamp(payload, "lastAssistedAt", message);
-            JSONObject card = jsonObject(payload.opt("fsrsCard"), message);
-            backupTimestamp(card, "due", message);
-            optionalBackupTimestamp(card, "lastReview", message);
-            backupNumbers(card, message, "stability", "difficulty", "elapsedDays", "scheduledDays", "reps", "lapses", "state");
-            backupEnum(card, "state", message, 0, 1, 2, 3);
-            if (card.has("learningSteps")) backupNumbers(card, message, "learningSteps");
+            validateBackupCard(payload.opt("fsrsCard"), message, false);
             validateBackupReviews(payload.opt("fsrsReviews"), message);
             if (payload.has("passiveReadingReviews")) validateBackupReviews(payload.opt("passiveReadingReviews"), message);
             if (payload.has("rme") && !payload.isNull("rme")) {
@@ -572,6 +570,7 @@ final class LocalDatabaseStore {
             if (!userId.equals(article.opt("userId")) || !wordId.equals(article.opt("wordId")) || !date.equals(article.opt("localDate"))) throw invalid(message);
         }
         optionalBackupTimestamp(payload, "finalizedAt", message);
+        validateBackupRecallFailures(payload, message);
     }
 
     private static void validateBackupReviews(Object value, String message) throws JSONException {
@@ -584,7 +583,113 @@ final class LocalDatabaseStore {
             backupEnum(review, "state", message, 0, 1, 2, 3);
             backupEnum(review, "rating", message, 1, 2, 3, 4);
             if (review.has("learningSteps")) backupNumbers(review, message, "learningSteps");
+            validateBackupReviewScheduling(review, message);
         }
+    }
+    private static void validateBackupReviewScheduling(JSONObject review, String message) throws JSONException {
+        if (review.has("scheduling")) {
+            JSONObject scheduling = jsonObject(review.opt("scheduling"), message);
+            backupEnum(scheduling, "version", message, 1, 2, 3, 4, 5, 6);
+            backupNumbers(scheduling, message, "desiredRetention");
+            double retention = ((Number) scheduling.opt("desiredRetention")).doubleValue();
+            if (retention < 0.8 || retention > 0.97 || retention != Math.round(retention * 100) / 100.0) throw invalid(message);
+        }
+        if (review.has("evidence")) {
+            JSONObject evidence = jsonObject(review.opt("evidence"), message);
+            if (!"independent_recall".equals(evidence.opt("kind")) && !"answer_rehearsal".equals(evidence.opt("kind"))) throw invalid(message);
+            if (evidence.has("answerExposedAt")) backupTimestamp(evidence, "answerExposedAt", message);
+            if (evidence.has("interveningWord")) backupString(evidence, "interveningWord", message);
+        }
+        if (review.has("modelApplied") && !Boolean.FALSE.equals(review.opt("modelApplied"))) throw invalid(message);
+        if (review.has("readingTask")) {
+            JSONObject task = jsonObject(review.opt("readingTask"), message);
+            if (!"context_choice".equals(task.opt("type")) || !Boolean.TRUE.equals(task.opt("contextVisible"))
+                || !(task.opt("answerExposed") instanceof Boolean)
+                || (!"hard_on_correct".equals(task.opt("mapping")) && !"practice_only".equals(task.opt("mapping")))) throw invalid(message);
+        }
+        if (review.has("beforeCard")) validateBackupCard(review.opt("beforeCard"), message, true);
+    }
+    private static void validateLegacyMemoryFields(String key, String raw) throws Exception {
+        if (!key.startsWith("english-ai:v2:memory:state:") && !key.startsWith("english-ai:v2:memory:raw:") && !key.startsWith("english-ai:v2:memory:article:") && !key.startsWith("english-ai:v2:memory:daily:") && !key.startsWith("english-ai:v2:memory:meta:")) return;
+        Object parsed;
+        try { parsed = parse(raw); } catch (Exception legacyUnreadable) { return; }
+        String message = "词汇记忆备份中的 localStorage 记录无效：" + key + "。";
+        if (key.startsWith("english-ai:v2:memory:meta:")) {
+            validateKnownBackupMetadata(key.substring("english-ai:v2:memory:meta:".length()), parsed, message);
+        } else validateNewBackupMemoryFields(key.startsWith("english-ai:v2:memory:state:") ? "state" : key.startsWith("english-ai:v2:memory:raw:") ? "raw" : "evidence", parsed, message);
+    }
+    private static void validateKnownBackupMetadata(String key, Object value, String message) throws Exception {
+        if (!(value instanceof JSONObject)) return;
+        JSONObject journal = (JSONObject) value;
+        if (key.startsWith("reading-verification:") && journal.opt("attempts") instanceof JSONArray) {
+            JSONArray attempts = journal.getJSONArray("attempts");
+            for (int i = 0; i < attempts.length(); i++) if (attempts.opt(i) instanceof JSONObject) {
+                JSONObject attempt = attempts.getJSONObject(i);
+                validateBackupReviewScheduling(attempt, message);
+            }
+        } else if (key.startsWith("extension-journal:")) {
+            if (journal.has("pendingFailureDates")) {
+                JSONArray pending = jsonArray(journal.opt("pendingFailureDates"), message);
+                for (int i = 0; i < pending.length(); i++) backupDate(object("date", pending.get(i)), "date", message);
+            }
+            validateNewBackupMemoryFields("state", journal.opt("baselineState"), message);
+            if (journal.opt("baselineDaily") instanceof JSONArray) {
+                JSONArray days = journal.getJSONArray("baselineDaily");
+                for (int i = 0; i < days.length(); i++) validateNewBackupMemoryFields("evidence", days.opt(i), message);
+            }
+            for (String field : new String[] { "baselineRaw", "events" }) validateNewBackupMemoryFields("raw", journal.opt(field), message);
+        }
+    }
+    private static void validateNewBackupMemoryFields(String kind, Object parsed, String message) throws JSONException {
+        if ("state".equals(kind) && parsed instanceof JSONObject) {
+            JSONObject state = (JSONObject) parsed;
+            if (state.opt("fsrsCard") instanceof JSONObject) {
+                JSONObject card = state.getJSONObject("fsrsCard");
+                if (card.has("confirmationDue")) backupTimestamp(card, "confirmationDue", message);
+            }
+            for (String field : new String[] { "fsrsReviews", "passiveReadingReviews" }) if (state.opt(field) instanceof JSONArray) {
+                JSONArray reviews = state.getJSONArray(field);
+                for (int i = 0; i < reviews.length(); i++) if (reviews.opt(i) instanceof JSONObject) validateBackupReviewScheduling(reviews.getJSONObject(i), message);
+            }
+        } else if ("raw".equals(kind) && parsed instanceof JSONArray) {
+            JSONArray events = (JSONArray) parsed;
+            for (int i = 0; i < events.length(); i++) if (events.opt(i) instanceof JSONObject) {
+                JSONObject event = events.getJSONObject(i);
+                if (event.has("lookupOnly") && (!Boolean.TRUE.equals(event.opt("lookupOnly")) || !"click".equals(event.opt("eventType")))) throw invalid(message);
+            }
+        } else if ("evidence".equals(kind) && parsed instanceof JSONObject) {
+            JSONObject evidence = (JSONObject) parsed;
+            validateBackupRecallFailures(evidence, message);
+            if (evidence.opt("articleEvidence") instanceof JSONArray) {
+                JSONArray articles = evidence.getJSONArray("articleEvidence");
+                for (int i = 0; i < articles.length(); i++) if (articles.opt(i) instanceof JSONObject) validateBackupRecallFailures(articles.getJSONObject(i), message);
+            }
+        }
+    }
+    private static void validateBackupCard(Object value, String message, boolean snapshot) throws JSONException {
+        JSONObject card = jsonObject(value, message);
+        backupTimestamp(card, "due", message);
+        if (card.has("confirmationDue")) backupTimestamp(card, "confirmationDue", message);
+        optionalBackupTimestamp(card, "lastReview", message);
+        backupNumbers(card, message, "stability", "difficulty", "elapsedDays", "scheduledDays", "state");
+        backupEnum(card, "state", message, 0, 1, 2, 3);
+        for (String field : new String[] { "stability", "difficulty", "elapsedDays", "scheduledDays" }) if (((Number) card.opt(field)).doubleValue() < 0) throw invalid(message);
+        backupNonnegativeIntegers(card, message, "reps", "lapses");
+        if (card.has("learningSteps")) backupNonnegativeIntegers(card, message, "learningSteps");
+        if ((snapshot && card.has("lastReview")) || ((Number) card.opt("state")).intValue() == 2) backupTimestamp(card, "lastReview", message);
+    }
+    private static void backupNonnegativeIntegers(JSONObject object, String message, String... fields) {
+        backupNumbers(object, message, fields);
+        for (String field : fields) {
+            double value = ((Number) object.opt(field)).doubleValue();
+            if (value < 0 || value > MAX_SAFE_INTEGER || Math.rint(value) != value) throw invalid(message);
+        }
+    }
+    private static void validateBackupRecallFailures(JSONObject object, String message) throws JSONException {
+        if (object.has("lastRecallFailureAt")) backupTimestamp(object, "lastRecallFailureAt", message);
+        if (!object.has("recallFailureCount")) return;
+        backupNonnegativeIntegers(object, message, "recallFailureCount", "clickedOccurrenceCount");
+        if (((Number) object.opt("recallFailureCount")).doubleValue() > ((Number) object.opt("clickedOccurrenceCount")).doubleValue()) throw invalid(message);
     }
     private static void backupNumbers(JSONObject object, String message, String... fields) {
         for (String field : fields) {
@@ -605,6 +710,7 @@ final class LocalDatabaseStore {
         backupDate(evidence, "localDate", message);
         backupTimestamp(evidence, "firstSeenAt", message);
         backupTimestamp(evidence, "lastSeenAt", message);
+        validateBackupRecallFailures(evidence, message);
         return articleId;
     }
 

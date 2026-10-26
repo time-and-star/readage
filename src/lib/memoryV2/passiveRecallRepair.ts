@@ -2,6 +2,7 @@ import type { Grade } from 'ts-fsrs';
 import { applyReviewOutcome } from '../memoryV4';
 import { getUtcInstantForLocalDayEnd } from './dateUtils';
 import { submitFsrsReview } from './fsrsIntegration';
+import { restoreMemoryBeforeReview } from './reviewSnapshot';
 import { projectRmeProfile, rmeProfileForState } from './rmeV4Bridge';
 import type { DailyWordEvidence, WordMemoryState } from './types';
 
@@ -58,7 +59,7 @@ export function repairPassiveReadingRecall(state: WordMemoryState, days: readonl
   if (first.state === 0 && baselineReps > 0) return state;
   // A learning-step due can be minutes after the preceding recall. The saved
   // log only retains whole scheduled days, so it cannot restore that schedule.
-  if (first.state === 1 || first.state === 3) return state;
+  if ((first.state === 1 || first.state === 3) && !first.beforeCard) return state;
   if (baselineReps > 0 && state.rme) {
     const profile = rmeProfileForState(state);
     // An unlogged prefix can own a recovery/forced-reading state. Its outcome
@@ -93,17 +94,8 @@ export function repairPassiveReadingRecall(state: WordMemoryState, days: readonl
 
   // Logs store the PRE-review card. Use the original first log, rather than the
   // first retained log whose stability may already contain passive Good credit.
-  const previousReview = first.state === 0 ? null : first.due;
-  const due = previousReview
-    ? new Date(Date.parse(previousReview) + first.scheduledDays * DAY_MS).toISOString() : first.due;
-  let current: WordMemoryState = { ...state, stability: first.stability, difficulty: first.difficulty,
-    lastReview: previousReview, nextReview: due, fsrsReviews: [],
+  let current: WordMemoryState = { ...restoreMemoryBeforeReview(state, 0),
     passiveReadingReviews: [...audited.values()].sort((left, right) => left.review.localeCompare(right.review)).map(copyReview),
-    fsrsCard: { due, stability: first.stability, difficulty: first.difficulty,
-      elapsedDays: first.lastElapsedDays, scheduledDays: first.scheduledDays, learningSteps: first.learningSteps,
-      reps: baselineReps,
-      lapses: Math.max(0, state.fsrsCard.lapses - reviews.filter(review => review.rating === 1 && review.state !== 0).length),
-      state: first.state, ...(previousReview ? { lastReview: previousReview } : {}) },
   };
   let profile = { ...rmeProfileForState(state), consecutiveAgain: 0, recoveryStreak: 0,
     forcedExposure: false, lastReviewGrade: null } as ReturnType<typeof rmeProfileForState>;
@@ -111,11 +103,11 @@ export function repairPassiveReadingRecall(state: WordMemoryState, days: readonl
     if (excludedKeys.has(reviewKey(review))) continue;
     const at = new Date(review.review);
     const recent = !current.lastReview || at.getTime() - Date.parse(current.lastReview) < DAY_MS;
-    current = submitFsrsReview(current, review.rating as Grade, at);
+    current = submitFsrsReview(current, review.rating as Grade, at, review.scheduling, review.evidence);
     const index = current.fsrsReviews.length - 1;
     current.fsrsReviews[index] = { ...copyReview(review), ...current.fsrsReviews[index] };
     const quality = review.rating === 2 || (review.source === 'flashcard' && recent) ? 0.6 : 1;
-    profile = applyReviewOutcome(profile, review.rating === 1 ? 'Again' : 'Good', at, quality);
+    if (review.modelApplied !== false) profile = applyReviewOutcome(profile, review.rating === 1 ? 'Again' : 'Good', at, quality);
   }
   return { ...current, rme: projectRmeProfile(profile, current, now) };
 }

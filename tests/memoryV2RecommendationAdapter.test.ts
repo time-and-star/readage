@@ -70,6 +70,20 @@ afterEach(() => {
 });
 
 describe('MemoryV2RecommendationAdapter targeted review', () => {
+  it('dictionary outages preserve canonical-owner priority instead of allowing the last alias to replace it', async () => {
+    for (const words of [
+      [{ ...proficiency('chase'), opportunityScore: 90 }, { ...proficiency('chasing'), opportunityScore: 0 }],
+      [{ ...proficiency('chasing'), opportunityScore: 0 }, { ...proficiency('chase'), opportunityScore: 90 }],
+    ]) {
+      installMemorySystemStub({ dueWords: [], allProficiency: [...words, { ...proficiency('steady'), opportunityScore: 30 }] });
+      const ranked = await createMemoryV2Adapter().recommendCandidates([
+        { article: article('canonical-priority', 'chase'), lemmas: ['chase'] },
+        { article: article('other-priority', 'steady'), lemmas: ['steady'] },
+      ], { limit: 2, applyHardFilters: false, minLearningZoneWords: 0 });
+      assert.equal(ranked[0].articleId, 'canonical-priority');
+    }
+  });
+
   it('prioritizes unique Opportunity Coverage without bypassing candidate filters', async () => {
     installMemorySystemStub({
       dueWords: [],

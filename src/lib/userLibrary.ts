@@ -153,5 +153,6 @@ export function importBatchFormatLabel(format: string | undefined): string {
   if (format === 'docx') return 'Word';
   if (format === 'html') return 'HTML';
   if (format === 'text') return 'TXT';
+  if (format === 'markdown') return 'Markdown';
   return 'FILE';
 }

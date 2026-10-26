@@ -202,7 +202,8 @@ export function useMemoryV2Integration(
       try {
         const map = await memorySystem.getBatchWordProficiency(userId, unique);
         const legacy = unique.some((wordId) => !map.has(wordId))
-          ? await getCanonicalWordProficiencyMap(await memorySystem.getAllWordProficiency(userId))
+          ? await getCanonicalWordProficiencyMap(await memorySystem.getAllWordProficiency(userId),
+            await memorySystem.getFlashcardStudyPreferences(userId))
           : new Map();
         return unique.map((wordId) => toVocabSnapshot(wordId, map.get(wordId) ?? legacy.get(wordId) ?? null));
       } catch {

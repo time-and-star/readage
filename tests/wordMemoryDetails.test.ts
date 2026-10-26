@@ -3,7 +3,7 @@ import test from 'node:test';
 import { buildWordMemoryDetails, selectWordMemoryState, summarizeWordLearningViews } from '../src/lib/wordMemoryDetails';
 import { initializeWordMemory, submitFsrsReview } from '../src/lib/memoryV2/fsrsIntegration';
 import type { WordProficiencyView } from '../src/lib/memoryV2/memorySystem';
-import { calculateMemoryScore, scoreToLevel } from '../src/lib/memoryV2/memoryScore';
+import { calculateLongTermMemoryScore, scoreToLevel } from '../src/lib/memoryV2/memoryScore';
 
 const now = new Date('2026-10-07T12:00:00.000Z');
 const preferences = { dailyNewWordLimit: 10, importedWordIds: [] };
@@ -47,7 +47,7 @@ test('detail familiarity, recall prediction, history and scheduling use the save
   const state = recalled('recall');
   const before = structuredClone(state);
   const details = buildWordMemoryDetails(state, preferences, now);
-  assert.equal(details.score, calculateMemoryScore(state, undefined, now));
+  assert.equal(details.score, calculateLongTermMemoryScore(state));
   assert.equal(details.level, scoreToLevel(details.score!));
   assert.ok(details.recallPercent! > details.score!);
   assert.equal(details.reviewCount, 1);

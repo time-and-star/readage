@@ -190,7 +190,7 @@ export interface Article {
   /** File name shown as this import's shelf title. */
   importBatchTitle?: string;
   /** File kind used by the shelf card. */
-  importBatchFormat?: 'epub' | 'pdf' | 'docx' | 'html' | 'text';
+  importBatchFormat?: 'epub' | 'pdf' | 'docx' | 'html' | 'text' | 'markdown';
   /** Immutable server edition; revisions never replace existing learning identities. */
   distribution?: { resourceId: string; version: string; serverUrl: string; title: string; kind?: 'book' | 'magazine'; totalCount?: number };
   /**

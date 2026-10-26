@@ -3,6 +3,10 @@ import { initializeWordMemory } from './memoryV2/fsrsIntegration';
 
 export interface FlashcardStudyPreferences {
   dailyNewWordLimit: number | null;
+  /** Number of times to pronounce each displayed card headword; absent legacy data means off. */
+  autoSpeakCount?: number;
+  /** Target recall probability for future schedules; absent legacy data retains the 90% baseline. */
+  desiredRetention?: number;
   importedWordIds: string[];
   pausedWordIds?: string[];
   excludedWordIds?: string[];
@@ -28,6 +32,23 @@ export function validateDailyNewWordLimit(limit: number | null): void {
   if (limit !== null && (!Number.isSafeInteger(limit) || limit < 0)) {
     throw new TypeError('每日新词数必须是非负整数，或选择不限。');
   }
+}
+
+export function validateFlashcardAutoSpeakCount(count: number): void {
+  if (!Number.isSafeInteger(count) || count < 0 || count > 3) {
+    throw new TypeError('自动朗读次数必须是 0 到 3 的整数。');
+  }
+}
+
+export function validateFlashcardDesiredRetention(value: number): void {
+  if (!Number.isFinite(value) || value < 0.8 || value > 0.97 || value !== Math.round(value * 100) / 100) {
+    throw new TypeError('目标保持率必须是 80% 到 97% 之间的整数百分比。');
+  }
+}
+
+function validDesiredRetention(value: unknown): value is number {
+  if (typeof value !== 'number') return false;
+  try { validateFlashcardDesiredRetention(value); return true; } catch { return false; }
 }
 
 /** Callers resolve dictionary lemmas first; normalization never guesses an inflection. */
@@ -57,12 +78,17 @@ async function readRecord(storage: MemoryStorage, userId: string): Promise<Flash
   const normalizeIds = (ids: unknown) => [...new Set((Array.isArray(ids) ? ids : [])
     .flatMap(value => { try { return [importedId(value)]; } catch { return []; } }))];
   return { version: 1, userId, dailyNewWordLimit: dailyNewWordLimit as number | null, importedWordIds, aliasBaselines,
+    ...(Number.isSafeInteger(raw.autoSpeakCount) && (raw.autoSpeakCount as number) >= 0 && (raw.autoSpeakCount as number) <= 3
+      ? { autoSpeakCount: raw.autoSpeakCount as number } : {}),
+    ...(validDesiredRetention(raw.desiredRetention) ? { desiredRetention: raw.desiredRetention } : {}),
     ...(typeof raw.updatedAt === 'string' && Number.isFinite(Date.parse(raw.updatedAt)) ? { updatedAt: raw.updatedAt } : {}),
     ...(raw.pausedWordIds ? { pausedWordIds: normalizeIds(raw.pausedWordIds) } : {}),
     ...(raw.excludedWordIds ? { excludedWordIds: normalizeIds(raw.excludedWordIds) } : {}) };
 }
 function preferences(record: FlashcardPreferenceRecord): FlashcardStudyPreferences {
   return { dailyNewWordLimit: record.dailyNewWordLimit, importedWordIds: [...record.importedWordIds],
+    ...(record.autoSpeakCount === undefined ? {} : { autoSpeakCount: record.autoSpeakCount }),
+    ...(record.desiredRetention === undefined ? {} : { desiredRetention: record.desiredRetention }),
     ...(record.pausedWordIds ? { pausedWordIds: [...record.pausedWordIds] } : {}),
     ...(record.excludedWordIds ? { excludedWordIds: [...record.excludedWordIds] } : {}) };
 }
@@ -82,6 +108,24 @@ export async function saveFlashcardStudyPreferences(storage: MemoryStorage, user
   dailyNewWordLimit: number | null): Promise<FlashcardStudyPreferences> {
   validateDailyNewWordLimit(dailyNewWordLimit);
   const record = { ...await readRecord(storage, userId), dailyNewWordLimit };
+  await writeRecord(storage, record);
+  return preferences(record);
+}
+
+/** Persist the optional card-front speech count without changing the daily study plan. */
+export async function saveFlashcardAutoSpeakCount(storage: MemoryStorage, userId: string,
+  autoSpeakCount: number): Promise<FlashcardStudyPreferences> {
+  validateFlashcardAutoSpeakCount(autoSpeakCount);
+  const record = { ...await readRecord(storage, userId), autoSpeakCount };
+  await writeRecord(storage, record);
+  return preferences(record);
+}
+
+/** Must run under the shared writer lock; changing the target never rewrites existing card due dates. */
+export async function saveFlashcardDesiredRetention(storage: MemoryStorage, userId: string,
+  desiredRetention: number): Promise<FlashcardStudyPreferences> {
+  validateFlashcardDesiredRetention(desiredRetention);
+  const record = { ...await readRecord(storage, userId), desiredRetention };
   await writeRecord(storage, record);
   return preferences(record);
 }

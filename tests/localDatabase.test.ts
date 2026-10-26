@@ -415,6 +415,133 @@ test('valid historical memory restores with optional fields absent and generic m
   assert.ok(submitFsrsReview(legacyState, 3, new Date('2026-09-03T12:00:00Z')).fsrsReviews.length > legacyState.fsrsReviews.length);
 });
 
+for (const version of [3, 4] as const) test(`SQLite round-trips policy v${version} learning, relearning and mixed policy history without changing their due dates`, async t => {
+  const { database, filename } = await fixture(t);
+  const original = source();
+  const at = new Date('2026-09-02T12:00:00.000Z');
+  const policy = { version, desiredRetention: 0.95 };
+  let learning = initializeWordMemory('u', 'serendipity');
+  learning = submitFsrsReview(learning, 1, new Date('2026-09-01T11:00:00.000Z'), { version: 1, desiredRetention: 0.9 });
+  learning = submitFsrsReview(learning, 2, new Date('2026-09-01T12:00:00.000Z'), { version: 2, desiredRetention: 0.9 });
+  if (version === 4) learning = submitFsrsReview(learning, 1, new Date('2026-09-02T11:00:00.000Z'), { version: 3, desiredRetention: 0.93 });
+  learning = submitFsrsReview(learning, 1, at, policy);
+  let relearning = submitFsrsReview(initializeWordMemory('u', 'relearning'), 3, new Date('2026-09-01T12:00:00.000Z'));
+  relearning = submitFsrsReview(relearning, 1, at, policy);
+  assert.equal(learning.fsrsCard.state, 3);
+  assert.equal(relearning.fsrsCard.state, 3);
+  assert.ok([learning, relearning].every(state => Date.parse(state.nextReview) - at.getTime() < 86_400_000));
+  const newLearning = submitFsrsReview(initializeWordMemory('u', 'learning'), 3, at, policy);
+  assert.equal(newLearning.fsrsCard.state, 1);
+  assert.ok(newLearning.fsrsCard.learningSteps > 0);
+  const states = [learning, relearning, newLearning];
+  if (version === 4) for (const state of states) assert.equal(state.nextReview, state.lastReview);
+  original.indexedDb!.stores.memoryState = states.map(state => ({ key: `u|${state.wordId}`, state })).sort((left, right) => left.key.localeCompare(right.key));
+  original.indexedDb!.stores.meta = [
+    { key: 'extension-journal:["u","learning"]', value: { version: 1, userId: 'u', wordId: 'learning',
+      baselineState: newLearning, baselineDaily: [], baselineRaw: [], events: [] } },
+    { key: 'reading-verification:u', value: { version: 1, userId: 'u', attempts: states.map(state => ({
+      attemptId: `intraday:${state.wordId}`, wordId: state.wordId, scheduling: policy,
+    })) } },
+  ];
+  original.localStorage['english-ai:v2:memory:state:u:learning'] = JSON.stringify(newLearning);
+  const { profile } = database.bootstrap(source());
+  database.restore(profile.id, profile.revision, original);
+  equivalent(database.snapshot(profile.id), original);
+  const reopened = new LocalLearningDatabase(filename);
+  try { equivalent(reopened.snapshot(profile.id), original); } finally { reopened.close(); }
+  equivalent(database.previousSnapshot(profile.id), source());
+  assert.deepEqual(learning.fsrsReviews.map(review => review.scheduling?.version), version === 4 ? [1, 2, 3, 4] : [1, 2, 3]);
+});
+
+test('SQLite restores v6 with mixed historical policies and preserves the previous snapshot across reopen', async t => {
+  const { database, filename } = await fixture(t);
+  const original = source();
+  const { profile } = database.bootstrap(original);
+  let reviewed = submitFsrsReview(initializeWordMemory('u', 'serendipity'), 3,
+    new Date('2026-09-01T12:00:00Z'), { version: 1, desiredRetention: 0.9 });
+  reviewed = submitFsrsReview(reviewed, 2, new Date('2026-09-02T12:00:00Z'), { version: 5, desiredRetention: 0.93 });
+  const scheduling = { version: 6 as const, desiredRetention: 0.95 };
+  reviewed = submitFsrsReview(reviewed, 3, new Date('2026-09-03T12:00:00Z'), scheduling);
+  reviewed.fsrsCard.confirmationDue = '2026-09-04T12:00:00.000Z';
+  const evidence = { kind: 'answer_rehearsal' as const, answerExposedAt: '2026-09-03T12:00:00.000Z' };
+  reviewed = submitFsrsReview(reviewed, 3, new Date('2026-09-03T12:00:30Z'), scheduling, evidence);
+  reviewed.fsrsCard.confirmationDue = '2026-09-04T12:00:00.000Z';
+  assert.deepEqual(reviewed.fsrsReviews.map(review => review.scheduling?.version), [1, 5, 6, 6]);
+  assert.equal(reviewed.fsrsCard.confirmationDue, '2026-09-04T12:00:00.000Z');
+  assert.equal(reviewed.fsrsReviews.at(-1)?.modelApplied, false);
+  assert.deepEqual(reviewed.fsrsReviews.at(-1)?.evidence, evidence);
+  assert.equal(reviewed.fsrsReviews.at(-1)?.beforeCard?.confirmationDue, reviewed.fsrsCard.confirmationDue);
+  const readingTask = { type: 'context_choice' as const, contextVisible: true as const,
+    answerExposed: false, mapping: 'hard_on_correct' as const };
+  const practiceTask = { ...readingTask, answerExposed: true, mapping: 'practice_only' as const };
+  Object.assign(reviewed.fsrsReviews.at(-1)!, { readingTask: practiceTask });
+  const restored = source();
+  const practiceOnly = initializeWordMemory('u', 'practice-only');
+  const beforePractice = { ...practiceOnly.fsrsCard };
+  practiceOnly.fsrsCard.reps = 1;
+  Object.assign(practiceOnly, { fsrsReviews: [{ ...reviewed.fsrsReviews.at(-1), state: 0, stability: 0, difficulty: 0,
+    due: practiceOnly.fsrsCard.due, beforeCard: beforePractice }] });
+  restored.indexedDb!.stores.memoryState = [{ key: 'u|practice-only', state: practiceOnly }, { key: 'u|serendipity', state: reviewed }];
+  const verification = { version: 1, userId: 'u', attempts: [
+    { attemptId: 'v6-recall', wordId: 'serendipity', scheduling, readingTask },
+    { attemptId: 'v6-practice', wordId: 'practice-only', scheduling, readingTask: practiceTask },
+    { attemptId: 'legacy-recall', wordId: 'serendipity' },
+  ] };
+  const extension = { version: 1, userId: 'u', wordId: 'serendipity', baselineState: reviewed,
+    baselineDaily: [], baselineRaw: [], events: [] };
+  restored.indexedDb!.stores.meta.push({ key: 'reading-verification:u', value: verification },
+    { key: 'extension-journal:["u","serendipity"]', value: extension });
+  restored.indexedDb!.stores.meta.sort((left: any, right: any) => left.key.localeCompare(right.key));
+  restored.localStorage['english-ai:v2:memory:state:u:serendipity'] = JSON.stringify(reviewed);
+  restored.localStorage['english-ai:v2:memory:meta:reading-verification:u'] = JSON.stringify(verification);
+  restored.localStorage['english-ai:v2:memory:meta:extension-journal:["u","serendipity"]'] = JSON.stringify(extension);
+  database.restore(profile.id, profile.revision, restored);
+  const reopened = new LocalLearningDatabase(filename);
+  try {
+    equivalent(reopened.snapshot(profile.id), restored);
+    equivalent(reopened.previousSnapshot(profile.id), original);
+  } finally { reopened.close(); }
+});
+
+test('SQLite preserves scheduling audits and rejects corrupt snapshots or recall evidence without touching the profile', async t => {
+  const { database } = await fixture(t);
+  const original = source();
+  const reviewed: any = (original.indexedDb!.stores.memoryState[0] as any).state = structuredClone(state);
+  reviewed.fsrsReviews[0].scheduling = { version: 1, desiredRetention: 0.95 };
+  reviewed.fsrsReviews[0].beforeCard = initializeWordMemory('u', 'serendipity').fsrsCard;
+  (original.indexedDb!.stores.rawEvents[0] as any).events[0].lookupOnly = true;
+  for (const table of ['articleEvidence', 'dailyEvidence']) (original.indexedDb!.stores[table][0] as any).evidence.recallFailureCount = 0;
+  original.indexedDb!.stores.meta.push(
+    { key: 'reading-verification:u', value: { version: 1, userId: 'u', attempts: [
+      { attemptId: 'policy-v1', scheduling: { version: 1, desiredRetention: 0.95 } },
+      { attemptId: 'policy-v2', scheduling: { version: 2, desiredRetention: 0.95 } },
+      { attemptId: 'policy-v3', scheduling: { version: 3, desiredRetention: 0.95 } },
+      { attemptId: 'policy-v4', scheduling: { version: 4, desiredRetention: 0.95 } }] } },
+    { key: 'extension-journal:["u","serendipity"]', value: { version: 1, pendingFailureDates: ['2026-09-02'], baselineState: structuredClone(reviewed), baselineDaily: [], baselineRaw: [], events: [{ eventType: 'click', lookupOnly: true }] } });
+  original.indexedDb!.stores.meta.sort((left: any, right: any) => left.key.localeCompare(right.key));
+  const { profile } = database.bootstrap(original);
+  equivalent(database.snapshot(profile.id), original);
+  const corruptions = [
+    (backup: LocalDataBackup) => { (backup.indexedDb!.stores.memoryState[0] as any).state.fsrsReviews[0].scheduling.desiredRetention = 0.905; },
+    (backup: LocalDataBackup) => { (backup.indexedDb!.stores.memoryState[0] as any).state.fsrsReviews[0].beforeCard.reps = -1; },
+    (backup: LocalDataBackup) => { (backup.indexedDb!.stores.memoryState[0] as any).state.fsrsReviews[0].beforeCard.state = 2; },
+    (backup: LocalDataBackup) => { (backup.indexedDb!.stores.rawEvents[0] as any).events[0].lookupOnly = false; },
+    (backup: LocalDataBackup) => { (backup.indexedDb!.stores.articleEvidence[0] as any).evidence.recallFailureCount = 2; },
+    (backup: LocalDataBackup) => { (backup.indexedDb!.stores.dailyEvidence[0] as any).evidence.recallFailureCount = -1; },
+    (backup: LocalDataBackup) => { (backup.indexedDb!.stores.meta.find((row: any) => row.key === 'reading-verification:u') as any).value.attempts[0].scheduling.desiredRetention = 0.905; },
+    (backup: LocalDataBackup) => { (backup.indexedDb!.stores.meta.find((row: any) => row.key === 'reading-verification:u') as any).value.attempts[1].scheduling.version = 7; },
+    (backup: LocalDataBackup) => { (backup.indexedDb!.stores.meta.find((row: any) => row.key.startsWith('extension-journal:')) as any).value.pendingFailureDates = ['2026-02-30']; },
+    (backup: LocalDataBackup) => { (backup.indexedDb!.stores.meta.find((row: any) => row.key.startsWith('extension-journal:')) as any).value.events[0].lookupOnly = false; },
+  ];
+  for (const corrupt of corruptions) {
+    const candidate = structuredClone(original); corrupt(candidate);
+    assert.throws(() => database.restore(profile.id, profile.revision, candidate), /记录无效/);
+    equivalent(database.snapshot(profile.id), original);
+    assert.equal(database.profile(profile.id).revision, profile.revision);
+    assert.throws(() => database.previousSnapshot(profile.id), /尚未导入/);
+  }
+});
+
 test('newer SQLite schema versions are refused without altering the database', async t => {
   const { directory } = await fixture(t);
   const file = path.join(directory, 'future.sqlite');

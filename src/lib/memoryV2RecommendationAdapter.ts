@@ -23,6 +23,7 @@ import { toLemma } from './proficiency';
 import { resolveLearningWordIds } from './dictionaryClient';
 import { getCanonicalWordProficiencyMap } from './learningWordProficiency';
 import type { WordProficiencyView } from './memoryV2/memorySystem';
+import type { FlashcardStudyPreferences } from './flashcardPreferences';
 import {
   projectBandsOntoCatalog,
   type CefrRecommendationProfile,
@@ -56,9 +57,8 @@ async function resolveRecommendationWordIds(words: readonly string[]): Promise<s
   catch { return words.map(toLemma); }
 }
 
-async function canonicalProficiencyMap(words: readonly WordProficiencyView[]): Promise<Map<string, WordProficiencyView>> {
-  try { return await getCanonicalWordProficiencyMap(words); }
-  catch { return new Map(words.map((word) => [toLemma(word.wordId), word])); }
+async function canonicalProficiencyMap(words: readonly WordProficiencyView[], preferences?: FlashcardStudyPreferences): Promise<Map<string, WordProficiencyView>> {
+  return getCanonicalWordProficiencyMap(words, preferences, new Date(), resolveRecommendationWordIds);
 }
 
 function pendingLearningTargets(proficiencyMap: ReadonlyMap<string, WordProficiencyView>): Set<string> {
@@ -66,7 +66,7 @@ function pendingLearningTargets(proficiencyMap: ReadonlyMap<string, WordProficie
   return new Set([...proficiencyMap].filter(([, proficiency]) =>
     proficiency.isFlashcardEligible !== false && (
       proficiency.level <= 2
-      || (!proficiency.isIntroduced && Date.parse(proficiency.nextReview) <= now)
+      || ((!proficiency.isIntroduced || proficiency.hasPractice) && Date.parse(proficiency.nextReview) <= now)
     )
   ).map(([wordId]) => toLemma(wordId)).filter(Boolean));
 }
@@ -339,8 +339,9 @@ export class MemoryV2RecommendationAdapter {
 
     const userId = memoryV2.getUserId();
     const system = memoryV2.getSystem();
-    const allProficiency = await system.getAllWordProficiency(userId);
-    const proficiencyMap = await canonicalProficiencyMap(allProficiency);
+    const [allProficiency, preferences] = await Promise.all([system.getAllWordProficiency(userId),
+      system.getFlashcardStudyPreferences?.(userId)]);
+    const proficiencyMap = await canonicalProficiencyMap(allProficiency, preferences);
 
     let filtered = applyHardFilters
       ? engine.filterCandidates(articleCandidates, proficiencyMap)
@@ -440,8 +441,9 @@ export class MemoryV2RecommendationAdapter {
         ? explicitTargetWords.length
         : DEFAULT_ARTICLE_TARGET_POOL_SIZE;
 
-    const allProficiency = await system.getAllWordProficiency(userId);
-    const proficiencyMap = await canonicalProficiencyMap(allProficiency);
+    const [allProficiency, preferences] = await Promise.all([system.getAllWordProficiency(userId),
+      system.getFlashcardStudyPreferences?.(userId)]);
+    const proficiencyMap = await canonicalProficiencyMap(allProficiency, preferences);
 
     let priorityWords: WordProficiencyView[];
     let confirmationWordsForRanking: WordProficiencyView[] = [];
@@ -462,7 +464,7 @@ export class MemoryV2RecommendationAdapter {
           new Date(),
           explicitTargetWords.length,
         );
-        const confirmationByWord = await canonicalProficiencyMap(confirmationWords);
+        const confirmationByWord = await canonicalProficiencyMap(confirmationWords, preferences);
         confirmationWordsForRanking = explicitTargetWords
           .map((wordId) => confirmationByWord.get(wordId))
           .filter((word): word is WordProficiencyView => Boolean(word));
@@ -494,13 +496,13 @@ export class MemoryV2RecommendationAdapter {
       const confirmationWords = typeof confirmationProvider.getConfirmationWords === 'function'
         ? await confirmationProvider.getConfirmationWords(userId, now, targetReviewCount)
         : [];
-      confirmationWordsForRanking = [...(await canonicalProficiencyMap(confirmationWords)).values()]
+      confirmationWordsForRanking = [...(await canonicalProficiencyMap(confirmationWords, preferences)).values()]
         .map((word) => proficiencyMap.get(word.wordId) ?? word)
-        .filter((word) => word.isIntroduced);
+        .filter((word) => word.isIntroduced && word.studyStatus !== 'paused' && word.studyStatus !== 'removed');
       const dueWords = await system.getDueWords(userId, now, targetReviewCount);
-      const canonicalDueWords = [...(await canonicalProficiencyMap(dueWords)).values()]
+      const canonicalDueWords = [...(await canonicalProficiencyMap(dueWords, preferences)).values()]
         .map((word) => proficiencyMap.get(word.wordId) ?? word)
-        .filter((word) => !word.isIntroduced && new Date(word.nextReview) <= now);
+        .filter((word) => word.isFlashcardEligible !== false && (!word.isIntroduced || word.hasPractice) && new Date(word.nextReview) <= now);
       const merged = new Map([...confirmationWordsForRanking, ...canonicalDueWords]
         .map((word) => [word.wordId, word]));
       priorityWords = [...merged.values()].slice(0, targetReviewCount);

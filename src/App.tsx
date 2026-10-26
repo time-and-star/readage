@@ -201,6 +201,7 @@ export default function App() {
   const appUpdates = useAppUpdates();
   const builtInLibrary = LIBRARY_ARTICLES;
   const [route, setRoute] = useState<AppRoute>(getInitialAppRoute);
+  const [importSessionActive, setImportSessionActive] = useState(false);
   const [magazinePool, setMagazinePool] = useState<Article[]>(() =>
     getCachedMagazineRecommendationPool()
   );
@@ -213,7 +214,7 @@ export default function App() {
   // Memory V2.2: 使用 Hooks 替代 proficiency 状态
   const { dueWords: rawDueWords, loading: dueWordsLoading } = useDueWords(DEFAULT_ARTICLE_TARGET_POOL_SIZE);
   const { confirmationWords: rawConfirmationWords } = useConfirmationWords(DEFAULT_ARTICLE_TARGET_POOL_SIZE);
-  const { proficiencies: rawProficiencies, loading: rawProficienciesLoading,
+  const { proficiencies: rawProficiencies, preferences: learningPreferences, loading: rawProficienciesLoading,
     error: proficienciesError, refresh: refreshProficiencies } = useAllWordProficiency();
   const [canonicalMemory, setCanonicalMemory] = useState<{
     proficiencies: WordProficiencyView[];
@@ -224,7 +225,7 @@ export default function App() {
   useEffect(() => {
     let current = true;
     setCanonicalMemoryLoading(true);
-    void getCanonicalLearningCollections(rawProficiencies, rawDueWords, rawConfirmationWords)
+    void getCanonicalLearningCollections(rawProficiencies, rawDueWords, rawConfirmationWords, new Date(), learningPreferences)
       .then((collections) => { if (current) setCanonicalMemory(collections); })
       .catch(() => {
         // Keep saved learning progress available during a dictionary outage.
@@ -233,7 +234,7 @@ export default function App() {
       })
       .finally(() => { if (current) setCanonicalMemoryLoading(false); });
     return () => { current = false; };
-  }, [rawProficiencies, rawDueWords, rawConfirmationWords]);
+  }, [rawProficiencies, rawDueWords, rawConfirmationWords, learningPreferences]);
   const { proficiencies, dueWords, confirmationWords } = canonicalMemory;
   const proficienciesLoading = rawProficienciesLoading || canonicalMemoryLoading;
   const memoryStorageError = useMemoryStorageError();
@@ -1703,6 +1704,7 @@ export default function App() {
       </div>
 
       <ArticleImportHost open={showEnterArticle} history={history} entry={articleImportEntry}
+        onSessionActiveChange={setImportSessionActive}
         onOpen={() => setShowEnterArticle(true)} onClose={() => setShowEnterArticle(false)}
         onSubmitCustomArticles={handleAddImportedArticles} />
 

@@ -179,14 +179,22 @@ test('historical reading evidence and separate production data survive old-date 
   const system = new MemorySystemV2(storage);
   const read: RawWordEvent = { userId: 'u', wordId: 'run', articleId: 'reading-a', occurrenceId: 'read-1',
     eventType: 'exposure', occurredAt: '2026-08-20T12:00:00.000Z', localDate: '2026-08-20' };
+  // Unmarked historical clicks retain their original recall-failure meaning.
   await system.recordEvent(read); await system.recordEvent({ ...read, eventType: 'click' });
   await system.finalizeHistoricalDates('u', 'Asia/Shanghai');
   const review = await storage.getMemoryState('u', 'run');
   assert.equal(review?.fsrsReviews.length, 1);
   assert.equal((await storage.getRawEventsByDate('u', 'run', '2026-08-20')).length, 0);
   localStorage.setItem('english-ai:v2:production:u:run', '{"score":0.7}');
-  await importLookupEvents(storage, 'u', [lookup('2026-08-19')], 'Asia/Shanghai', now);
-  assert.equal((await storage.getMemoryState('u', 'run'))?.fsrsReviews.length, 2);
+  const olderLookup = lookup('2026-08-19');
+  await importLookupEvents(storage, 'u', [olderLookup], 'Asia/Shanghai', now);
+  const imported = (await storage.getMemoryState('u', 'run'))!;
+  assert.deepEqual(imported.fsrsCard, review!.fsrsCard);
+  assert.deepEqual(imported.fsrsReviews, review!.fsrsReviews, 'an earlier lookup must preserve the saved historical snapshot without adding another recall');
+  assert.equal(imported.fsrsReviews[0].source, 'reading_lookup');
+  const lookupDay = (await storage.getDailyEvidence('u', 'run', '2026-08-19'))!;
+  assert.equal(lookupDay.clickedOccurrenceCount, 1);
+  assert.equal(lookupDay.recallFailureCount, 0);
   assert.equal((await storage.getDailyEvidence('u', 'run', '2026-08-20'))?.articleEvidence[0].articleId, 'reading-a');
   assert.equal(localStorage.getItem('english-ai:v2:production:u:run'), '{"score":0.7}');
 });
@@ -195,8 +203,14 @@ test('lookup retains its captured local day when the application timezone differ
   const { storage } = setup();
   const event = { ...lookup('2026-09-01'), occurredAt: '2026-09-01T23:30:00.000Z' };
   await importLookupEvents(storage, 'u', [event], 'America/Los_Angeles', now);
-  assert.equal((await storage.getDailyEvidence('u', 'run', '2026-09-02'))?.clickedOccurrenceCount, 1);
-  assert.equal((await storage.getMemoryState('u', 'run'))?.lastReview, event.occurredAt);
+  const day = (await storage.getDailyEvidence('u', 'run', '2026-09-02'))!;
+  assert.equal(day.clickedOccurrenceCount, 1);
+  assert.equal(day.recallFailureCount, 0);
+  const saved = (await storage.getMemoryState('u', 'run'))!;
+  assert.equal(saved.lastAssistedAt, event.occurredAt);
+  assert.equal(saved.lastReview, null);
+  assert.equal(saved.fsrsCard.reps, 0);
+  assert.deepEqual(saved.fsrsReviews, []);
 });
 
 test('localStorage indexes preserve word ids containing colons', async () => {
@@ -277,7 +291,7 @@ test('replayed lookup history matches the existing engine receiving events on ea
     const event: RawWordEvent = { userId: 'u', wordId: 'run', articleId: input.sourceId,
       occurrenceId: `extension:${input.id}`, occurredAt: input.occurredAt, localDate: input.occurredAt.slice(0, 10),
       eventType: 'exposure', contextText: `Word search: ${input.query}` };
-    await reference.recordEvent(event); await reference.recordEvent({ ...event, eventType: 'click' });
+    await reference.recordEvent(event); await reference.recordEvent({ ...event, eventType: 'click', lookupOnly: true });
     await reference.finalizeHistoricalDates('u', 'Asia/Shanghai');
   }
   const expected = await storage.getMemoryState('u', 'run');
@@ -286,6 +300,9 @@ test('replayed lookup history matches the existing engine receiving events on ea
   const actual = await storage.getMemoryState('u', 'run');
   assert.deepEqual(actual?.fsrsCard, expected?.fsrsCard);
   assert.deepEqual(actual?.fsrsReviews, expected?.fsrsReviews);
+  assert.equal(actual?.lastAssistedAt, inputs.at(-1)!.occurredAt);
+  assert.equal(actual?.lastReview, null);
+  assert.equal(actual?.fsrsCard.reps, 0);
   assert.deepEqual(actual?.rme?.exposureHistory, expected?.rme?.exposureHistory);
   assert.equal(actual?.rme?.failedExposureCount, expected?.rme?.failedExposureCount);
 });

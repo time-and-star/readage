@@ -25,8 +25,9 @@
 .word-memory-details__event { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .word-memory-details__event small { color: #8b897b; font-size: 10px; }
 .word-memory-details__history time { flex-shrink: 0; color: #8b897b; font-variant-numeric: tabular-nums; }
-.word-memory-details__explanation { margin-top: 14px; color: #979285; font-size: 10px; }
-.word-memory-details__explanation summary { width: fit-content; cursor: pointer; }
+.word-memory-details__audit, .word-memory-details__explanation { margin-top: 12px; color: #81796c; font-size: 12px; }
+.word-memory-details__audit > summary, .word-memory-details__explanation > summary { min-height: 44px; padding-block: 10px; cursor: pointer; }
+.word-memory-details__audit .word-memory-details__history { margin-top: 4px; padding-top: 0; border-top: 0; }
 .word-memory-details__explanation p { margin: 8px 0 0; line-height: 1.8; }
 .word-memory-details summary:focus-visible { outline: 2px solid #ad956b; outline-offset: 3px; border-radius: 2px; }
 @media (max-width: 420px) { .word-memory-details__metrics { gap: 16px; } .word-memory-details__metrics > div + div { padding-left: 16px; } }

@@ -82,11 +82,8 @@ export async function getProficiencyStatsAsync(): Promise<AsyncProficiencyStats>
   return {
     total: stats.total,
     byLevel: stats.byLevel,
-    learning:
-      (stats.byLevel[1] ?? 0) +
-      (stats.byLevel[2] ?? 0) +
-      (stats.byLevel[3] ?? 0),
-    mastered: stats.byLevel[4] ?? 0,
+    learning: stats.learningCount,
+    mastered: stats.masteredCount,
     dueCount: stats.dueCount,
   };
 }
@@ -110,10 +107,10 @@ export async function isReviewDueAsync(
   lemma: string,
   at = new Date()
 ): Promise<boolean> {
-  const proficiency = await getWordProficiencyAsync(lemma);
-  if (!proficiency?.nextReviewDue) return false;
+  const proficiency = await memoryV2.getSystem().getWordProficiency(memoryV2.getUserId(), lemma);
+  if (!proficiency || proficiency.isIntroduced === true && !proficiency.hasPractice || proficiency.isFlashcardEligible === false) return false;
 
-  const due = new Date(proficiency.nextReviewDue);
+  const due = new Date(proficiency.nextReview);
   return Number.isFinite(due.getTime()) && due <= at;
 }
 

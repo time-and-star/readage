@@ -20,6 +20,8 @@ import {
 import { getLocalDateInTimeZone, getSystemTimeZone } from './dateUtils';
 import type { LearningEvent } from '../../types';
 import { seedCanonicalMemoryBaselines } from '../canonicalMemoryBaseline';
+import { readLearningSnapshotWithPreferences } from '../learningWordProficiency';
+import type { FlashcardStudyPreferences } from '../flashcardPreferences';
 
 export function useExternalLearningActivity() {
   const store = useMemoryStore();
@@ -182,7 +184,9 @@ export function useAllWordProficiency() {
   const store = useMemoryStore();
   const version = useStoreVersion(store);
   const ready = useStoreReady(store);
-  const [proficiencies, setProficiencies] = useState<WordProficiencyView[]>([]);
+  const [{ proficiencies, preferences }, setLearningData] = useState<{
+    proficiencies: WordProficiencyView[]; preferences: FlashcardStudyPreferences;
+  }>({ proficiencies: [], preferences: { dailyNewWordLimit: 10, importedWordIds: [] } });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
@@ -192,8 +196,11 @@ export function useAllWordProficiency() {
     setLoading(true);
     try {
       await store.ensureReady();
-      const result = (await store.getLearningSnapshot(force)).proficiencies;
-      if (token === request.current) { setProficiencies(result); setError(null); }
+      const result = await readLearningSnapshotWithPreferences(store, force);
+      if (token === request.current) {
+        setLearningData({ proficiencies: result.snapshot.proficiencies, preferences: result.preferences });
+        setError(null);
+      }
     } catch {
       if (token === request.current) setError('词汇学习记录暂时无法读取，请重试。');
     } finally {
@@ -210,7 +217,7 @@ export function useAllWordProficiency() {
     return () => { request.current += 1; };
   }, [refresh, version, ready]);
 
-  return { proficiencies, loading: loading || !ready, error, refresh };
+  return { proficiencies, preferences, loading: loading || !ready, error, refresh };
 }
 
 /**

@@ -5,6 +5,7 @@
 @import './components/appUpdates.css';
 @import './components/contentLibraryPicker.css';
 @import './components/libraryBookTitle.css';
+@import './components/publicationIntroduction.css';
 
 @theme {
   --font-sans: "Inter", "Aptos", "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
@@ -1397,23 +1398,31 @@ html[data-platform="android"] .reading-page-header {
   border-radius: 18px;
   background: #fcfbf8;
   box-shadow: 0 24px 64px rgba(42, 35, 28, 0.2);
-  scrollbar-color: #b6aea4 transparent;
+}
+
+.word-card-body,
+.word-card-dialog > .word-card-state {
+  scrollbar-color: #c7beb0 transparent;
   scrollbar-width: thin;
 }
 
-.word-card-body::-webkit-scrollbar {
-  width: 8px;
+.word-card-body::-webkit-scrollbar,
+.word-card-state::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
 .word-card-body::-webkit-scrollbar-track,
-.word-card-body::-webkit-scrollbar-button {
-  background: transparent;
-}
-
-.word-card-body::-webkit-scrollbar-thumb {
-  border: 2px solid #fcfbf8;
-  border-radius: 999px;
-  background: #b6aea4;
+.word-card-state::-webkit-scrollbar-track { background: transparent; }
+.word-card-body::-webkit-scrollbar-button,
+.word-card-state::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.word-card-body::-webkit-scrollbar-thumb,
+.word-card-state::-webkit-scrollbar-thumb { border-radius: 10px; background: #c7beb0; }
+.word-card-body::-webkit-scrollbar-thumb:hover,
+.word-card-state::-webkit-scrollbar-thumb:hover { background: #afa18d; }
+@supports selector(::-webkit-scrollbar) {
+  .word-card-body,
+  .word-card-dialog > .word-card-state { scrollbar-width: auto; scrollbar-color: auto; }
 }
 
 .word-card-dialog__bar {
@@ -1499,13 +1508,15 @@ html[data-platform="android"] .reading-page-header {
 .word-card-body {
   --readage-tabs-paper: #fcfbf8;
   --readage-tabs-gutter: 32px;
+  --word-card-top-space: 22px;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scrollbar-color: #b6aea4 transparent;
-  scrollbar-width: thin;
-  padding: 22px 32px 40px;
+  padding: 0 32px 40px;
 }
+
+/* Keep opening space in the content so sticky tabs reach the scrollport edge. */
+.word-card-body > :first-child { padding-top: var(--word-card-top-space); }
 
 .word-card-dialog > .word-card-state { min-height: 0; overflow-y: auto; }
 
@@ -1987,7 +1998,8 @@ html[data-platform="android"] .reading-page-header {
 
   .word-card-body {
     --readage-tabs-gutter: 20px;
-    padding: 18px 20px calc(32px + env(safe-area-inset-bottom, 0px));
+    --word-card-top-space: 18px;
+    padding: 0 20px calc(32px + env(safe-area-inset-bottom, 0px));
   }
 
   .word-card-hero__word {

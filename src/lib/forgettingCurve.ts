@@ -1,6 +1,7 @@
 import { computeDecayFactor } from 'ts-fsrs';
 import { calculateFsrsForgettingCurve, FSRS_ALGORITHM_VERSION, FSRS_PARAMETERS } from './fsrs';
 import type { WordMemoryState } from './memoryV2/types';
+import { selectCanonicalMemoryState } from './memoryV2/wordIdentity';
 
 export type ForgettingCurveHorizon = 1 | 7 | 30;
 export interface ForgettingCurvePoint {
@@ -93,7 +94,7 @@ interface RecallSnapshot {
 const DAY_MS = 86_400_000;
 const dated = (value: string | null | undefined) => Date.parse(value ?? '');
 const formalRecall = (review: WordMemoryState['fsrsReviews'][number]) =>
-  review.source === 'flashcard' || review.source === 'verification';
+  review.modelApplied !== false && (review.source === 'flashcard' || review.source === 'verification');
 
 /** Review logs contain the PRE-review stability. A following log retains the preceding review's result. */
 function lastFormalRecall(state: WordMemoryState, canonicalWordId: string, now: Date): RecallSnapshot | null {
@@ -103,7 +104,8 @@ function lastFormalRecall(state: WordMemoryState, canonicalWordId: string, now: 
     || !Number.isFinite(state.fsrsCard.stability) || state.fsrsCard.stability <= 0
     || Math.abs(state.stability - state.fsrsCard.stability) > 1e-7) return null;
   const latest = dated(state.lastReview);
-  if (!Number.isFinite(latest) || latest > now.getTime() || latest !== dated(reviews.at(-1)!.review)
+  const lastModelReview = reviews.filter(review => review.modelApplied !== false).at(-1);
+  if (!Number.isFinite(latest) || latest > now.getTime() || latest !== dated(lastModelReview?.review)
     || (state.fsrsCard.lastReview !== undefined && dated(state.fsrsCard.lastReview) !== latest)) return null;
   let lastIndex = -1;
   let count = 0;
@@ -172,9 +174,7 @@ export function buildForgettingCurveModel(states: readonly WordMemoryState[], {
   const recalls: RecallSnapshot[] = [];
   for (const [canonicalWordId, group] of grouped) {
     // Follow the same canonical owner policy as the word-card queue and app statistics.
-    const state = [...group].sort((left, right) => Number(right.wordId === canonicalWordId) - Number(left.wordId === canonicalWordId)
-      || (dated(right.lastReview) || 0) - (dated(left.lastReview) || 0)
-      || right.fsrsCard.reps - left.fsrsCard.reps || left.wordId.localeCompare(right.wordId))[0];
+    const state = selectCanonicalMemoryState(group, canonicalWordId)!;
     const recall = lastFormalRecall(state, canonicalWordId, now);
     if (recall) recalls.push(recall);
   }

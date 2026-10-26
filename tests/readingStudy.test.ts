@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import React from 'react';
+import { register } from 'node:module';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Article, ArticleProgressRow, LearningEvent } from '../src/types';
 import type { ArticleWordEvidence } from '../src/lib/memoryV2/types';
 import { buildReadingStudyItems, findStudyWordContext } from '../src/lib/readingStudy';
-import { ReadingStudyScreen } from '../src/components/ReadingStudyScreen';
+register('./helpers/style-loader.mjs', import.meta.url);
+const { ReadingStudyScreen } = await import('../src/components/ReadingStudyScreen');
 import { LocalStorageMemoryStorage } from '../src/lib/memoryV2/localStorageImpl';
 import { MemorySystemV2 } from '../src/lib/memoryV2/memorySystem';
 

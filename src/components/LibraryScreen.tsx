@@ -14,6 +14,7 @@ import { filterUserLibrary, getLibraryFileProgress, groupUserLibrary, type UserL
 import { getJsonApiHeaders } from '../lib/apiAuth';
 import { AppPageHeader } from './AppPageHeader';
 import { defaultLibraryView, normalizeLibraryView, type LibraryView } from '../lib/libraryView';
+import { groupLibraryItems, LIBRARY_GROUPINGS, normalizeLibraryGrouping, type LibraryGrouping } from '../lib/libraryOrganization';
 import { readPersistentValue, STORAGE_KEYS, updatePersistentValue } from '../lib/storage';
 import { fetchMagazineArticleById } from '../lib/magazineLemmaIndex';
 import { CAN_MANUALLY_SYNC_MAGAZINES, IS_OFFLINE_APP } from '../lib/platform/runtime';
@@ -23,6 +24,9 @@ import { LibraryBookTitle } from './LibraryBookTitle';
 import { bookAppearance } from '../../website/book-presentation.js';
 import { LibraryBookButton } from './LibraryBookButton';
 import { DeleteLibraryBookDialog } from './DeleteLibraryBookDialog';
+import { magazineSourceCaption } from '../lib/magazinePresentation';
+import { PublicationIntroduction } from './PublicationIntroduction';
+import { BookIntroduction } from './BookIntroduction';
 
 type LibraryTab = 'mine' | 'magazines';
 
@@ -83,6 +87,7 @@ interface LibraryScreenProps {
   onSelectArticle: (article: Article) => void | Promise<void>;
   onInsertArticle: (entry?: LibraryEntry) => void;
   onDeleteFile?: (batchId: string) => Promise<void>;
+  organizationRequest?: { id: number; grouping: LibraryGrouping };
   onBack: () => void;
   navigation?: React.ReactNode;
 }
@@ -92,6 +97,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   onSelectArticle,
   onInsertArticle,
   onDeleteFile,
+  organizationRequest,
   onBack,
   navigation,
 }) => {
@@ -104,6 +110,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   const [deleteFile, setDeleteFile] = useState<UserLibraryFile | null>(null);
   const [levelFilter, setLevelFilter] = useState<string>(initialView.levelFilter);
   const [topicQuery, setTopicQuery] = useState(initialView.topicQuery);
+  const [shelfGrouping, setShelfGrouping] = useState(initialView.shelfGrouping);
   /** L1→L2 inside My articles: which imported file is open. */
   const [activeImportBatchId, setActiveImportBatchId] = useState<string | null>(initialView.activeImportBatchId);
 
@@ -135,12 +142,22 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   const retryAction = useRef<(() => void) | null>(null);
   const scrollRestored = useRef(false);
   const viewRef = useRef<LibraryView>(initialView);
-  viewRef.current = { tab, levelFilter, topicQuery, activeImportBatchId, activeSourceId, selectedIssue,
+  viewRef.current = { tab, levelFilter, topicQuery, shelfGrouping, activeImportBatchId, activeSourceId, selectedIssue,
     scrollY: scrollRestored.current ? window.scrollY : initialView.scrollY,
     catalogPages: scrollRestored.current ? catalogPageCount : initialView.catalogPages };
   useEffect(() => {
     void updatePersistentValue(STORAGE_KEYS.libraryView, defaultLibraryView, viewRef.current).catch(() => {});
-  }, [tab, levelFilter, topicQuery, activeImportBatchId, activeSourceId, selectedIssue, catalogPageCount]);
+  }, [tab, levelFilter, topicQuery, shelfGrouping, activeImportBatchId, activeSourceId, selectedIssue, catalogPageCount]);
+  useEffect(() => {
+    if (!organizationRequest) return;
+    issueRequest.current += 1; catalogRequest.current += 1;
+    setTab('mine'); setActiveImportBatchId(null); setActiveSourceId(null); setSelectedIssue(null);
+    setIssueArticles([]); setLoadingIssue(false); setLoadingCatalog(false); setLoadingCatalogArticles(false);
+    setLevelFilter('All'); setTopicQuery(''); setError(null);
+    setShelfGrouping(normalizeLibraryGrouping(organizationRequest.grouping));
+    scrollRestored.current = true;
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [organizationRequest?.id, organizationRequest?.grouping]);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const save = () => {
@@ -196,16 +213,20 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     }),
     [userArticles, levelFilter, topicQuery, mineLayer, activeImportBatchId],
   );
+  const organizedMine = useMemo(() => groupLibraryItems(filteredMine, shelfGrouping), [filteredMine, shelfGrouping]);
 
   const filteredSources = useMemo(() => {
     return sources.filter((s) => {
       if (levelFilter !== 'All' && s.levelHint && s.levelHint !== levelFilter) return false;
       if (!topicQuery.trim()) return true;
       const q = topicQuery.trim().toLowerCase();
+      const caption = magazineSourceCaption(s);
       return (
         s.displayName.toLowerCase().includes(q) ||
         s.id.toLowerCase().includes(q) ||
-        (s.topic || '').toLowerCase().includes(q)
+        (s.topic || '').toLowerCase().includes(q) ||
+        caption.name.toLowerCase().includes(q) ||
+        (caption.topic || '').toLowerCase().includes(q)
       );
     });
   }, [sources, levelFilter, topicQuery]);
@@ -506,6 +527,11 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   const fileProgress = activeImportFile ? getLibraryFileProgress(activeImportFile) : null;
   const showCefr = tab === 'mine' || magLayer === 'sources';
   const isNested = Boolean(tab === 'mine' ? activeImportFile : activeSourceId);
+  const introductionSource = tab === 'magazines' ? activeSource : null;
+  const hasIntroduction = Boolean(introductionSource || activeImportFile);
+  const inlineIntroduction = Boolean(introductionSource && magLayer === 'issues' && !isArticleSource);
+  const introduction = introductionSource ? <React.Fragment key={introductionSource.id}><PublicationIntroduction source={introductionSource} /></React.Fragment>
+    : activeImportFile ? <React.Fragment key={activeImportFile.id}><BookIntroduction file={activeImportFile} /></React.Fragment> : null;
   const title = tab === 'mine' && activeImportFile ? activeImportFile.title
     : tab === 'magazines' && selectedIssue ? issueDisplayTitle(selectedIssue, activeSource)
       : tab === 'magazines' && activeSource ? activeSource.displayName : 'Library';
@@ -546,6 +572,40 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     <LibraryArticleRow key={article.id} article={article} number={index + 1} meta={meta}
       loading={loadingArticleId === article.id} disabled={loadingArticleId !== null}
       onOpen={() => void openMagazineArticle(article)} />
+  );
+  const renderMineEntries = (items: ReturnType<typeof filterUserLibrary>) => (
+    <div className={activeImportFile ? 'library-reading-list' : 'ra-book-grid library-owned-shelf'}>{items.map((item, index) => {
+      if (item.kind === 'file') {
+        const progress = getLibraryFileProgress(item.file);
+        const volume = item.file.articles[0].distribution;
+        const bookTitle = volume?.title || item.file.title;
+        const caption = bookAppearance({ title: bookTitle, kind: volume?.kind }).originalTitle || bookTitle;
+        return <div key={item.file.id} className="library-owned-volume"><LibraryBookButton className="ra-book-choice library-owned-book" aria-label={`打开书籍：${bookTitle}`}
+          title={onDeleteFile ? '点击打开目录；长按或右键删除书本' : undefined}
+          aria-haspopup={onDeleteFile ? 'dialog' : undefined} onDelete={onDeleteFile ? () => setDeleteFile(item.file) : undefined} onOpen={() => {
+          setActiveImportBatchId(item.file.id); setTopicQuery(''); setError(null);
+        }}>
+          <LibraryBookCover id={volume?.resourceId || item.file.id} title={bookTitle} kind={volume?.kind} />
+          <span className="ra-book-caption">{caption}</span><span className="ra-book-meta">
+            <span>{item.file.articles.length} {progress.unit}</span>
+            {progress.started && <span>已读 {progress.completedCount} / {item.file.articles.length}</span>}
+            {!progress.completed && progress.started && <span>继续第 {progress.resumeNumber} {progress.unit}</span>}
+          </span>{progress.started && <span className="library-file-progress" aria-hidden="true"><span style={{ width: `${progress.completedCount / item.file.articles.length * 100}%` }} /></span>}
+          <span className="ra-book-state">{progress.completed ? '已读完 · 查看目录 →' : '查看目录 →'}</span>
+        </LibraryBookButton>
+        {progress.started && !progress.completed && progress.resumeArticle && <button type="button" className="library-resume-book"
+          aria-label={`继续阅读：${bookTitle}`} onClick={() => { void onSelectArticle(progress.resumeArticle!); }}>
+          继续阅读<ArrowUpRight size={13} aria-hidden="true" />
+        </button>}</div>;
+      }
+      const level = getArticleCefrLevel(item.article);
+      const number = activeImportFile ? activeImportFile.articles.findIndex(article => article.id === item.article.id) + 1
+        : index + 1;
+      return <LibraryArticleRow key={item.article.id} article={item.article} number={number}
+        state={item.article.status === 'Completed' ? '已读' : item.article.lastOpenedAt ? '在读' : undefined}
+        meta={<>{level && <span>{level}</span>}<span>{item.article.content.join(' ').split(/\s+/).filter(Boolean).length.toLocaleString()} 词</span></>}
+        onOpen={() => { void onSelectArticle(item.article); }} />;
+    })}</div>
   );
 
   return (
@@ -604,44 +664,27 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
           </label>}
         </div>
         {error && <div className="library-error" role="alert"><p>{error}</p><button type="button" onClick={() => retryAction.current?.()}>重试</button></div>}
-        <main className="library-content">
-          <div className="library-section-heading"><h2>{sectionTitle}{!isLoading && <span>{resultCount}</span>}</h2>
-            {hasFilters && <button type="button" className="library-clear" onClick={resetFilters}>清除筛选<X size={12} aria-hidden="true" /></button>}
+        <div className={hasIntroduction && !inlineIntroduction ? 'library-introduction-layout' : undefined}>
+        {hasIntroduction && !inlineIntroduction && <div className="library-introduction-slot">{introduction}</div>}
+        <main className={`library-content${hasIntroduction && !inlineIntroduction ? ' library-introduction-main' : ''}`}>
+          <div className="library-section-heading flex-wrap"><h2>{sectionTitle}{!isLoading && <span>{resultCount}</span>}</h2>
+            <div className="flex flex-wrap items-center justify-end gap-x-3">
+              {tab === 'mine' && !activeImportFile && <label className="library-level"><span className="sr-only">书架分组</span>
+                <select aria-label="书架分组" value={shelfGrouping} onChange={event => setShelfGrouping(normalizeLibraryGrouping(event.target.value))}>
+                  {LIBRARY_GROUPINGS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select><ChevronDown size={13} aria-hidden="true" />
+              </label>}
+              {hasFilters && <button type="button" className="library-clear" onClick={resetFilters}>清除筛选<X size={12} aria-hidden="true" /></button>}
+            </div>
           </div>
           {isLoading ? <p className="library-loading" role="status"><Loader2 size={17} className="animate-spin" aria-hidden="true" />正在加载…</p> : tab === 'mine' ? (
             userArticles.length === 0 ? <div className="library-empty"><p>把喜欢的书放进书架</p><button type="button" onClick={() => onInsertArticle({ intent: 'import' })}>导入书籍或杂志<ArrowUpRight size={14} aria-hidden="true" /></button><button type="button" onClick={() => onInsertArticle({ intent: 'local' })}>导入本地文件或粘贴文字</button></div>
               : filteredMine.length === 0 ? renderEmpty() : (
-                <div className={activeImportFile ? 'library-reading-list' : 'ra-book-grid library-owned-shelf'}>{filteredMine.map((item, index) => {
-                  if (item.kind === 'file') {
-                    const progress = getLibraryFileProgress(item.file);
-                    const volume = item.file.articles[0].distribution;
-                    const bookTitle = volume?.title || item.file.title;
-                    const caption = bookAppearance({ title: bookTitle, kind: volume?.kind }).originalTitle || bookTitle;
-                    return <div key={item.file.id} className="library-owned-volume"><LibraryBookButton className="ra-book-choice library-owned-book" aria-label={`打开书籍：${bookTitle}`}
-                      title={onDeleteFile ? '点击打开目录；长按或右键删除书本' : undefined}
-                      aria-haspopup={onDeleteFile ? 'dialog' : undefined} onDelete={onDeleteFile ? () => setDeleteFile(item.file) : undefined} onOpen={() => {
-                      setActiveImportBatchId(item.file.id); setTopicQuery(''); setError(null);
-                    }}>
-                      <LibraryBookCover id={volume?.resourceId || item.file.id} title={bookTitle} kind={volume?.kind} />
-                      <span className="ra-book-caption">{caption}</span><span className="ra-book-meta">
-                        <span>{item.file.articles.length} {progress.unit}</span>
-                        {progress.started && <span>已读 {progress.completedCount} / {item.file.articles.length}</span>}
-                        {!progress.completed && progress.started && <span>继续第 {progress.resumeNumber} {progress.unit}</span>}
-                      </span>{progress.started && <span className="library-file-progress" aria-hidden="true"><span style={{ width: `${progress.completedCount / item.file.articles.length * 100}%` }} /></span>}
-                      <span className="ra-book-state">{progress.completed ? '已读完 · 查看目录 →' : '查看目录 →'}</span>
-                    </LibraryBookButton>
-                    {progress.started && !progress.completed && progress.resumeArticle && <button type="button" className="library-resume-book"
-                      aria-label={`继续阅读：${bookTitle}`} onClick={() => { void onSelectArticle(progress.resumeArticle!); }}>
-                      继续阅读<ArrowUpRight size={13} aria-hidden="true" />
-                    </button>}</div>;
-                  }
-                  const level = getArticleCefrLevel(item.article);
-                  const number = activeImportFile ? activeImportFile.articles.findIndex((article) => article.id === item.article.id) + 1 : index + 1;
-                  return <LibraryArticleRow key={item.article.id} article={item.article} number={number}
-                    state={item.article.status === 'Completed' ? '已读' : item.article.lastOpenedAt ? '在读' : undefined}
-                    meta={<>{level && <span>{level}</span>}<span>{item.article.content.join(' ').split(/\s+/).filter(Boolean).length.toLocaleString()} 词</span></>}
-                    onOpen={() => { void onSelectArticle(item.article); }} />;
-                })}</div>
+                activeImportFile || shelfGrouping === 'none' ? renderMineEntries(filteredMine)
+                  : <div className="library-shelf-groups">{organizedMine.map(group => <section key={group.key} aria-label={`${group.label} · ${group.items.length} 项`} className="mb-8">
+                    <h3 className="mb-4 mt-3 flex items-baseline gap-2 text-sm text-[#625c50]"><span className="min-w-0 break-words [overflow-wrap:anywhere]">{group.label}</span><span className="shrink-0 text-xs text-[#93897a]">{group.items.length} 项</span></h3>
+                    {renderMineEntries(group.items)}
+                  </section>)}</div>
               )
           ) : isArticleCatalogFilter ? (
             catalogArticles.length === 0 ? renderEmpty() : <>
@@ -654,23 +697,27 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
             </>
           ) : magLayer === 'sources' ? (
             filteredSources.length === 0 ? renderEmpty(sources.length ? '没有找到匹配的外刊' : CAN_MANUALLY_SYNC_MAGAZINES ? '点击“更新外刊目录”，下载后即可离线阅读。' : '没有已保存的外刊，可导入文件或学习迁移包。') : (
-              <div className="ra-book-grid library-owned-shelf library-publication-shelf">{filteredSources.map((source) => (
+              <div className="ra-book-grid library-owned-shelf library-publication-shelf">{filteredSources.map((source) => {
+                const caption = magazineSourceCaption(source);
+                return (
                 <button type="button" key={source.id} className="ra-book-choice library-publication-book" data-publication={source.id} onClick={() => openSource(source.id)}>
                   <LibraryBookCover id={source.id} title={source.displayName} kind="magazine"
                     eyebrow={source.sourceKind === 'web_articles' ? 'ARTICLES' : source.sourceKind === 'graded_news' ? 'GRADED READING' : 'PERIODICAL'}
-                    edition={source.levelHint} />
-                  <h3 className="ra-book-caption">{source.displayName}</h3>{source.topic && <span className="ra-book-meta">{source.topic}</span>}<span className="ra-book-meta library-cover-meta">
+                    edition={[caption.topic, source.levelHint].filter(Boolean).join(' · ')} />
+                  <h3 className="ra-book-caption">{caption.name}</h3><span className="ra-book-meta library-cover-meta">
                       <span>{source.sourceKind === 'web_articles' ? '网站文章' : source.sourceKind === 'graded_news' ? '分级新闻' : '整期杂志'}</span>
-                      <span>{source.issueCount} {source.sourceKind && source.sourceKind !== 'issue' ? '篇' : '期'}</span>{source.levelHint && <span>{source.levelHint}</span>}</span>
+                      <span>{source.issueCount} {source.sourceKind && source.sourceKind !== 'issue' ? '篇' : '期'}</span></span>
                   <span className="ra-book-state">{source.sourceKind === 'web_articles' || source.sourceKind === 'graded_news' ? '浏览文章 →' : '浏览期刊 →'}</span>
                 </button>
-              ))}</div>
+                );
+              })}</div>
             )
           ) : magLayer === 'issues' ? (
-            filteredIssues.length === 0 ? renderEmpty(issues.some((issue) => issue.sourceId === activeSourceId)
+            filteredIssues.length === 0 ? <>{renderEmpty(issues.some((issue) => issue.sourceId === activeSourceId)
               ? isArticleSource ? '没有找到匹配的文章' : '没有找到匹配的期刊'
               : CAN_MANUALLY_SYNC_MAGAZINES ? `点击“${sourceUpdateLabel}”，下载后即可离线阅读。`
-                : isArticleSource ? '没有已保存的文章，可导入文件或学习迁移包。' : '没有已保存的期刊，可导入文件或学习迁移包。') : (
+                : isArticleSource ? '没有已保存的文章，可导入文件或学习迁移包。' : '没有已保存的期刊，可导入文件或学习迁移包。')}
+              {inlineIntroduction && <div className="ra-book-grid library-owned-shelf library-issue-shelf">{introduction}</div>}</> : (
               <div className={isArticleSource ? 'library-issues' : 'ra-book-grid library-owned-shelf library-issue-shelf'}>{filteredIssues.map((issue, index) => (
                 <button type="button" key={issue.id} className={isArticleSource ? 'library-issue' : 'ra-book-choice library-issue-book'} onClick={() => void openIssue(issue)}>
                   {!isArticleSource ? <>
@@ -686,7 +733,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                     {issueStatusLabels[issue.status] && <span className={issue.status === 'failed' ? 'library-failed' : ''}>{issueStatusLabels[issue.status]}</span>}
                   </div></div><ArrowUpRight size={17} className="library-arrow" aria-hidden="true" /></>}
                 </button>
-              ))}</div>
+              ))}{inlineIntroduction && introduction}</div>
             )
           ) : filteredIssueArticles.length === 0 ? renderEmpty(issueArticles.length ? '没有找到匹配的文章' : isArticleSource ? '暂无可读文章' : '本期暂无可读文章') : (
             <div className="library-reading-list">{filteredIssueArticles.map((article) => renderMagazineArticle(article, issueArticles.findIndex((item) => item.id === article.id),
@@ -694,6 +741,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
             ))}</div>
           )}
         </main>
+        </div>
         {CAN_MANUALLY_SYNC_MAGAZINES && tab === 'magazines' && <footer className="library-catalog-footer">
           {syncBusy && <p className="library-sync-progress" role="status"><Loader2 size={13} className="animate-spin" aria-hidden="true" />{startingSync ? '正在启动外刊更新…' : syncStatus?.progress || '正在更新外刊…'}</p>}
           {syncStatus?.lastResult?.errors?.length && !syncStatus.running ? <p className="library-failed" role="alert">{syncStatus.lastResult.errors[0]}</p> : null}

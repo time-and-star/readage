@@ -1,11 +1,11 @@
 import type { FlashcardQueueCard } from './flashcardReview';
 import type { FlashcardStudyPreferences } from './flashcardPreferences';
 
-/** Only settings that change eligible cards; registry ordering does not change a study plan. */
+/** Settings that change the queue or interval previews; this key never reschedules existing cards. */
 export function getFlashcardPlanSettingsKey(preferences: FlashcardStudyPreferences): string {
   const sortedIds = (ids: readonly string[] = []) => [...new Set(ids)].sort();
   return JSON.stringify([preferences.dailyNewWordLimit, sortedIds(preferences.importedWordIds),
-    sortedIds(preferences.pausedWordIds), sortedIds(preferences.excludedWordIds)]);
+    sortedIds(preferences.pausedWordIds), sortedIds(preferences.excludedWordIds), preferences.desiredRetention ?? 0.9]);
 }
 
 /** Reopen an exhausted session or apply changed settings without replacing an answer on every saved review. */

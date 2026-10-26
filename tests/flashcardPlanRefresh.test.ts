@@ -3,6 +3,7 @@ import { afterEach, test } from 'node:test';
 import { MemoryV2Store } from '../src/lib/memoryV2/memoryStore';
 import { LocalStorageMemoryStorage } from '../src/lib/memoryV2/localStorageImpl';
 import { buildFlashcardQueue, submitFlashcardRating } from '../src/lib/flashcardReview';
+import { createFlashcardSchedulingPolicy } from '../src/lib/flashcardScheduling';
 import { getFlashcardPlanSettingsKey, reconcileFlashcardSession, shouldRefreshFlashcardSession } from '../src/lib/flashcardSessionSettings';
 import type { FlashcardQueueCard } from '../src/lib/flashcardReview';
 
@@ -44,7 +45,7 @@ test('saving unlimited publishes a version and immediately reopens a quota-exhau
   await store.saveFlashcardStudyPreferences(1);
   const initial = await loadPlan(store);
   assert.deepEqual(initial.plan.cards.map(card => card.wordId), ['apple']);
-  await submitFlashcardRating(store, { attemptId: 'first-apple', wordId: 'apple', rating: 'good' });
+  await submitFlashcardRating(store, { attemptId: 'first-apple', wordId: 'apple', rating: 'good', scheduling: createFlashcardSchedulingPolicy(0.9, 3) });
   const exhausted = await loadPlan(store);
   assert.equal(exhausted.plan.cards.length, 0);
   assert.equal(exhausted.plan.remainingNewCount, 2);
@@ -75,7 +76,7 @@ test('review-only settings remove fresh cards but preserve the saved answer and 
   await store.saveFlashcardStudyPreferences(null);
   const initial = await loadPlan(store);
   const saved = initial.plan.cards[0];
-  const result = await submitFlashcardRating(store, { attemptId: 'first-apple', wordId: 'apple', rating: 'good' });
+  const result = await submitFlashcardRating(store, { attemptId: 'first-apple', wordId: 'apple', rating: 'good', scheduling: createFlashcardSchedulingPolicy(0.9, 3) });
   const afterReview = await loadPlan(store);
   assert.equal(shouldRefreshFlashcardSession(initial.plan.cards, initial.key, afterReview.key), false,
     'an ordinary saved rating must not replace the answer the learner is reading');
@@ -105,7 +106,7 @@ test('unlimited cannot create new cards after the enrolled pool is introduced, a
   assert.ok(shouldRefreshFlashcardSession(initial.plan.cards, initial.key, paused.key));
   assert.deepEqual(paused.plan.cards.map(card => card.wordId), ['apple']);
   assert.deepEqual(reconcileFlashcardSession([], paused.plan.cards, new Set(['apple']), false), []);
-  await submitFlashcardRating(store, { attemptId: 'first-apple', wordId: 'apple', rating: 'good' });
+  await submitFlashcardRating(store, { attemptId: 'first-apple', wordId: 'apple', rating: 'good', scheduling: createFlashcardSchedulingPolicy(0.9, 3) });
   const complete = await loadPlan(store);
   assert.equal(complete.plan.dueCount, 0);
   assert.equal(complete.plan.remainingNewCount, 0);

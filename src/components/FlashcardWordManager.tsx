@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { FlashcardStudyPreferences, FlashcardWordAction } from '../lib/flashcardPreferences';
 import type { WordMemoryState } from '../lib/memoryV2/types';
 import { buildWordMemoryDetails } from '../lib/wordMemoryDetails';
+import { selectCanonicalMemoryState } from '../lib/memoryV2/wordIdentity';
 import { WordMemoryDetailsPanel } from './WordMemoryDetailsPanel';
 
 export function FlashcardWordManager({ words, preferences, busy, onUpdate, memoryStates = [], canonicalWordIds = new Map() }: {
@@ -24,7 +25,7 @@ export function FlashcardWordManager({ words, preferences, busy, onUpdate, memor
     for (const state of memoryStates) {
       const word = canonicalWordIds.get(state.wordId) ?? state.wordId;
       const prior = result.get(word);
-      if (!prior || state.wordId === word || (prior.wordId !== word && (state.lastReview ?? '') > (prior.lastReview ?? ''))) result.set(word, state);
+      result.set(word, selectCanonicalMemoryState(prior ? [prior, state] : [state], word)!);
     }
     return result;
   }, [memoryStates, canonicalWordIds]);

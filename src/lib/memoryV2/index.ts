@@ -9,6 +9,7 @@ export * from './types';
 // Memory Score 计算
 export {
   calculateMemoryScore,
+  calculateLongTermMemoryScore,
   calculateRetention,
   calculateMasteryModifier,
   scoreToLevel,

@@ -20,6 +20,8 @@ import {
   aggregateDailyEvidence,
   updateDailyEvidence,
   batchAggregateDailyEvidence,
+  recallFailureCount,
+  mergeRecallFailureTime,
 } from './evidenceAggregation';
 import {
   initializeWordMemory,
@@ -27,44 +29,27 @@ import {
   batchFinalizeDailyEvidence,
   getPendingFinalizationDates,
 } from './fsrsIntegration';
-import {
-  calculateMemoryScore,
-  calculateBatchMemoryScores,
-  scoreToLevel,
-  scoreToLevelWithHysteresis,
-} from './memoryScore';
 import { hasFormalRecallEvidence, prepareRmeEvent, projectRmeProfile, rmeProfileForState } from './rmeV4Bridge';
+import { createWordLearningStatusProjector, projectWordProficiency,
+  type WordLearningStatusProjector, type WordProficiencyView } from './wordProficiency';
+export { projectWordLearningStatus, projectWordProficiency, createWordLearningStatusProjector } from './wordProficiency';
+export type { WordProficiencyView } from './wordProficiency';
 import { updateExposureQuality } from '../memoryV4';
-import { stageFromConfidence, classifyExposure } from '../memoryV4';
+import { classifyExposure } from '../memoryV4';
 import { appendJournalEvents, importLookupEvents, refreshUserJournals, refreshWordJournal, readExternalLearningActivity } from '../browserExtension/importer';
 import { getLocalDateInTimeZone, getSystemTimeZone } from './dateUtils';
 import { mergeExposureSnapshot } from './rawEventPersistence';
 import { readVerificationHistory, saveVerificationAttempt, saveFlashcardReviewCorrection, replayVerificationEvidence } from './verificationMemory';
-import { readFlashcardStudyPreferences, saveFlashcardStudyPreferences, importFlashcardWords,
+import { readFlashcardStudyPreferences, saveFlashcardStudyPreferences, saveFlashcardAutoSpeakCount, saveFlashcardDesiredRetention, importFlashcardWords,
   repairImportedFlashcardStates, updateFlashcardWords, type FlashcardStudyPreferences } from '../flashcardPreferences';
 import { LocalStorageMemoryStorage } from './localStorageImpl';
 import { IndexedDbMemoryStorage } from './indexedDbImpl';
 import { SqliteMemoryStorage } from './sqliteImpl';
 import { repairPassiveReadingRecall } from './passiveRecallRepair';
+import { createFlashcardSchedulingPolicy } from '../flashcardScheduling';
+import { selectCanonicalMemoryState } from './wordIdentity';
 
 export interface FlashcardRestoreTarget { wordId: string; relatedWordIds: readonly string[] }
-
-export interface WordProficiencyView {
-  wordId: string;
-  memoryScore: number;
-  level: 0 | 1 | 2 | 3 | 4;
-  stability: number;
-  difficulty: number;
-  nextReview: string;
-  lastReview: string | null;
-  confidence?: number;
-  opportunityScore?: number;
-  memoryStage?: 0 | 1 | 2 | 3 | 4;
-  isIntroduced?: boolean;
-  /** Eligible for the word-card plan; passive reading alone does not count as a new word. */
-  isFlashcardEligible?: boolean;
-  status?: 'introduced' | 'learning' | 'mastered';
-}
 
 export interface WordProficiencyStats {
   total: number;
@@ -123,40 +108,13 @@ function preserveHistoricalArticleEvidence(prior: ArticleWordEvidence | undefine
   return { ...current,
     validExposureCount: Math.max(prior.validExposureCount, current.validExposureCount),
     clickedOccurrenceCount: Math.max(prior.clickedOccurrenceCount, current.clickedOccurrenceCount),
+    ...(prior.recallFailureCount !== undefined || current.recallFailureCount !== undefined
+      ? { recallFailureCount: Math.max(recallFailureCount(prior), recallFailureCount(current)) } : {}),
+    ...mergeRecallFailureTime(prior, current),
     firstSeenAt: [prior.firstSeenAt, current.firstSeenAt].sort()[0],
     lastSeenAt: [prior.lastSeenAt, current.lastSeenAt].sort().at(-1)!,
     ...(current.averageRmeQuality === undefined && prior.averageRmeQuality !== undefined
       ? { averageRmeQuality: prior.averageRmeQuality } : {}),
-  };
-}
-
-function addRmeProjection(
-  state: WordMemoryState,
-  view: WordProficiencyView,
-  now: Date,
-): WordProficiencyView {
-  const projected = projectRmeProfile(rmeProfileForState(state), state, now);
-  return {
-    ...view,
-    confidence: projected.confidence,
-    opportunityScore: projected.opportunityScore,
-    memoryStage: stageFromConfidence(projected.confidence),
-  };
-}
-
-/** Keep learning statistics aligned with word-card enrollment and genuine recall history. */
-export function projectWordLearningStatus(state: WordMemoryState, preferences: FlashcardStudyPreferences) {
-  return learningStatusProjector(preferences)(state);
-}
-function learningStatusProjector(preferences: FlashcardStudyPreferences) {
-  const excludedIds = new Set([...preferences.pausedWordIds ?? [], ...preferences.excludedWordIds ?? []]);
-  const enrolledIds = new Set(preferences.importedWordIds);
-  return (state: WordMemoryState) => {
-  const hasRecall = hasFormalRecallEvidence(state);
-  const hasLookup = Number.isFinite(Date.parse(state.lastAssistedAt ?? ''))
-    || state.fsrsReviews.some(review => review.source === 'reading_lookup');
-  return { isIntroduced: !hasRecall,
-    isFlashcardEligible: !excludedIds.has(state.wordId) && (hasRecall || hasLookup || enrolledIds.has(state.wordId)) };
   };
 }
 
@@ -165,7 +123,7 @@ function limitWordViews(words: WordProficiencyView[], limit?: number): WordProfi
 }
 
 function selectDueWords(proficiencies: WordProficiencyView[], now: Date, limit?: number): WordProficiencyView[] {
-  const due = proficiencies.filter(word => word.isFlashcardEligible !== false && word.isIntroduced !== true
+  const due = proficiencies.filter(word => word.isFlashcardEligible !== false && (word.isIntroduced !== true || word.hasPractice)
     && Date.parse(word.nextReview) <= now.getTime());
   due.sort((left, right) => Date.parse(left.nextReview) - Date.parse(right.nextReview) || left.wordId.localeCompare(right.wordId));
   return limitWordViews(due, limit);
@@ -205,25 +163,19 @@ function summarizeProficiency(proficiencies: WordProficiencyView[], now: Date): 
   for (const word of proficiencies) {
     if (word.isFlashcardEligible === false) continue;
     stats.total++; stats.byLevel[word.level]++; totalScore += word.memoryScore;
-    if (word.isIntroduced) stats.introducedCount++;
+    if (word.isIntroduced && !word.hasPractice) stats.introducedCount++;
     else if (word.level === 4) stats.masteredCount++;
     else stats.learningCount++;
-    if (!word.isIntroduced && Date.parse(word.nextReview) <= now.getTime()) stats.dueCount++;
+    if ((!word.isIntroduced || word.hasPractice) && Date.parse(word.nextReview) <= now.getTime()) stats.dueCount++;
   }
   stats.averageScore = stats.total ? totalScore / stats.total : 0;
   return stats;
 }
 
 export class MemorySystemV2 {
-  private projectWordProficiency(state: WordMemoryState, projectLearning: ReturnType<typeof learningStatusProjector>, now: Date): WordProficiencyView {
-    const memoryScore = hasFormalRecallEvidence(state) ? calculateMemoryScore(state, this.params, now) : 0;
-    const level = scoreToLevel(memoryScore);
-    const learning = projectLearning(state);
-    return addRmeProjection(state, {
-      wordId: state.wordId, memoryScore, level, stability: state.stability, difficulty: state.difficulty,
-      nextReview: state.nextReview, lastReview: state.lastReview, ...learning,
-      status: learning.isIntroduced ? 'introduced' : level === 4 ? 'mastered' : 'learning',
-    }, now);
+  private projectWordProficiency(state: WordMemoryState, preferences: FlashcardStudyPreferences,
+    projectLearning: WordLearningStatusProjector, now: Date): WordProficiencyView {
+    return projectWordProficiency(state, preferences, now, this.params, state.wordId, projectLearning);
   }
 
   /** One read serves all learning collections; passive paragraph writes refresh only affected words. */
@@ -261,10 +213,10 @@ export class MemorySystemV2 {
     }
     const projectIds = new Set(changed);
     if (!previous || previous.projectedAt !== now.getTime()) for (const wordId of dynamicWordIds) projectIds.add(wordId);
-    const projectLearning = learningStatusProjector(preferences);
+    const projectLearning = createWordLearningStatusProjector(preferences);
     for (const wordId of projectIds) {
       const state = states.get(wordId);
-      if (state) views.set(wordId, this.projectWordProficiency(state, projectLearning, now)); else views.delete(wordId);
+      if (state) views.set(wordId, this.projectWordProficiency(state, preferences, projectLearning, now)); else views.delete(wordId);
     }
     const proficiencies = [...views.values()];
     const snapshot = {
@@ -284,6 +236,12 @@ export class MemorySystemV2 {
   getFlashcardStudyPreferences(userId: string) { return readFlashcardStudyPreferences(this.storage, userId); }
   saveFlashcardStudyPreferences(userId: string, dailyNewWordLimit: number | null) {
     return saveFlashcardStudyPreferences(this.storage, userId, dailyNewWordLimit);
+  }
+  saveFlashcardAutoSpeakCount(userId: string, autoSpeakCount: number) {
+    return saveFlashcardAutoSpeakCount(this.storage, userId, autoSpeakCount);
+  }
+  saveFlashcardDesiredRetention(userId: string, desiredRetention: number) {
+    return saveFlashcardDesiredRetention(this.storage, userId, desiredRetention);
   }
   updateFlashcardWords(userId: string, wordIds: string[], action: 'pause' | 'resume' | 'remove') {
     return updateFlashcardWords(this.storage, userId, wordIds, action);
@@ -384,12 +342,7 @@ export class MemorySystemV2 {
     if (!originals.length) return;
     const candidates = await Promise.all(originals
       .map(async state => repairPassiveReadingRecall(state, await this.readWordDailyEvidence(state, this.timezone), this.timezone)));
-    const lastKnownAt = (state: WordMemoryState) => Math.max(0,
-      Date.parse(state.lastReview ?? '') || 0, Date.parse(state.rme?.lastExposureAt ?? '') || 0);
-    candidates.sort((left, right) => (Date.parse(right.lastReview ?? '') || 0) - (Date.parse(left.lastReview ?? '') || 0)
-      || lastKnownAt(right) - lastKnownAt(left)
-      || left.wordId.localeCompare(right.wordId));
-    const baseline = candidates[0];
+    const baseline = selectCanonicalMemoryState(candidates, canonicalWordId);
     if (baseline) await this.storage.saveMemoryState({ ...baseline, wordId: canonicalWordId });
   }
 
@@ -647,7 +600,8 @@ export class MemorySystemV2 {
       memoryStates,
       new Map(dailyEvidences.map((e) => [e.wordId, e])),
       userId,
-      userTimezone
+      userTimezone,
+      createFlashcardSchedulingPolicy((await this.getFlashcardStudyPreferences(userId)).desiredRetention)
     );
 
     // 4. 保存更新后的记忆状态
@@ -688,24 +642,7 @@ export class MemorySystemV2 {
       return null;
     }
 
-    const memoryScore = hasFormalRecallEvidence(memoryState)
-      ? calculateMemoryScore(memoryState, this.params, currentTime) : 0;
-    const level = scoreToLevel(memoryScore);
-    const learning = projectWordLearningStatus(memoryState, preferences);
-
-    return addRmeProjection(memoryState, {
-      wordId,
-      memoryScore,
-      level,
-      stability: memoryState.stability,
-      difficulty: memoryState.difficulty,
-      nextReview: memoryState.nextReview,
-      lastReview: memoryState.lastReview,
-      ...learning,
-      status: learning.isIntroduced
-        ? 'introduced'
-        : level === 4 ? 'mastered' : 'learning',
-    }, currentTime);
+    return projectWordProficiency(memoryState, preferences, currentTime, this.params, wordId);
   }
 
   /**
@@ -719,33 +656,12 @@ export class MemorySystemV2 {
     const [memoryStates, preferences] = await Promise.all([
       this.storage.getBatchMemoryStates(userId, wordIds), this.getFlashcardStudyPreferences(userId),
     ]);
-    const scores = calculateBatchMemoryScores(
-      Array.from(memoryStates.values()),
-      this.params,
-      currentTime
-    );
-
     const proficiencies = new Map<string, WordProficiencyView>();
-    const projectLearning = learningStatusProjector(preferences);
+    const projectLearning = createWordLearningStatusProjector(preferences);
 
     for (const [wordId, memoryState] of memoryStates.entries()) {
-      const memoryScore = hasFormalRecallEvidence(memoryState) ? scores.get(wordId) || 0 : 0;
-      const level = scoreToLevel(memoryScore);
-      const learning = projectLearning(memoryState);
-
-      proficiencies.set(wordId, addRmeProjection(memoryState, {
-        wordId,
-        memoryScore,
-        level,
-        stability: memoryState.stability,
-        difficulty: memoryState.difficulty,
-        nextReview: memoryState.nextReview,
-        lastReview: memoryState.lastReview,
-        ...learning,
-        status: learning.isIntroduced
-          ? 'introduced'
-          : level === 4 ? 'mastered' : 'learning',
-      }, currentTime));
+      proficiencies.set(wordId, projectWordProficiency(memoryState, preferences, currentTime,
+        this.params, wordId, projectLearning));
     }
 
     return proficiencies;
@@ -761,28 +677,9 @@ export class MemorySystemV2 {
     const [memoryStates, preferences] = await Promise.all([
       this.storage.getAllMemoryStates(userId), this.getFlashcardStudyPreferences(userId),
     ]);
-    const scores = calculateBatchMemoryScores(memoryStates, this.params, currentTime);
-    const projectLearning = learningStatusProjector(preferences);
-
-    return memoryStates.map((state) => {
-      const memoryScore = hasFormalRecallEvidence(state) ? scores.get(state.wordId) || 0 : 0;
-      const level = scoreToLevel(memoryScore);
-      const learning = projectLearning(state);
-
-      return addRmeProjection(state, {
-        wordId: state.wordId,
-        memoryScore,
-        level,
-        stability: state.stability,
-        difficulty: state.difficulty,
-        nextReview: state.nextReview,
-        lastReview: state.lastReview,
-        ...learning,
-        status: learning.isIntroduced
-          ? 'introduced'
-          : level === 4 ? 'mastered' : 'learning',
-      }, currentTime);
-    });
+    const projectLearning = createWordLearningStatusProjector(preferences);
+    return memoryStates.map(state => projectWordProficiency(state, preferences, currentTime,
+      this.params, state.wordId, projectLearning));
   }
 
   /**

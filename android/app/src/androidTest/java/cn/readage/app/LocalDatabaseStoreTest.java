@@ -201,6 +201,294 @@ public class LocalDatabaseStoreTest {
         }
     }
 
+    @Test public void schedulingAuditAndBeforeCardValidateAndSurviveRestore() throws Exception {
+        JSONObject original = backup(), profile = bootstrap(original).getJSONObject("profile"), candidate = backup();
+        JSONObject state = record(candidate, "memoryState").getJSONObject("state");
+        JSONObject beforeCard = new JSONObject(state.getJSONObject("fsrsCard").toString());
+        beforeCard.put("state", 0); beforeCard.put("reps", 0); beforeCard.remove("lastReview");
+        JSONObject review = state.getJSONArray("fsrsReviews").getJSONObject(0);
+        review.put("scheduling", object("version", 1, "desiredRetention", 0.95)); review.put("beforeCard", beforeCard);
+        record(candidate, "rawEvents").getJSONArray("events").getJSONObject(0).put("lookupOnly", true);
+        for (String table : new String[] { "articleEvidence", "dailyEvidence" }) record(candidate, table).getJSONObject("evidence").put("recallFailureCount", 0);
+        record(candidate, "articleEvidence").getJSONObject("evidence").put("lastRecallFailureAt", "2026-09-02T01:00:00Z");
+        database.restore(profile.getString("id"), profile.getLong("revision"), candidate);
+        equivalent(database.snapshot(profile.getString("id")), candidate);
+        database.close(); database = new LocalDatabaseStore(filename);
+        equivalent(database.snapshot(profile.getString("id")), candidate);
+        LocalDatabaseStore.validateBackup(candidate);
+    }
+
+    @Test public void malformedSchedulingSnapshotsAndRecallEvidencePreserveRecoveryHistory() throws Exception {
+        JSONObject history = restoreHistory();
+        for (Object scheduling : new Object[] { JSONObject.NULL, new JSONObject(), object("version", 7, "desiredRetention", 0.95), object("version", 1, "desiredRetention", 0.99), object("version", 1, "desiredRetention", 0.905), object("version", 1, "desiredRetention", "0.95") }) rejectRestore(history, corruptReview("scheduling", scheduling));
+        for (Object beforeCard : new Object[] { JSONObject.NULL, new JSONObject(), new JSONArray() }) rejectRestore(history, corruptReview("beforeCard", beforeCard));
+        for (String field : new String[] { "reps", "lapses", "learningSteps" }) for (Object value : new Object[] { -1, 0.5, JSONObject.NULL }) {
+            JSONObject beforeCard = new JSONObject(record(backup(), "memoryState").getJSONObject("state").getJSONObject("fsrsCard").toString());
+            beforeCard.put(field, value); rejectRestore(history, corruptReview("beforeCard", beforeCard));
+        }
+        for (String field : new String[] { "due", "lastReview" }) {
+            JSONObject beforeCard = new JSONObject(record(backup(), "memoryState").getJSONObject("state").getJSONObject("fsrsCard").toString());
+            beforeCard.put(field, "invalid"); rejectRestore(history, corruptReview("beforeCard", beforeCard));
+        }
+        JSONObject beforeCard = new JSONObject(record(backup(), "memoryState").getJSONObject("state").getJSONObject("fsrsCard").toString());
+        beforeCard.remove("lastReview"); rejectRestore(history, corruptReview("beforeCard", beforeCard));
+        for (Object value : new Object[] { false, JSONObject.NULL, "true", 1 }) {
+            JSONObject candidate = backup(); record(candidate, "rawEvents").getJSONArray("events").getJSONObject(0).put("lookupOnly", value); rejectRestore(history, candidate);
+        }
+        for (String table : new String[] { "articleEvidence", "dailyEvidence" }) for (Object value : new Object[] { -1, 0.5, 2, JSONObject.NULL, "1" }) rejectRestore(history, corruptField(table, "evidence", "recallFailureCount", value));
+        for (Object value : new Object[] { "invalid", "2026-02-30T12:00:00Z", JSONObject.NULL, 1 }) rejectRestore(history, corruptField("articleEvidence", "evidence", "lastRecallFailureAt", value));
+    }
+
+    @Test public void legacyLocalStorageValidatesOnlyNewSchedulingAndEvidenceFields() throws Exception {
+        JSONObject candidate = backup();
+        candidate.put("indexedDb", JSONObject.NULL); candidate.put("memoryStorage", "localStorage");
+        JSONObject settings = candidate.getJSONObject("localStorage");
+        settings.put("english-ai:v2:memory:state:u:word", "{\"wordId\":\"word\"}");
+        settings.put("english-ai:v2:memory:raw:u:word:2026-09-02", "[{\"eventType\":\"click\",\"lookupOnly\":true}]");
+        LocalDatabaseStore.validateBackup(candidate);
+        for (Object[] invalid : new Object[][] {
+            { "state:u:word", "{\"fsrsReviews\":[{\"scheduling\":{\"version\":1,\"desiredRetention\":0.905}}]}" },
+            { "state:u:word", "{\"passiveReadingReviews\":[{\"beforeCard\":{}}]}" },
+            { "raw:u:word:2026-09-02", "[{\"eventType\":\"click\",\"lookupOnly\":false}]" },
+            { "article:u:word:a:2026-09-02", "{\"clickedOccurrenceCount\":1,\"recallFailureCount\":2}" },
+            { "daily:u:word:2026-09-02", "{\"articleEvidence\":[{\"clickedOccurrenceCount\":1,\"recallFailureCount\":-1}]}" },
+            { "article:u:word:a:2026-09-02", "{\"lastRecallFailureAt\":\"invalid\"}" }
+        }) {
+            JSONObject malformed = new JSONObject(candidate.toString());
+            malformed.getJSONObject("localStorage").put("english-ai:v2:memory:" + invalid[0], invalid[1]);
+            try { LocalDatabaseStore.validateBackup(malformed); fail("Expected invalid legacy added field"); }
+            catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("记录无效")); }
+        }
+    }
+
+    @Test public void intradayCardsKeepMinuteDueDatesStepsAndSnapshotsAcrossRestoreAndReopen() throws Exception {
+        roundTripIntradayCards(3);
+    }
+
+    @Test public void roundCardsKeepImmediateDueDatesStepsAndSnapshotsAcrossRestoreAndReopen() throws Exception {
+        roundTripIntradayCards(4);
+    }
+
+    private void roundTripIntradayCards(int version) throws Exception {
+        JSONObject original = backup(), profile = bootstrap(original).getJSONObject("profile"), candidate = backup();
+        JSONObject state = record(candidate, "memoryState").getJSONObject("state");
+        JSONObject policy = object("version", version, "desiredRetention", 0.93);
+        JSONObject oldCard = new JSONObject(state.getJSONObject("fsrsCard").toString());
+        JSONObject beforeCard = new JSONObject(oldCard.toString());
+        beforeCard.put("state", 1); beforeCard.put("learningSteps", 1); beforeCard.put("scheduledDays", 0);
+        beforeCard.put("due", "2026-09-02T12:10:00.000Z"); beforeCard.put("lastReview", "2026-09-02T12:00:00.000Z");
+        beforeCard.put("reps", 1);
+        JSONObject card = state.getJSONObject("fsrsCard");
+        card.put("state", 1); card.put("learningSteps", 2); card.put("scheduledDays", 0); card.put("reps", 2);
+        card.put("lastReview", "2026-09-02T12:10:00.000Z"); card.put("due", "2026-09-02T12:40:00.000Z");
+        if (version == 4) {
+            beforeCard.put("due", beforeCard.get("lastReview"));
+            card.put("due", card.get("lastReview"));
+        }
+        state.put("lastReview", card.get("lastReview")); state.put("nextReview", card.get("due"));
+        JSONObject review = state.getJSONArray("fsrsReviews").getJSONObject(0);
+        review.put("review", card.get("lastReview")); review.put("due", beforeCard.get("lastReview"));
+        review.put("state", 1); review.put("learningSteps", 1); review.put("scheduledDays", 0);
+        review.put("source", "flashcard"); review.put("scheduling", policy); review.put("beforeCard", beforeCard);
+        JSONObject relearning = new JSONObject(state.toString()); relearning.put("wordId", "relearning");
+        relearning.getJSONObject("fsrsCard").put("state", 3); relearning.getJSONObject("fsrsCard").put("learningSteps", 0);
+        relearning.getJSONObject("fsrsCard").put("lapses", 1);
+        JSONObject relearningReview = relearning.getJSONArray("fsrsReviews").getJSONObject(0);
+        relearningReview.put("state", 2); relearningReview.put("rating", 1); relearningReview.put("learningSteps", 0);
+        relearningReview.put("beforeCard", oldCard);
+        JSONObject stores = candidate.getJSONObject("indexedDb").getJSONObject("stores");
+        stores.getJSONArray("memoryState").put(object("key", "u|relearning", "state", relearning));
+        JSONObject verification = object("version", 1, "userId", "u", "attempts", new JSONArray()
+            .put(object("attemptId", "v" + version + ":word:1", "wordId", "word", "scheduling", policy))
+            .put(object("attemptId", "v" + version + ":word:2", "wordId", "word", "scheduling", policy)));
+        JSONObject extension = object("version", 1, "userId", "u", "wordId", "word", "baselineState", new JSONObject(state.toString()),
+            "baselineDaily", new JSONArray(), "baselineRaw", new JSONArray(), "events", new JSONArray());
+        stores.getJSONArray("meta").put(object("key", "reading-verification:u", "value", verification));
+        stores.getJSONArray("meta").put(object("key", "extension-journal:[\"u\",\"word\"]", "value", extension));
+        candidate.getJSONObject("localStorage").put("english-ai:v2:memory:state:u:word", state.toString());
+        candidate.getJSONObject("localStorage").put("english-ai:v2:memory:meta:reading-verification:u", verification.toString());
+        candidate.getJSONObject("localStorage").put("english-ai:v2:memory:meta:extension-journal:[\"u\",\"word\"]", extension.toString());
+        database.restore(profile.getString("id"), profile.getLong("revision"), candidate);
+        equivalent(database.snapshot(profile.getString("id")), candidate);
+        database.close(); database = new LocalDatabaseStore(filename);
+        equivalent(database.snapshot(profile.getString("id")), candidate);
+        equivalent(database.previousSnapshot(profile.getString("id")), original);
+        JSONObject legacy = new JSONObject(candidate.toString()); legacy.put("indexedDb", JSONObject.NULL); legacy.put("memoryStorage", "localStorage");
+        LocalDatabaseStore.validateBackup(legacy);
+    }
+
+    @Test public void knownJournalMetadataRoundTripsAndRejectsOnlyInvalidNewFields() throws Exception {
+        JSONObject source = backup();
+        JSONObject policy = object("version", 1, "desiredRetention", 0.95);
+        JSONObject conservativePolicy = object("version", 2, "desiredRetention", 0.95);
+        JSONObject intradayPolicy = object("version", 3, "desiredRetention", 0.95);
+        JSONObject roundPolicy = object("version", 4, "desiredRetention", 0.95);
+        JSONObject state = record(source, "memoryState").getJSONObject("state");
+        JSONObject review = state.getJSONArray("fsrsReviews").getJSONObject(0);
+        review.put("scheduling", policy); review.put("beforeCard", new JSONObject(state.getJSONObject("fsrsCard").toString()));
+        JSONObject verification = object("version", 1, "userId", "u", "attempts", new JSONArray().put(object("attemptId", "recall-v1", "scheduling", policy)).put(object("attemptId", "recall-v2", "scheduling", conservativePolicy)).put(object("attemptId", "recall-v3", "scheduling", intradayPolicy)).put(object("attemptId", "recall-v4", "scheduling", roundPolicy)).put(object("attemptId", "legacy")));
+        JSONObject extension = object("version", 1, "baselineState", new JSONObject(state.toString()), "baselineDaily", new JSONArray().put(object("articleEvidence", new JSONArray().put(object("clickedOccurrenceCount", 1, "recallFailureCount", 1, "lastRecallFailureAt", "2026-09-02T01:00:00Z")))), "baselineRaw", new JSONArray().put(object("eventType", "click", "lookupOnly", true)), "events", new JSONArray().put(object("eventType", "click", "lookupOnly", true)));
+        extension.put("pendingFailureDates", new JSONArray().put("2026-09-02"));
+        JSONArray meta = source.getJSONObject("indexedDb").getJSONObject("stores").getJSONArray("meta");
+        meta.put(object("key", "reading-verification:u", "value", verification));
+        meta.put(object("key", "extension-journal:[\"u\",\"word\"]", "value", extension));
+        meta.put(object("key", "generic", "value", object("attempts", new JSONArray().put(object("scheduling", "custom extension value")))));
+        meta.put(object("key", "nullable", "value", JSONObject.NULL));
+        JSONObject profile = bootstrap(source).getJSONObject("profile");
+        equivalent(database.snapshot(profile.getString("id")), source);
+        database.close(); database = new LocalDatabaseStore(filename);
+        equivalent(database.snapshot(profile.getString("id")), source);
+        Object[][] malformed = new Object[][] {
+            { "reading-verification:u", object("attempts", new JSONArray().put(object("scheduling", object("version", 1, "desiredRetention", 0.905)))) },
+            { "reading-verification:u", object("attempts", new JSONArray().put(object("scheduling", JSONObject.NULL))) },
+            { "extension-journal:x", object("baselineState", object("fsrsReviews", new JSONArray().put(object("beforeCard", new JSONObject())))) },
+            { "extension-journal:x", object("baselineState", object("fsrsReviews", new JSONArray().put(object("scheduling", object("version", 7, "desiredRetention", 0.95))))) },
+            { "reading-verification:u", object("attempts", new JSONArray().put(object("scheduling", object("version", 7, "desiredRetention", 0.95)))) },
+            { "extension-journal:x", object("pendingFailureDates", JSONObject.NULL) },
+            { "extension-journal:x", object("pendingFailureDates", "2026-09-02") },
+            { "extension-journal:x", object("pendingFailureDates", new JSONArray().put("2026-02-30")) },
+            { "extension-journal:x", object("baselineDaily", new JSONArray().put(object("articleEvidence", new JSONArray().put(object("clickedOccurrenceCount", 1, "recallFailureCount", 2))))) },
+            { "extension-journal:x", object("baselineDaily", new JSONArray().put(object("articleEvidence", new JSONArray().put(object("lastRecallFailureAt", "invalid"))))) },
+            { "extension-journal:x", object("baselineRaw", new JSONArray().put(object("eventType", "click", "lookupOnly", false))) },
+            { "extension-journal:x", object("events", new JSONArray().put(object("eventType", "click", "lookupOnly", false))) }
+        };
+        for (Object[] invalid : malformed) {
+            JSONObject candidate = backup();
+            candidate.getJSONObject("indexedDb").getJSONObject("stores").getJSONArray("meta").put(object("key", invalid[0], "value", invalid[1]));
+            try { LocalDatabaseStore.validateBackup(candidate); fail("Expected invalid new journal field"); }
+            catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("记录无效")); }
+            candidate.put("indexedDb", JSONObject.NULL); candidate.put("memoryStorage", "localStorage");
+            candidate.getJSONObject("localStorage").put("english-ai:v2:memory:meta:" + invalid[0], invalid[1].toString());
+            try { LocalDatabaseStore.validateBackup(candidate); fail("Expected invalid legacy journal field"); }
+            catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("记录无效")); }
+        }
+        JSONObject legacy = backup(); legacy.getJSONObject("indexedDb").getJSONObject("stores").getJSONArray("meta").put(object("key", "reading-verification:u", "value", object("attempts", new JSONArray().put(new JSONObject()))));
+        LocalDatabaseStore.validateBackup(legacy);
+    }
+
+    @Test public void unifiedReadingPoliciesAndLegacyHistorySurviveRestoreAndReopen() throws Exception {
+        assertUnifiedReadingPolicyRoundTrip(5);
+    }
+
+    @Test public void v6ReadingPoliciesAndLegacyHistorySurviveRestoreAndReopen() throws Exception {
+        assertUnifiedReadingPolicyRoundTrip(6);
+    }
+
+    private void assertUnifiedReadingPolicyRoundTrip(int version) throws Exception {
+        JSONObject original = backup(), profile = bootstrap(original).getJSONObject("profile"), source = backup();
+        JSONObject policy = object("version", version, "desiredRetention", 0.93);
+        JSONObject reading = object("attemptId", "new-reading", "wordId", "word", "questionId", "reading-question",
+            "articleId", "a", "userId", "u", "purpose", "delayed_verification", "outcome", "recognized",
+            "occurredAt", "2026-09-02T09:00:00+08:00", "localDate", "2026-09-02", "timezone", "Asia/Shanghai", "scheduling", policy);
+        JSONObject legacy = new JSONObject(reading.toString()); legacy.put("attemptId", "legacy-reading"); legacy.remove("scheduling");
+        if (version == 6) reading.put("readingTask", object("type", "context_choice", "contextVisible", true, "answerExposed", false, "mapping", "hard_on_correct"));
+        JSONObject journal = object("version", 1, "userId", "u", "attempts", new JSONArray().put(reading).put(legacy));
+        source.getJSONObject("indexedDb").getJSONObject("stores").getJSONArray("meta")
+            .put(object("key", "reading-verification:u", "value", journal));
+        source.getJSONObject("localStorage").put("english-ai:v2:memory:meta:reading-verification:u", journal.toString());
+        JSONObject state = record(source, "memoryState").getJSONObject("state");
+        state.getJSONArray("fsrsReviews").getJSONObject(0).put("scheduling", policy)
+            .put("beforeCard", new JSONObject(state.getJSONObject("fsrsCard").toString()));
+        if (version == 6) {
+            state.getJSONObject("fsrsCard").put("confirmationDue", "2026-09-04T01:00:00.000Z");
+            state.getJSONArray("fsrsReviews").getJSONObject(0).put("modelApplied", false)
+                .put("evidence", object("kind", "answer_rehearsal", "answerExposedAt", "2026-09-02T09:00:00+08:00"))
+                .put("readingTask", object("type", "context_choice", "contextVisible", true, "answerExposed", true, "mapping", "practice_only"))
+                .getJSONObject("beforeCard").put("confirmationDue", "2026-09-04T01:00:00.000Z");
+            source.getJSONObject("localStorage").put("english-ai:v2:memory:state:u:word", state.toString());
+        }
+        long revision = database.restore(profile.getString("id"), profile.getLong("revision"), source).getLong("revision");
+        database.close(); database = new LocalDatabaseStore(filename);
+        equivalent(database.snapshot(profile.getString("id")), source);
+        equivalent(database.previousSnapshot(profile.getString("id")), original);
+        assertFalse(journal.getJSONArray("attempts").getJSONObject(1).has("scheduling"));
+        if (version == 6) {
+            JSONObject saved = record(database.snapshot(profile.getString("id")), "memoryState").getJSONObject("state");
+            assertEquals("2026-09-04T01:00:00.000Z", saved.getJSONObject("fsrsCard").getString("confirmationDue"));
+            assertFalse(saved.getJSONArray("fsrsReviews").getJSONObject(0).getBoolean("modelApplied"));
+            assertEquals("answer_rehearsal", saved.getJSONArray("fsrsReviews").getJSONObject(0).getJSONObject("evidence").getString("kind"));
+            assertEquals("practice_only", saved.getJSONArray("fsrsReviews").getJSONObject(0).getJSONObject("readingTask").getString("mapping"));
+        }
+        for (Object invalid : new Object[] { JSONObject.NULL, object("version", 7, "desiredRetention", 0.93),
+            object("version", 4, "desiredRetention", 0.905), object("version", 4, "desiredRetention", "0.93") }) {
+            JSONObject corrupt = new JSONObject(source.toString());
+            corrupt.getJSONObject("indexedDb").getJSONObject("stores").getJSONArray("meta").getJSONObject(1)
+                .getJSONObject("value").getJSONArray("attempts").getJSONObject(0).put("scheduling", invalid);
+            try { database.restore(profile.getString("id"), revision, corrupt); fail("Invalid reading policy must be rejected"); }
+            catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("记录无效")); }
+            equivalent(database.snapshot(profile.getString("id")), source);
+            equivalent(database.previousSnapshot(profile.getString("id")), original);
+            corrupt.put("indexedDb", JSONObject.NULL); corrupt.put("memoryStorage", "localStorage");
+            JSONObject badJournal = new JSONObject(journal.toString());
+            badJournal.getJSONArray("attempts").getJSONObject(0).put("scheduling", invalid);
+            corrupt.getJSONObject("localStorage").put("english-ai:v2:memory:meta:reading-verification:u", badJournal.toString());
+            try { LocalDatabaseStore.validateBackup(corrupt); fail("Invalid legacy-layout reading policy must be rejected"); }
+            catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("记录无效")); }
+        }
+    }
+
+    @Test public void malformedV6CheckpointAndRecallAuditPreserveRecoveryHistory() throws Exception {
+        JSONObject history = restoreHistory();
+        java.util.List<JSONObject> candidates = new java.util.ArrayList<>();
+        Object[] invalidTasks = new Object[] { JSONObject.NULL, new JSONArray(), new JSONObject(),
+            object("type", "free_recall", "contextVisible", true, "answerExposed", false, "mapping", "hard_on_correct"),
+            object("type", "context_choice", "contextVisible", false, "answerExposed", false, "mapping", "hard_on_correct"),
+            object("type", "context_choice", "contextVisible", true, "answerExposed", "false", "mapping", "hard_on_correct"),
+            object("type", "context_choice", "contextVisible", true, "answerExposed", false, "mapping", "good_on_correct") };
+        for (Object invalid : invalidTasks) candidates.add(corruptReview("readingTask", invalid));
+        for (Object invalid : new Object[] { "invalid", "2026-02-30T12:00:00Z", JSONObject.NULL, 1 }) candidates.add(corruptCard("confirmationDue", invalid));
+        JSONObject beforeCard = new JSONObject(record(backup(), "memoryState").getJSONObject("state").getJSONObject("fsrsCard").toString());
+        beforeCard.put("confirmationDue", "2026-02-30T12:00:00Z"); candidates.add(corruptReview("beforeCard", beforeCard));
+        for (Object invalid : new Object[] { JSONObject.NULL, new JSONObject(), object("kind", "unknown"),
+            object("kind", "answer_rehearsal", "answerExposedAt", "invalid"), object("kind", "independent_recall", "interveningWord", "") }) candidates.add(corruptReview("evidence", invalid));
+        for (Object invalid : new Object[] { true, JSONObject.NULL, "false" }) candidates.add(corruptReview("modelApplied", invalid));
+        for (JSONObject candidate : candidates) {
+            rejectRestore(history, candidate);
+            JSONObject legacy = backup(); legacy.put("indexedDb", JSONObject.NULL); legacy.put("memoryStorage", "localStorage");
+            legacy.getJSONObject("localStorage").put("english-ai:v2:memory:state:u:word", record(candidate, "memoryState").getJSONObject("state").toString());
+            try { LocalDatabaseStore.validateBackup(legacy); fail("Expected invalid V6 legacy field"); }
+            catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("记录无效")); }
+        }
+        for (Object invalid : invalidTasks) {
+            JSONObject journal = object("version", 1, "userId", "u", "attempts", new JSONArray().put(object("attemptId", "invalid-task", "readingTask", invalid)));
+            JSONObject candidate = backup();
+            candidate.getJSONObject("indexedDb").getJSONObject("stores").getJSONArray("meta").put(object("key", "reading-verification:u", "value", journal));
+            rejectRestore(history, candidate);
+            candidate.put("indexedDb", JSONObject.NULL); candidate.put("memoryStorage", "localStorage");
+            candidate.getJSONObject("localStorage").put("english-ai:v2:memory:meta:reading-verification:u", journal.toString());
+            try { LocalDatabaseStore.validateBackup(candidate); fail("Expected invalid reading task journal"); }
+            catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("记录无效")); }
+        }
+    }
+
+    @Test public void v2PracticeOnlyNewCardWithAttemptCountSurvivesRestoreAndReopen() throws Exception {
+        JSONObject original = backup(), profile = bootstrap(original).getJSONObject("profile"), source = backup();
+        JSONObject state = record(source, "memoryState").getJSONObject("state"), card = state.getJSONObject("fsrsCard");
+        state.put("stability", 0); state.put("difficulty", 0); state.put("lastReview", JSONObject.NULL); state.remove("lastReviewAt");
+        card.put("state", 0); card.put("stability", 0); card.put("difficulty", 0); card.put("reps", 1);
+        card.put("scheduledDays", 0); card.put("learningSteps", 0); card.remove("lastReview");
+        JSONObject task = object("type", "context_choice", "contextVisible", true, "answerExposed", true, "mapping", "practice_only");
+        JSONObject review = state.getJSONArray("fsrsReviews").getJSONObject(0);
+        review.put("state", 0); review.put("stability", 0); review.put("difficulty", 0); review.put("scheduledDays", 0);
+        review.put("scheduling", object("version", 6, "desiredRetention", 0.93)); review.put("modelApplied", false);
+        review.put("readingTask", task); review.put("evidence", object("kind", "answer_rehearsal", "answerExposedAt", "2026-09-02T09:00:00+08:00"));
+        JSONObject beforeCard = new JSONObject(card.toString()); beforeCard.put("reps", 0); review.put("beforeCard", beforeCard);
+        JSONObject journal = object("version", 1, "userId", "u", "attempts", new JSONArray().put(object("attemptId", "practice-only", "readingTask", task)));
+        source.getJSONObject("indexedDb").getJSONObject("stores").getJSONArray("meta").put(object("key", "reading-verification:u", "value", journal));
+        source.getJSONObject("localStorage").put("english-ai:v2:memory:state:u:word", state.toString());
+        source.getJSONObject("localStorage").put("english-ai:v2:memory:meta:reading-verification:u", journal.toString());
+        database.restore(profile.getString("id"), profile.getLong("revision"), source);
+        database.close(); database = new LocalDatabaseStore(filename);
+        equivalent(database.snapshot(profile.getString("id")), source);
+        equivalent(database.previousSnapshot(profile.getString("id")), original);
+        JSONObject saved = record(database.snapshot(profile.getString("id")), "memoryState").getJSONObject("state");
+        assertEquals(0, saved.getJSONObject("fsrsCard").getInt("state"));
+        assertEquals(0, saved.getDouble("stability"), 0); assertEquals(1, saved.getJSONObject("fsrsCard").getInt("reps"));
+        assertTrue(saved.isNull("lastReview")); assertFalse(saved.getJSONObject("fsrsCard").has("lastReview"));
+        JSONObject legacy = new JSONObject(source.toString()); legacy.put("indexedDb", JSONObject.NULL); legacy.put("memoryStorage", "localStorage");
+        LocalDatabaseStore.validateBackup(legacy);
+    }
+
     @Test public void legacyOptionalFieldsAndNullMetadataSurviveRestoreAndReopen() throws Exception {
         JSONObject original = backup(), profile = bootstrap(original).getJSONObject("profile"), legacy = backup();
         JSONObject state = record(legacy, "memoryState").getJSONObject("state");

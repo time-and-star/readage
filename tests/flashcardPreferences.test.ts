@@ -5,7 +5,7 @@ import { MemorySystemV2 } from '../src/lib/memoryV2/memorySystem';
 import { LocalStorageMemoryStorage } from '../src/lib/memoryV2/localStorageImpl';
 import { initializeWordMemory, submitFsrsReview } from '../src/lib/memoryV2/fsrsIntegration';
 import { buildFlashcardQueue, getManagedFlashcardWordIds, submitFlashcardRating } from '../src/lib/flashcardReview';
-import { readFlashcardStudyPreferences, validateDailyNewWordLimit } from '../src/lib/flashcardPreferences';
+import { readFlashcardStudyPreferences, validateDailyNewWordLimit, validateFlashcardAutoSpeakCount } from '../src/lib/flashcardPreferences';
 import type { WordMemoryState } from '../src/lib/memoryV2/types';
 
 class BrowserStorage implements Storage {
@@ -58,6 +58,24 @@ test('daily preference defaults to ten and persists finite, unlimited and review
     await assert.rejects(store.saveFlashcardStudyPreferences(invalid), /非负整数/);
   }
   assert.equal((await store.system.getFlashcardStudyPreferences('u')).dailyNewWordLimit, 0);
+});
+
+test('automatic headword speech defaults off and persists only counts from zero through three', async () => {
+  const { storage, store } = setup();
+  assert.deepEqual(await store.system.getFlashcardStudyPreferences('u'), { dailyNewWordLimit: 10, importedWordIds: [] });
+  await store.saveFlashcardStudyPreferences(25);
+  for (const autoSpeakCount of [0, 1, 2, 3]) {
+    const saved = await store.saveFlashcardAutoSpeakCount(autoSpeakCount);
+    assert.deepEqual(saved, { dailyNewWordLimit: 25, autoSpeakCount, importedWordIds: [] });
+    const reopened = new MemorySystemV2(storage, undefined, 'UTC');
+    assert.deepEqual(await reopened.getFlashcardStudyPreferences('u'), saved);
+  }
+  for (const invalid of [-1, 0.5, 4, NaN, Infinity]) {
+    assert.throws(() => validateFlashcardAutoSpeakCount(invalid), /0 到 3/);
+    await assert.rejects(store.saveFlashcardAutoSpeakCount(invalid), /0 到 3/);
+  }
+  assert.deepEqual(await store.system.getFlashcardStudyPreferences('u'), { dailyNewWordLimit: 25, autoSpeakCount: 3, importedWordIds: [] });
+  assert.equal((await store.system.getFlashcardStudyPreferences('other-user')).autoSpeakCount, undefined);
 });
 
 test('preference failures retain the previous setting and can be retried without losing enrollment', async () => {

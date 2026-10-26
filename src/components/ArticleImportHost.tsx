@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { Article } from '../types';
 import type { LibraryEntry } from '../lib/contentLibraryEntry';
 import type { BookImportActivity } from '../lib/bookImportActivity';
@@ -15,6 +15,7 @@ interface ArticleImportHostProps {
   onOpen: () => void;
   onClose: () => void;
   onSubmitCustomArticles: (articles: Article[], notice?: string) => void;
+  onSessionActiveChange?: (active: boolean) => void;
 }
 
 const phaseLabels: Record<BookImportActivity['phase'], string> = {
@@ -26,8 +27,9 @@ const phaseLabels: Record<BookImportActivity['phase'], string> = {
 };
 
 /** Keep the import session alive while its dialog is put away or the app changes pages. */
-export function ArticleImportHost({ open, entry, history, onOpen, onClose, onSubmitCustomArticles }: ArticleImportHostProps) {
+export function ArticleImportHost({ open, entry, history, onOpen, onClose, onSubmitCustomArticles, onSessionActiveChange }: ArticleImportHostProps) {
   const [activity, setActivity] = useState<BookImportActivity | null>(null);
+  useEffect(() => { onSessionActiveChange?.(Boolean(activity)); }, [activity, onSessionActiveChange]);
   const mounted = open || Boolean(activity);
   const previousMounted = useRef(false);
   const sessionEntry = useRef(entry);

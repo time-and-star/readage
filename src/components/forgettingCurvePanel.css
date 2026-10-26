@@ -88,3 +88,7 @@
   .forgetting-chart-line--waiting { stroke-dashoffset: 0; }
   .forgetting-chart-glint { display: none; }
 }
+.forgetting-garden__explanation { margin-top: 12px; color: #b7c9bd; font-size: 12px; line-height: 1.8; }
+.forgetting-garden__explanation > summary { min-height: 44px; padding-block: 10px; cursor: pointer; }
+.forgetting-garden__explanation > summary:focus-visible { outline: 2px solid #c5d8c8; outline-offset: 2px; }
+.forgetting-garden__explanation > p { margin: 0 0 10px; }

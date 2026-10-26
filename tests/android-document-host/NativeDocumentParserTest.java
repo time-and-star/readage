@@ -67,6 +67,59 @@ public class NativeDocumentParserTest {
             assertFalse(target.exists());
         } finally { Thread.interrupted(); }
     }
+    @Test public void markdownSharedCorpusCleansSyntaxSplitsChaptersAndKeepsIllustrations() throws Exception {
+        JSONArray cases = new JSONArray(Files.readString(Paths.get("tests/fixtures/markdownImport.json"))), report = new JSONArray();
+        for (int index = 0; index < cases.length(); index++) {
+            JSONObject fixture = cases.getJSONObject(index);
+            String source = fixture.getString("source").replace("{{PNG}}", Base64.getEncoder().encodeToString(PNG));
+            File original = fixture(source.getBytes(StandardCharsets.UTF_8), ".md");
+            JSONObject batch = NativeDocumentParser.parse(context, original, fixture.getString("name"), 0, 80);
+            assertEquals("markdown", batch.getString("format"));
+            JSONArray articles = batch.getJSONArray("articles"), titles = fixture.getJSONArray("titles");
+            assertEquals(fixture.getString("name"), titles.length(), articles.length());
+            int images = 0;
+            for (int row = 0; row < articles.length(); row++) {
+                assertEquals(titles.getString(row), articles.getJSONObject(row).getString("title"));
+                images += articles.getJSONObject(row).getJSONArray("media").length();
+            }
+            String text = content(batch);
+            for (int item = 0; item < fixture.getJSONArray("contains").length(); item++) {
+                String expected = fixture.getJSONArray("contains").getString(item);
+                assertTrue(fixture.getString("name") + " missing " + expected + ": " + text, text.contains(expected));
+            }
+            for (int item = 0; item < fixture.getJSONArray("absent").length(); item++) {
+                String forbidden = fixture.getJSONArray("absent").getString(item);
+                assertFalse(fixture.getString("name") + " contains " + forbidden + ": " + text, text.contains(forbidden));
+            }
+            assertEquals(fixture.getInt("images"), images);
+            assertArrayEquals(Files.readAllBytes(original.toPath()), Files.readAllBytes(new File(context.getFilesDir(), "readage/originals/" + batch.getString("sourceId") + ".md").toPath()));
+            if (fixture.getString("name").equals("pictures.md")) {
+                JSONObject image = articles.getJSONObject(0).getJSONArray("media").getJSONObject(0);
+                assertEquals("Boats at sunset", image.getString("caption")); assertEquals(1, image.getInt("afterParagraphIndex"));
+                assertArrayEquals(PNG, Files.readAllBytes(new NativeFileStore(context).asset(image.getString("src")).toPath()));
+            }
+            report.put(new JSONObject().put("name", fixture.getString("name")).put("batch", batch));
+        }
+        Files.writeString(new File(context.getCacheDir(), "markdown-parity.json").toPath(), report.toString(2));
+    }
+    @Test public void markdownPaginationUtf16AndEmptyContentUseTheProductionEntryPoint() throws Exception {
+        StringBuilder source = new StringBuilder();
+        for (int chapter = 1; chapter <= 83; chapter++) source.append("# Lesson ").append(chapter).append("\n\nA short lesson.\n\n");
+        File file = fixture(source.toString().getBytes(StandardCharsets.UTF_8), ".md");
+        JSONObject first = NativeDocumentParser.parse(context, file, "lessons.md", 0, 80);
+        JSONObject tail = NativeDocumentParser.parse(context, file, "lessons.md", 80, 80);
+        assertEquals(83, first.getInt("totalCount")); assertEquals(80, first.getJSONArray("articles").length());
+        assertEquals(80, first.getInt("nextOffset")); assertEquals(3, tail.getJSONArray("articles").length());
+        assertTrue(tail.isNull("nextOffset")); assertEquals(first.getString("sourceId"), tail.getString("sourceId"));
+        assertEquals("Lesson 83", tail.getJSONArray("articles").getJSONObject(2).getString("title"));
+        rejected(() -> NativeDocumentParser.parse(context, file, "lessons.md", 83, 80), "超出范围");
+        byte[] body = "# 海港\n\n船只返回。".getBytes(StandardCharsets.UTF_16LE), bytes = new byte[body.length + 2];
+        bytes[0] = (byte) 255; bytes[1] = (byte) 254; System.arraycopy(body, 0, bytes, 2, body.length);
+        assertEquals("海港\n船只返回。\n", content(NativeDocumentParser.parse(context, fixture(bytes, ".md"), "utf16.markdown", 0, 80)));
+        for (String empty : Arrays.asList("---\ntitle: Empty\n---\n", "<!-- comment -->\n", "- [Next](#next)\n")) {
+            rejected(() -> NativeDocumentParser.parse(context, fixture(empty.getBytes(StandardCharsets.UTF_8), ".md"), "empty.md", 0, 80), "没有可阅读的正文");
+        }
+    }
     @Test public void tolerantHtmlKeepsInlineTextAndLocalImageButExcludesExecutableAndNavigationContent() throws Exception {
         String html = "<title>Harbor &amp; Bay</title><nav>Menu noise</nav><article><h1>Boats</h1><p>The <b>small</b> boats return safely.<img alt='Map' src='data:image/png;base64," + Base64.getEncoder().encodeToString(PNG) + "'></p><script>fake dangerous body</script><p>At sunset &amp; dawn.</article>";
         JSONObject result = NativeDocumentParser.parse(context, fixture(html.getBytes(StandardCharsets.UTF_8), ".html"), "archive.html", 0, 80);

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { androidToolchainEnvironment } from './android-toolchain.mjs';
+import { androidMarkdownDependencies } from './android-markdown-dependencies.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const env = androidToolchainEnvironment();
@@ -37,9 +38,10 @@ async function sources(directory) {
   const entries = await fs.readdir(directory, { withFileTypes: true });
   return (await Promise.all(entries.map(entry => entry.isDirectory() ? sources(path.join(directory, entry.name)) : entry.name.endsWith('.java') ? [path.join(directory, entry.name)] : []))).flat();
 }
-const cp = [path.join(output, 'pdfbox/classes.jar'), path.join(output, 'lib/jsoup-1.18.3.jar'), path.join(libraries, '*'), path.join(env.ANDROID_SDK_ROOT || env.ANDROID_HOME, 'platforms/android-36/android.jar')].join(path.delimiter);
+const cp = [path.join(output, 'pdfbox/classes.jar'), path.join(output, 'lib/jsoup-1.18.3.jar'), ...await androidMarkdownDependencies(root), path.join(libraries, '*'), path.join(env.ANDROID_SDK_ROOT || env.ANDROID_HOME, 'platforms/android-36/android.jar')].join(path.delimiter);
 const files = [
   'android/app/src/main/java/cn/readage/app/NativeDocumentParser.java',
+  'android/app/src/main/java/cn/readage/app/NativeMarkdownDocument.java',
   'android/app/src/main/java/cn/readage/app/NativeStructuredDocumentParser.java',
   'android/app/src/main/java/cn/readage/app/NativeEpubCleaning.java',
   'android/app/src/main/java/cn/readage/app/NativeFileStore.java',
@@ -52,4 +54,7 @@ run(java('javac'), ['-encoding', 'UTF-8', '-cp', cp, '-d', path.join(output, 'cl
 const result = spawnSync(java('java'), [`-Dreadage.host.cache=${path.join(output, 'cache')}`, '-cp', [path.join(output, 'classes'), cp].join(path.delimiter),
   'org.junit.runner.JUnitCore', 'cn.readage.app.NativeDocumentParserTest'], { cwd: root, env, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
 const report = `${result.stdout || ''}${result.stderr || ''}\nActual Android PDFBox/text/HTML parser on JVM with explicit Android filesystem/log/geometry seams; not a device test.\n`;
-await fs.writeFile(path.join(output, 'report.log'), report); process.stdout.write(report); process.exit(result.status ?? 1);
+await fs.writeFile(path.join(output, 'report.log'), report); process.stdout.write(report);
+if (result.status !== 0) process.exit(result.status ?? 1);
+const comparison = run(process.execPath, ['--import', 'tsx', 'scripts/compare-markdown-platforms.ts', path.join(output, 'cache/markdown-parity.json')]);
+process.stdout.write(comparison.stdout);

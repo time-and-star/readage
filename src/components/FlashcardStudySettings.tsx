@@ -14,6 +14,8 @@ interface FlashcardStudySettingsProps {
   introducedToday: number;
   remainingNewCount: number;
   onSaveLimit: (limit: number | null) => Promise<void>;
+  onSaveAutoSpeakCount: (count: number) => Promise<void>;
+  onSaveDesiredRetention?: (value: number) => Promise<void>;
   onImportWords: (canonicalWordIds: string[]) => Promise<{ addedCount: number; existingCount: number; enrolledCount: number }>;
   existingWordIds: readonly string[];
   managedWordIds: readonly string[];
@@ -24,7 +26,7 @@ interface FlashcardStudySettingsProps {
 
 type WordListFormat = 'text' | 'csv' | 'tsv' | 'json' | 'auto';
 type BusyOperation = 'saving' | 'reading' | 'previewing' | 'importing' | 'updating';
-type SettingsView = 'home' | 'daily' | 'import' | 'preview' | 'done' | 'manage';
+type SettingsView = 'home' | 'daily' | 'autoSpeak' | 'intervals' | 'import' | 'preview' | 'done' | 'manage' | 'guide';
 interface WordListPreview {
   words: string[];
   existingIds: string[];
@@ -36,12 +38,17 @@ interface WordListPreview {
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const PRESET_LIMITS = [10, 20, 50, 100, null];
+const AUTO_SPEAK_COUNTS = [0, 1, 2, 3];
+const RETENTION_PRESETS = [
+  { percent: 85, label: '较宽松' }, { percent: 90, label: '均衡' },
+  { percent: 93, label: '更稳' }, { percent: 95, label: '更密集' },
+];
 const normalizeId = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
 const errorMessage = (cause: unknown, fallback: string) => cause instanceof Error && cause.message ? cause.message : fallback;
 
 export function FlashcardStudySettings({
   open, onClose, preferences,
-  onSaveLimit, onImportWords, existingWordIds, managedWordIds, memoryStates = [], canonicalWordIds, onUpdateWords,
+  onSaveLimit, onSaveAutoSpeakCount, onSaveDesiredRetention, onImportWords, existingWordIds, managedWordIds, memoryStates = [], canonicalWordIds, onUpdateWords,
 }: FlashcardStudySettingsProps) {
   const id = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -63,6 +70,10 @@ export function FlashcardStudySettings({
   const [limitText, setLimitText] = useState(String(preferences.dailyNewWordLimit ?? 10));
   const [unlimited, setUnlimited] = useState(preferences.dailyNewWordLimit === null);
   const [limitError, setLimitError] = useState<string | null>(null);
+  const [autoSpeakCount, setAutoSpeakCount] = useState(preferences.autoSpeakCount ?? 0);
+  const [autoSpeakError, setAutoSpeakError] = useState<string | null>(null);
+  const [retentionText, setRetentionText] = useState(String(Math.round((preferences.desiredRetention ?? 0.9) * 100)));
+  const [retentionError, setRetentionError] = useState<string | null>(null);
   const [sourceText, setSourceText] = useState('');
   const [sourceFormat, setSourceFormat] = useState<WordListFormat>('auto');
   const [fileName, setFileName] = useState('');
@@ -87,6 +98,9 @@ export function FlashcardStudySettings({
   const validLimit = unlimited || (/^\d+$/.test(limitText) && Number.isSafeInteger(limitNumber) && limitNumber >= 0);
   const selectedLimit = unlimited ? null : validLimit ? limitNumber : undefined;
   const changedLimit = validLimit && selectedLimit !== preferences.dailyNewWordLimit;
+  const retentionPercent = Number(retentionText);
+  const validRetention = /^\d+$/.test(retentionText) && Number.isInteger(retentionPercent) && retentionPercent >= 80 && retentionPercent <= 97;
+  const changedRetention = validRetention && retentionPercent / 100 !== (preferences.desiredRetention ?? 0.9);
   const previewStale = !!preview && preview.libraryKey !== libraryKey && !imported;
   const previewCounts = useMemo(() => {
     if (!preview) return null;
@@ -104,6 +118,10 @@ export function FlashcardStudySettings({
     setLimitText(String(currentPreferences.dailyNewWordLimit ?? 10));
     setUnlimited(currentPreferences.dailyNewWordLimit === null);
     setLimitError(null);
+    setAutoSpeakCount(currentPreferences.autoSpeakCount ?? 0);
+    setAutoSpeakError(null);
+    setRetentionText(String(Math.round((currentPreferences.desiredRetention ?? 0.9) * 100)));
+    setRetentionError(null);
     setSourceText('');
     setSourceFormat('auto');
     setFileName('');
@@ -190,6 +208,18 @@ export function FlashcardStudySettings({
     setLimitError(null);
     setView('daily');
   };
+  const openAutoSpeak = () => {
+    if (busyRef.current) return;
+    setAutoSpeakCount(preferencesRef.current.autoSpeakCount ?? 0);
+    setAutoSpeakError(null);
+    setView('autoSpeak');
+  };
+  const openIntervals = () => {
+    if (busyRef.current) return;
+    setRetentionText(String(Math.round((preferencesRef.current.desiredRetention ?? 0.9) * 100)));
+    setRetentionError(null);
+    setView('intervals');
+  };
   const clearImportFeedback = () => {
     setPreview(null);
     setPreviewError(null);
@@ -209,6 +239,32 @@ export function FlashcardStudySettings({
       if (isCurrentOperation(token)) setView('home');
     } catch (cause) {
       if (isCurrentOperation(token)) setLimitError(errorMessage(cause, '保存失败，请重试。'));
+    } finally { finishOperation(token); }
+  };
+
+  const saveAutoSpeakCount = async () => {
+    const token = beginOperation('saving');
+    if (token === null) return;
+    setAutoSpeakError(null);
+    try {
+      await onSaveAutoSpeakCount(autoSpeakCount);
+      if (isCurrentOperation(token)) setView('home');
+    } catch (cause) {
+      if (isCurrentOperation(token)) setAutoSpeakError(errorMessage(cause, '保存失败，请重试。'));
+    } finally { finishOperation(token); }
+  };
+
+  const saveDesiredRetention = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!validRetention || !onSaveDesiredRetention) return;
+    const token = beginOperation('saving');
+    if (token === null) return;
+    setRetentionError(null);
+    try {
+      await onSaveDesiredRetention(retentionPercent / 100);
+      if (isCurrentOperation(token)) setView('home');
+    } catch (cause) {
+      if (isCurrentOperation(token)) setRetentionError(errorMessage(cause, '保存失败，请重试。'));
     } finally { finishOperation(token); }
   };
 
@@ -290,7 +346,7 @@ export function FlashcardStudySettings({
 
   if (!open) return null;
 
-  const title = { home: '学习设置', daily: '每日新词', import: '导入词表', preview: '确认词表', done: '导入完成', manage: '词表管理' }[view];
+  const title = { home: '学习设置', daily: '每日新词', autoSpeak: '自动朗读', intervals: '复习间隔', import: '导入词表', preview: '确认词表', done: '导入完成', manage: '词表管理', guide: '学习说明' }[view];
   const dailySummary = preferences.dailyNewWordLimit === null ? '不限' : preferences.dailyNewWordLimit === 0 ? '仅复习' : `${preferences.dailyNewWordLimit} 个 / 天`;
 
   return <dialog ref={dialogRef} className="flashcard-settings" aria-labelledby={`${id}-title`} aria-modal="true" aria-busy={!!busy} tabIndex={-1}
@@ -308,9 +364,32 @@ export function FlashcardStudySettings({
     <div ref={bodyRef} className="flashcard-settings__body">
       {view === 'home' && <div className="flashcard-settings__menu">
         <button type="button" disabled={!!busy} onClick={openDaily}><span>每日新词</span><span className="flashcard-settings__menu-value">{dailySummary}</span><ChevronRight size={17} aria-hidden="true" /></button>
+        <button type="button" disabled={!!busy} onClick={openIntervals}><span>复习间隔</span><span className="flashcard-settings__menu-value">目标 {Math.round((preferences.desiredRetention ?? 0.9) * 100)}%</span><ChevronRight size={17} aria-hidden="true" /></button>
+        <button type="button" disabled={!!busy} onClick={openAutoSpeak}><span>自动朗读</span><span className="flashcard-settings__menu-value">{preferences.autoSpeakCount ?? 0} 遍</span><ChevronRight size={17} aria-hidden="true" /></button>
         <button type="button" disabled={!!busy} onClick={() => { if (!busyRef.current) setView('import'); }}><span>导入词表</span><ChevronRight size={17} aria-hidden="true" /></button>
         <button type="button" disabled={!!busy} onClick={() => { if (!busyRef.current) setView('manage'); }}><span>词表管理</span><ChevronRight size={17} aria-hidden="true" /></button>
+        <button type="button" disabled={!!busy} onClick={() => { if (!busyRef.current) setView('guide'); }}><span>学习说明</span><ChevronRight size={17} aria-hidden="true" /></button>
       </div>}
+
+      {view === 'guide' && <section className="flashcard-settings__page flashcard-settings__guide">
+        <p>先在心里回忆释义，再选择“认识”“记不稳”或“不认识”。</p>
+        <dl>
+          <div><dt>认识</dt><dd>看答案前独立、准确地想起。</dd></div>
+          <div><dt>记不稳</dt><dd>看答案前独立想对了，但费力、犹豫或不够稳；没想起来应选“不认识”。</dd></div>
+          <div><dt>不认识</dt><dd>没想起，或看答案才想起。</dd></div>
+        </dl>
+        <p>翻面核对后，判断不符可点“修改判断”，在这三项中重新选择。修改不会多算一次回忆。</p>
+        <details className="flashcard-settings__guide-more"><summary>巩固与复习安排</summary>
+        <p>需要巩固的词会在本次学习里反复出现。先练其他词，再回来回忆，无需等待计时。</p>
+        <p>本轮不认识约隔 3 词、记不稳约隔 5 词、仍需巩固的认识约隔 8 词再练；词少时缩短间隔，多词同时到点按先后安排。巩固时累计三次选“认识”后，安排 24 小时确认；模型需要更早复习时先复习，再协调次日确认。不认识会重新累计，记不稳保留已完成的进度。熟词记不稳仍按模型安排后续间隔，不强制回到三轮。三次只是完成本次练习，长期熟悉还需要跨天复习。</p>
+        <p>判断的是翻面前是否想对。刚看过同词答案、未满 60 秒且期间未完成其他词卡作答的重练，只推进练习进度，不增加正式回忆或更新记忆稳定性；同日其他有效回忆仍会更新模型。60 秒是本应用的练习分流规则，不保证回忆一定独立。背面改判修正同一次作答。</p>
+        </details>
+        <details className="flashcard-settings__guide-more"><summary>熟练度与阅读确认</summary>
+        <p>词卡、单词记忆记录和我的学习共用同一熟练度：L0–L4 与分数根据记忆稳定性计算；时间经过只增加当前遗忘风险，不自动降低等级。本轮三点只表示巩固进度，完成三次不会直接升到 L4。</p>
+        <p>阅读中的延迟确认也更新同一个单词，并沿用复习间隔设置。阅读题是带语境的选择题，保留题型、提示和答案暴露记录；当前答对沿用 Hard 映射，这属于阅读任务的产品规则，不表示用户一定回忆费力，也不等于无提示回忆。当前文章新接触的词只能作即时练习，猜中、跳过和即时练习不会提高熟练度。旧评分按原规则解释，新规则从下一次评分起使用。</p>
+        <p>长期分数不是掌握百分比，当前风险也是默认模型估计，尚未按你的真实学习记录拟合。</p>
+        </details>
+      </section>}
 
       {view === 'manage' && <FlashcardWordManager words={managedWordIds}
         memoryStates={memoryStates} canonicalWordIds={canonicalWordIds}
@@ -331,6 +410,40 @@ export function FlashcardStudySettings({
           {limitError && <p className="flashcard-settings__error" role="alert">{limitError}</p>}
           <button type="submit" className="flashcard-settings__primary" disabled={!!busy || !validLimit || (!changedLimit && !limitError)}>{busy === 'saving' ? '保存中…' : limitError ? '重试保存' : '保存'}</button>
         </form>
+      </section>}
+
+      {view === 'intervals' && <section className="flashcard-settings__page">
+        <form onSubmit={event => void saveDesiredRetention(event)}>
+          <label className="flashcard-settings__retention-label" htmlFor={`${id}-retention`}>目标保持率</label>
+          <label className="flashcard-settings__quantity" htmlFor={`${id}-retention`}>
+            <input id={`${id}-retention`} aria-label="目标保持率百分比" type="number" min={80} max={97} step={1} inputMode="numeric" value={retentionText} disabled={!!busy}
+              aria-invalid={!validRetention} aria-describedby={`${id}-retention-help`} onChange={event => { setRetentionText(event.target.value); setRetentionError(null); }} />
+            <span>%</span>
+          </label>
+          <div className="flashcard-settings__limits flashcard-settings__limits--retention" role="group" aria-label="保持率预设">
+            {RETENTION_PRESETS.map(preset => <button type="button" key={preset.percent} disabled={!!busy} aria-pressed={validRetention && retentionPercent === preset.percent}
+              onClick={() => { setRetentionText(String(preset.percent)); setRetentionError(null); }}><span>{preset.percent}%</span><small>{preset.label}</small></button>)}
+          </div>
+          <p id={`${id}-retention-help`} className="flashcard-settings__note">希望下次复习时仍记住的比例，可选 80%–97%。完成巩固后，模型间隔早于 24 小时时会提前复习；目标越高通常复习越密集。</p>
+          <p className="flashcard-settings__note">只影响之后评分产生的间隔，保存后不会立即修改已有到期日。</p>
+          {retentionError && <p className="flashcard-settings__error" role="alert">{retentionError}</p>}
+          <div className="flashcard-settings__save-actions">
+            <button type="button" className="flashcard-settings__secondary" disabled={!!busy} onClick={goBack}>取消</button>
+            <button type="submit" className="flashcard-settings__primary" disabled={!!busy || !onSaveDesiredRetention || !validRetention || (!changedRetention && !retentionError)}>{busy === 'saving' ? '保存中…' : retentionError ? '重试保存' : '保存'}</button>
+          </div>
+        </form>
+      </section>}
+
+      {view === 'autoSpeak' && <section className="flashcard-settings__page">
+        <div className="flashcard-settings__limits flashcard-settings__limits--repeats" role="group" aria-label="自动朗读次数">
+          {AUTO_SPEAK_COUNTS.map(count => <button key={count} type="button" disabled={!!busy} aria-pressed={autoSpeakCount === count}
+            onClick={() => { setAutoSpeakCount(count); setAutoSpeakError(null); }}>{count} 遍</button>)}
+        </div>
+        <p className="flashcard-settings__note">每张词卡展示时朗读词头；0 遍关闭自动朗读，卡片喇叭仍可手动播放。</p>
+        {autoSpeakError && <p className="flashcard-settings__error" role="alert">{autoSpeakError}</p>}
+        <button type="button" className="flashcard-settings__primary" disabled={!!busy || autoSpeakCount === (preferences.autoSpeakCount ?? 0)} onClick={() => void saveAutoSpeakCount()}>
+          {busy === 'saving' ? '保存中…' : autoSpeakError ? '重试保存' : '保存'}
+        </button>
       </section>}
 
       {view === 'import' && <section className="flashcard-settings__page">

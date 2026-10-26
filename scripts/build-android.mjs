@@ -54,6 +54,7 @@ fs.copyFileSync(path.join(root, 'LICENSE'), path.join(frontendLicenses, 'ReadAge
 fs.copyFileSync(path.join(root, 'NOTICE'), path.join(frontendLicenses, 'ReadAge-NOTICE.txt'));
 fs.copyFileSync(coreJsLicense, path.join(frontendLicenses, 'core-js-LICENSE.txt'));
 fs.copyFileSync(path.join(root, 'android/third-party/js-mdict-LICENSE.txt'), path.join(frontendLicenses, 'js-mdict-LICENSE.txt'));
+fs.copyFileSync(path.join(root, 'android/third-party/commonmark-LICENSE.txt'), path.join(frontendLicenses, 'commonmark-LICENSE.txt'));
 const assets = path.join(root, 'android', 'app', 'src', 'main', 'assets', 'readage-dictionaries');
 const resources = [
   ['vendor/nextword-local-dictionary/data/dictionary.pack', 'ecdict/dictionary.pack'],

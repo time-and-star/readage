@@ -4,6 +4,8 @@ const config: CapacitorConfig = {
   appId: 'cn.readage.app',
   appName: 'ReadAge',
   webDir: 'dist-android',
+  // The Capacitor bridge's debug logger prints full plugin arguments, including BYOK credentials.
+  loggingBehavior: 'none',
   android: { allowMixedContent: false },
   // The product uses a light canvas: LIGHT requests dark system-bar icons.
   plugins: { SystemBars: { style: 'LIGHT' } },

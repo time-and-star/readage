@@ -27,6 +27,7 @@ import type { LocalDataBackup } from '../lib/localDataBackup';
 import { flushPendingPersistentWrites } from '../lib/storage';
 import { IS_ANDROID } from '../lib/platform/runtime';
 import { nativeFiles, pickNativeFile } from '../lib/platform/nativeFiles';
+import { RECOGNITION_LEVEL_LABELS } from '../lib/wordMemoryDetails';
 
 interface MyLearningScreenProps {
   onCheckUpdates?: () => void;
@@ -314,11 +315,12 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
           </summary>
           <div className="pb-2 space-y-3 text-xs leading-6">
             <dl className="flex flex-wrap gap-x-6 gap-y-1">
-              <div className="flex gap-2"><dt>较熟悉</dt><dd className="font-semibold tabular-nums text-[#443A30]">{proficienciesLoading || proficienciesError ? '—' : masteredWordsCount}</dd></div>
-              <div className="flex gap-2"><dt>学习中</dt><dd className="font-semibold tabular-nums text-[#443A30]">{proficienciesLoading || proficienciesError ? '—' : learningWordsCount}</dd></div>
+              <div className="flex gap-2"><dt>{RECOGNITION_LEVEL_LABELS[4]}（L4）</dt><dd className="font-semibold tabular-nums text-[#443A30]">{proficienciesLoading || proficienciesError ? '—' : masteredWordsCount}</dd></div>
+              <div className="flex gap-2"><dt>未达 L4</dt><dd className="font-semibold tabular-nums text-[#443A30]">{proficienciesLoading || proficienciesError ? '—' : learningWordsCount}</dd></div>
               <div className="flex gap-2"><dt>近 7 天记录</dt><dd className="font-semibold tabular-nums text-[#443A30]">{recentEventCount}</dd></div>
             </dl>
-            <p>已学习指已有正式回忆记录的词，包含暂停或移出后保留的历史；待学新词显示查词或导入后的完整待学词库，不随每日数量设置变化。待复习仅计正式回忆后已到期且未暂停或移出的词；单纯阅读或查词不会算作正式回忆。熟悉度是估计，不代表全部掌握。</p>
+            <p>已学习指已有正式回忆记录的词，包含暂停或移出后保留的历史；待学新词显示尚未开始词卡的查词或导入词库，不随每日数量设置变化。待复习计已到期且未暂停或移出的回忆和练习确认；单纯阅读或查词不会算作正式回忆，即时练习也不增加已学习数量。长期熟练度按记忆稳定性计算，时间经过只增加遗忘风险，不自动降级；分数是估计，不代表全部掌握。</p>
+            <p>长期稳定（L4）与未达 L4 按长期等级划分已学习词。到期是复习时间状态，与长期等级可重叠；待复习数量不能与等级数量相加。</p>
             <p>每篇推荐文章只覆盖部分待复习词，读完后仅更新实际学习的词。</p>
           </div>
         </details>

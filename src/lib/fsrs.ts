@@ -9,6 +9,7 @@
   type ReviewLog,
 } from 'ts-fsrs';
 import type { FsrsMemory, FsrsReviewLog, WordProficiency } from '../types';
+import { scheduleFlashcardReview, type FlashcardSchedulingPolicy, type LearningCard } from './flashcardScheduling';
 
 export const FSRS_ALGORITHM_VERSION = 'FSRS-6' as const;
 export const FSRS_IMPLEMENTATION_VERSION = 'ts-fsrs@5.4.1' as const;
@@ -20,12 +21,9 @@ export const FSRS_PARAMETERS_ID =
   'sha256:785b5c8af1c564ff789d975bd226b366a1fdf49380b9fa9f15dd939af126fe87';
 
 /**
- * FSRS-6 parameters used by the app.
- *
- * Short-term scheduler steps are disabled; word cards rehearse forgotten words
- * within the current session without extra long-term review credit. Canonical FSRS
- * scheduler still owns stability, difficulty, due dates, lapses, and review
- * state for every long-term review event.
+ * Legacy FSRS-6 policy retained for old logs and non-flashcard integrations.
+ * New word-card reviews carry a versioned policy from flashcardScheduling,
+ * with persisted Learning/Relearning steps and the user's retention target.
  */
 export const FSRS_PARAMETERS = generatorParameters({
   request_retention: 0.9,
@@ -49,11 +47,13 @@ export function calculateFsrsForgettingCurve(elapsedDays: number, stabilityDays:
 
 /** Run the canonical app-wide FSRS scheduler. */
 export function scheduleFsrsReview(
-  card: Card,
+  card: LearningCard,
   at: Date,
   rating: Grade,
-): { card: Card; log: ReviewLog } {
-  return scheduler.next(card, at, rating);
+  scheduling?: FlashcardSchedulingPolicy,
+  preserveMemory = false,
+): { card: LearningCard; log: ReviewLog } {
+  return scheduling ? scheduleFlashcardReview(card, at, rating, scheduling, preserveMemory) : scheduler.next(card, at, rating);
 }
 
 function finite(value: unknown, fallback: number): number {

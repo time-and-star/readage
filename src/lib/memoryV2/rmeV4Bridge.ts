@@ -119,7 +119,7 @@ function clampPercent(value: unknown): number {
 /** A lookup records assistance; only recall sources establish recall evidence. */
 export function hasFormalRecallEvidence(state: WordMemoryState | null): boolean {
   if (!state) return false;
-  return state.fsrsReviews.some((review) => review.source !== 'reading_lookup')
+  return state.fsrsReviews.some((review) => review.source !== 'reading_lookup' && review.modelApplied !== false)
     // Older migrations can retain a reviewed card without reconstructable logs.
     || state.fsrsCard.reps > state.fsrsReviews.length;
 }
@@ -162,13 +162,14 @@ export function rmeProfileForState(state: WordMemoryState | null): RmeMemoryProf
 
   const profile = createEmptyRmeProfile();
   for (const review of state.fsrsReviews) {
+    if (review.modelApplied === false) continue;
     if (review.rating <= 1) profile.failedExposureCount += 1;
     else profile.successfulExposureCount += 1;
   }
   profile.lastExposureAt = state.lastReview;
   profile.lastEffectiveExposureAt = state.lastReview;
   profile.firstUnconfirmedExposureAt = null;
-  const recentReviews = state.fsrsReviews.slice(-3);
+  const recentReviews = state.fsrsReviews.filter(review => review.modelApplied !== false).slice(-3);
   profile.consecutiveAgain = 0;
   for (let index = recentReviews.length - 1; index >= 0; index -= 1) {
     if (recentReviews[index].rating > 1) break;

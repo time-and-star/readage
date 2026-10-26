@@ -36,7 +36,9 @@ export async function readExternalLearningActivity(storage: MemoryStorage, userI
 }
 
 /** Write-ahead journal: a crash at any derived write is repaired by replay. */
-export async function persistJournal(storage: MemoryStorage, journal: WordJournal, timezone: string, now: Date) {
+export async function persistJournal(storage: MemoryStorage, journal: WordJournal, timezone: string, now: Date,
+  newFailureDates: ReadonlySet<string> = new Set()) {
+  const pendingFailures = new Set([...journal.pendingFailureDates ?? [], ...newFailureDates]);
   const verifications = (await readVerificationHistory(storage, journal.userId)).filter(attempt => attempt.wordId === journal.wordId);
   const currentState = await storage.getMemoryState(journal.userId, journal.wordId);
   const passiveReadingReviews = mergePassiveReviewAudit(journal.baselineState?.passiveReadingReviews,
@@ -45,7 +47,8 @@ export async function persistJournal(storage: MemoryStorage, journal: WordJourna
   // authoritative even if this older journal no longer has its daily evidence.
   const replayJournal = passiveReadingReviews.length && journal.baselineState
     ? { ...journal, baselineState: { ...journal.baselineState, passiveReadingReviews } } : journal;
-  const result = replayWordJournal(replayJournal, timezone, now, verifications);
+  const result = replayWordJournal(replayJournal, timezone, now, verifications,
+    currentState?.fsrsReviews ?? [], pendingFailures);
   if (passiveReadingReviews.length) result.state.passiveReadingReviews = mergePassiveReviewAudit(passiveReadingReviews,
     result.state.passiveReadingReviews);
   for (const evidence of result.daily) {
@@ -57,6 +60,12 @@ export async function persistJournal(storage: MemoryStorage, journal: WordJourna
     await storage.saveRawEvents(result.raw.filter(event => event.localDate === date));
   }
   await storage.saveMemoryState(result.state);
+  // Clear only after every derived write succeeds. A retry must still know that
+  // an already-journaled failure may supersede an older saved Again timestamp.
+  if (journal.pendingFailureDates?.length) {
+    const { pendingFailureDates: _pending, ...settled } = journal;
+    await storage.setMeta?.(journalKey(journal.userId, journal.wordId), settled);
+  }
 }
 
 export async function appendJournalEvents(storage: MemoryStorage, events: TimedWordEvent[], timezone: string, now: Date, create = false): Promise<boolean> {
@@ -75,17 +84,22 @@ export async function appendJournalEvents(storage: MemoryStorage, events: TimedW
       baselineRaw: await storage.getRawEventsByDateRange(userId, wordId, '0001-01-01', '9999-12-31'), events: [] };
   }
   const existing = new Map(journal.events.map(event => [eventKey(event), event]));
+  const known = new Set([...journal.baselineRaw, ...journal.events].map(eventKey));
+  const newFailureDates = new Set(events.filter(event => event.eventType === 'click' && !event.lookupOnly
+    && !known.has(eventKey(event))).map(event => event.localDate));
   for (const event of events) {
     const prior = existing.get(eventKey(event));
     const updated = prior ? mergeExposureSnapshot(prior, event) : null;
     if (prior && !updated && JSON.stringify(prior) !== JSON.stringify(event)) throw new Error('查词记录标识冲突。');
     existing.set(eventKey(event), updated ?? event);
   }
-  journal = { ...journal, events: [...existing.values()] };
+  const pendingFailureDates = [...new Set([...journal.pendingFailureDates ?? [], ...newFailureDates])];
+  journal = { ...journal, events: [...existing.values()],
+    ...(pendingFailureDates.length ? { pendingFailureDates } : {}) };
   const index = await storage.getMeta<string[]>(indexKey(userId)) ?? [];
   if (!index.includes(wordId)) await storage.setMeta(indexKey(userId), [...index, wordId]);
   await storage.setMeta(key, journal);
-  await persistJournal(storage, journal, timezone, now);
+  await persistJournal(storage, journal, timezone, now, newFailureDates);
   return true;
 }
 
@@ -113,6 +127,13 @@ export async function importLookupEvents(storage: MemoryStorage, userId: string,
     events.push(event, { ...event, eventType: 'click' });
     groups.set(lookup.lemma, events);
   }
-  for (const events of groups.values()) await appendJournalEvents(storage, events, timezone, now, true);
+  for (const events of groups.values()) {
+    const prior = await storage.getMeta?.<WordJournal>(journalKey(userId, events[0].wordId));
+    const known = new Map([...(prior?.baselineRaw ?? []), ...(prior?.events ?? [])].map(event => [eventKey(event), event]));
+    const incoming = events.map(event => event.eventType !== 'click' ? event
+      : known.has(eventKey(event)) ? { ...event, ...(known.get(eventKey(event))!.lookupOnly ? { lookupOnly: true as const } : {}) }
+      : { ...event, lookupOnly: true as const });
+    await appendJournalEvents(storage, incoming, timezone, now, true);
+  }
   return batch.map(event => event.id);
 }

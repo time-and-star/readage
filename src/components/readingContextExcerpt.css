@@ -1,0 +1,8 @@
+.reading-context-excerpt { min-width: 0; }
+.reading-context-excerpt__label { display: block; margin-bottom: 6px; font-size: 11px; color: #85786b; }
+.reading-context-excerpt__text { overflow-wrap: anywhere; }
+.reading-context-excerpt mark { color: inherit; background: #eae5d8; font-weight: 600; }
+.reading-context-excerpt__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 20px; margin-top: 4px; }
+.reading-context-excerpt__actions .word-card-action { min-height: 44px; }
+.reading-context-excerpt__toggle { min-height: 44px; text-align: left; font-size: 12px; color: #806d50; text-decoration: underline; text-underline-offset: 3px; }
+.reading-context-excerpt__toggle:focus-visible { outline: 2px solid #9c8868; outline-offset: 2px; border-radius: 2px; }

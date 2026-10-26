@@ -1,0 +1,58 @@
+[
+  {
+    "name": "rich.MD",
+    "source": "---\ntitle: Metadata title\nauthor: A Writer\ntags: [reading]\n---\n# Harbor *Lights*\n\nThe **small** boats carry [readers][paper] and `word_forms`; ~~old~~ stories remain. Escaped \\*stars\\* survive.\n\n- [x] Read the first lesson.\n- [ ] Keep the second lesson.\n  - A nested detail.\n\n1. An ordered detail.\n2. Another detail.\n\n> A quotation stays readable.\n\n| Language | Greeting |\n| --- | --- |\n| French | Bonjour |\n\n```text\nconst answer = 42;\n# not a chapter\n```\n\nA note[^1] belongs to this story.\n\n[^1]: A useful footnote.\n\n[paper]: https://example.invalid/paper\n\n<script>EXECUTABLE_NOISE</script>\n<nav>NAVIGATION_NOISE</nav>\n\nRead: A related story\n",
+    "titles": ["Harbor Lights"],
+    "contains": ["The small boats carry readers and word_forms; old stories remain.", "Escaped *stars* survive.", "Read the first lesson.", "Keep the second lesson.", "A nested detail.", "An ordered detail.", "A quotation stays readable.", "Language · Greeting", "French · Bonjour", "const answer = 42;", "# not a chapter", "A useful footnote."],
+    "absent": ["author:", "Metadata title", "EXECUTABLE_NOISE", "NAVIGATION_NOISE", "https://example.invalid/paper", "[x]", "[ ]", "**", "~~", "```", "Read: A related story", "↩"],
+    "images": 0
+  },
+  {
+    "name": "chapters.markdown",
+    "source": "# Contents\n\n- [First](#first)\n- [Second](#second)\n\n# First\n\nA short first lesson.\n\n## A small section\n\nA section belongs to the first lesson.\n\n# Second\n\nA short second lesson.\n",
+    "titles": ["First", "Second"],
+    "contains": ["A short first lesson.", "A small section", "A section belongs to the first lesson.", "A short second lesson."],
+    "absent": ["Contents", "#first", "#second", "##"],
+    "images": 0
+  },
+  {
+    "name": "pictures.md",
+    "source": "Harbor study\n============\n\nFirst text stays before the picture.\n\n![Harbor boats](data:image/png;base64,{{PNG}} \"Boats at sunset\")\n\nNext text stays after the picture.\n\n![Local map](./maps/harbor.png)\n\n![Remote view](https://example.invalid/view.png \"Distant harbor view\")\n\nAn inline ![Inline map](./inline.png) remains in this sentence.\n",
+    "titles": ["Harbor study"],
+    "contains": ["First text stays before the picture.", "Boats at sunset", "Next text stays after the picture.", "Local map", "Distant harbor view", "An inline Inline map remains in this sentence."],
+    "absent": ["data:image", "base64", "https://example.invalid", "./maps", "!["],
+    "images": 1
+  },
+  {
+    "name": "metadata.md",
+    "source": "---\ntitle: 'A multilingual lesson'\nlayout: post\n---\n海港归航。\n\n日本語の文章を残します。\n\nLes bateaux rentrent au port.\n",
+    "titles": ["A multilingual lesson"],
+    "contains": ["海港归航。", "日本語の文章を残します。", "Les bateaux rentrent au port."],
+    "absent": ["layout:", "title:"],
+    "images": 0
+  },
+  {
+    "name": "headingless.md",
+    "source": "Harbor lessons\n\nA short lesson survives.\n\nThis article was downloaded by calibre from https://example.invalid/story\n",
+    "titles": ["Harbor lessons"],
+    "contains": ["Harbor lessons", "A short lesson survives."],
+    "absent": ["downloaded by calibre"],
+    "images": 0
+  },
+  {
+    "name": "inline-pictures.md",
+    "source": "# Inline pictures\n\nBefore ![Inline boats](data:image/png;base64,{{PNG}} \"Inline caption\") after the picture.\n\n| Picture | Detail |\n| --- | --- |\n| ![Table boats](data:image/png;base64,{{PNG}} \"Table caption\") | Boats return. |\n",
+    "titles": ["Inline pictures"],
+    "contains": ["Before Inline caption after the picture.", "Picture · Detail", "Table caption · Boats return."],
+    "absent": ["data:image", "base64", "!["],
+    "images": 2
+  },
+  {
+    "name": "level-two.md",
+    "source": "## First lesson\n\nA first lesson.\n\n### Minor detail\n\nKeep this detail.\n\n## Second lesson\n\nA second lesson.\n",
+    "titles": ["First lesson", "Second lesson"],
+    "contains": ["A first lesson.", "Minor detail", "Keep this detail.", "A second lesson."],
+    "absent": ["##"],
+    "images": 0
+  }
+]

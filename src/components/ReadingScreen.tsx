@@ -70,7 +70,9 @@ import {
   selectCurrentContinuousArticleId,
 } from '../lib/continuousReading';
 import { useMemoryV2Integration } from '../lib/memoryV2Integration';
-import { createWordCardRequest, fetchWordCard } from '../lib/wordCard';
+import { createWordCardRequest } from '../lib/wordCard';
+import { fetchReadingWordCard } from '../lib/readingWordCard';
+import { normalizeEnglishLookupText } from '../../packages/dictionary/languages/englishSurface';
 import { resolveDictionaryLearningWordId } from '../lib/dictionaryClient';
 import { saveLookupEvidenceOnce, type LookupEvidenceState } from '../lib/lookupEvidence';
 import { formatSelectionQuote, isDesktopReadingContextMenu, READING_TEXT_BLOCK_SELECTOR } from '../lib/readingSelection';
@@ -933,7 +935,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   const openWordCard = useCallback(
     async (wordOrPhrase: string, contextSentence = '', contextArticle: Article = article,
-      onResolved?: (result: GrammarExplanation) => Promise<void>, retryState?: LookupEvidenceState, speechTarget?: SpeechTarget) => {
+      onResolved?: (result: GrammarExplanation) => Promise<void>, retryState?: LookupEvidenceState, speechTarget?: SpeechTarget,
+      clickedTokenIndex?: number) => {
       const request = isEnglishArticle(contextArticle) ? createWordCardRequest(wordOrPhrase, contextSentence)
         : wordOrPhrase.trim() ? { selectedText: wordOrPhrase.trim(), contextSentence } : null;
       if (!request) return;
@@ -953,7 +956,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       setWordCardError(null);
       setLookupRecordStatus(null);
       retryRecordRef.current = null;
-      retryLookupRef.current = () => { void openWordCard(wordOrPhrase, contextSentence, contextArticle, onResolved, evidence, speechTarget); };
+      retryLookupRef.current = () => { void openWordCard(wordOrPhrase, contextSentence, contextArticle, onResolved, evidence, speechTarget, clickedTokenIndex); };
 
       try {
         if (!isEnglishArticle(contextArticle)) {
@@ -962,12 +965,15 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           if (!controller.signal.aborted) setLanguageLookupResult(result);
           return;
         }
-        const result = await fetchWordCard(request, {
+        const readingLookup = await fetchReadingWordCard(request, {
           articleId: contextArticle.id,
           signal: controller.signal,
           forceRefresh: Boolean(retryState),
+          clickedTokenIndex,
         });
         if (controller.signal.aborted) return;
+        const result = readingLookup.card;
+        if (readingLookup.recognizedPhrase) setSelectedText(readingLookup.recognizedPhrase);
         setGrammarResult(result);
         setIsExplaining(false);
         if (onResolved) setLookupRecordStatus(evidence.saved ? '学习记录已保存' : '正在保存学习记录…');
@@ -1052,10 +1058,12 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     // Title lookups have their own occurrence; they must not collide with body paragraph 0.
     const paragraphIndex = Number(paragraphElement?.getAttribute('data-reading-paragraph') ?? -1);
     void openWordCard(cleanWord, paragraph, readingArticle, async result => {
-      const lemma = await resolveDictionaryLearningWordId(cleanWord, result.learningTermRef);
+      const clickedWordRef = normalizeEnglishLookupText(result.wordOrPhrase).toLowerCase() === cleanWord.toLowerCase()
+        ? result.learningTermRef : undefined;
+      const lemma = await resolveDictionaryLearningWordId(cleanWord, clickedWordRef);
       if (learningUnit) await recordWordClick(learningUnit, paragraphIndex, readingArticle.id, { contextText: paragraph.slice(0, 2_000) }, lemma);
       onWordClick?.(lemma, readingArticle.id);
-    }, undefined, speechTarget);
+    }, undefined, speechTarget, tokenIndex);
   };
 
   const copyTextToClipboard = async (text: string): Promise<boolean> => {

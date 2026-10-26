@@ -22,3 +22,13 @@ test('a saved personal shelf never restores a magazine loading state and preserv
   assert.equal(saved.activeSourceId, null);
   assert.equal(saved.catalogPages, 3);
 });
+test('shelf organization survives persisted views without requiring an old archive migration', () => {
+  for (const shelfGrouping of ['none', 'status', 'language', 'topic'] as const) {
+    const saved = { ...defaultLibraryView, tab: 'mine' as const, shelfGrouping };
+    assert.deepEqual(normalizeLibraryView(JSON.parse(JSON.stringify(saved))), saved);
+  }
+  const { shelfGrouping: _absent, ...legacy } = defaultLibraryView;
+  assert.equal(normalizeLibraryView(legacy).shelfGrouping, 'none');
+  assert.equal(normalizeLibraryView({ shelfGrouping: 'invalid' }).shelfGrouping, 'none');
+  assert.equal(normalizeLibraryView({ shelfGrouping: null }).shelfGrouping, 'none');
+});

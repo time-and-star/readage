@@ -53,11 +53,18 @@ public final class NativeDocumentParser {
             String text = readText(source);
             String trimmed=text.trim();String head=trimmed.substring(0,Math.min(240,trimmed.length())).toLowerCase(Locale.ROOT);
             boolean html = Arrays.asList("html", "htm", "xhtml").contains(extension)||head.startsWith("<!doctype")||head.startsWith("<html")||head.startsWith("<article");
-            result = html?NativeStructuredDocumentParser.parseHtml(text,title,id,offset,limit,(bytes,imageName,alt,position)->image(store,bytes,alt,position)):plain(text,title,id,offset);
-            originalExtension = html ? "html" : "txt";
+            boolean markdown = extension.equals("md") || extension.equals("markdown");
+            try {
+                result = html || markdown ? NativeStructuredDocumentParser.parseHtml(markdown ? NativeMarkdownDocument.html(text,title) : text,title,id,offset,limit,(bytes,imageName,alt,position)->image(store,bytes,alt,position)) : plain(text,title,id,offset);
+            } catch (IOException error) {
+                if (markdown && error.getMessage() != null && error.getMessage().startsWith("HTML ")) throw new IOException(error.getMessage().replace("HTML", "Markdown"), error);
+                throw error;
+            }
+            if (markdown) result.put("format", "markdown");
+            originalExtension = markdown ? "md" : html ? "html" : "txt";
         } else if (extension.equals("pdf")) throw new IOException("这个文件不是完整的 PDF，请重新下载或选择原文件。");
-        else if (extension.equals("json") || extension.equals("zip")) throw new IOException("JSON / ZIP 学习备份请使用“我的学习”里的导入备份。阅读文件请使用 EPUB、PDF、DOCX、HTML 或 TXT。");
-        else throw new IOException("不支持这个文件格式。请使用 DOCX、EPUB、PDF、HTML 或 TXT；旧版 DOC 请先另存为 DOCX。");
+        else if (extension.equals("json") || extension.equals("zip")) throw new IOException("JSON / ZIP 学习备份请使用“我的学习”里的导入备份。阅读文件请使用 EPUB、PDF、DOCX、HTML、TXT 或 Markdown（MD）。");
+        else throw new IOException("不支持这个文件格式。请使用 DOCX、EPUB、PDF、HTML、TXT 或 Markdown（MD）；旧版 DOC 请先另存为 DOCX。");
         store.retainOriginal(source, id, originalExtension);
         return result;
     }

@@ -4,6 +4,14 @@ import { createOfflineFetch, isOfflineApiAllowed } from '../server/offline';
 import { createNativeDatabaseTransport } from '../src/lib/platform/nativeDatabase';
 import { createNativeAppFetch } from '../src/lib/platform/nativeFetch';
 
+test('disconnected Bot has no provider API exception in packaged apps', () => {
+  for (const path of ['/api/bot/config', '/api/bot/complete', '/api/bot/proxy']) {
+    for (const method of ['GET', 'POST', 'DELETE', 'OPTIONS']) {
+      assert.equal(isOfflineApiAllowed(path, method), false, `${method} ${path}`);
+    }
+  }
+});
+
 test('offline desktop boundary preserves local records and blocks cloud writes and sync', () => {
   for (const endpoint of ['/api/local-data/restore', '/api/dictionary/lookup', '/api/tts/synthesize', '/api/translation']) assert.equal(isOfflineApiAllowed(endpoint, 'POST'), true);
   for (const endpoint of ['/api/tutor', '/api/realtime/step', '/api/magazines/sync', '/api/magazines/feed/refresh']) assert.equal(isOfflineApiAllowed(endpoint, 'POST'), false);

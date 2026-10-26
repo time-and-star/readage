@@ -96,6 +96,20 @@ export class MemoryV2Store {
       throw error;
     }
   }
+  async saveFlashcardAutoSpeakCount(autoSpeakCount: number) {
+    await this.ensureReady();
+    try {
+      const preferences = await withMemoryWriteLock(() => this.system.saveFlashcardAutoSpeakCount(this.userId, autoSpeakCount));
+      this.storageError = null;
+      this.notifyFlashcardChange();
+      return preferences;
+    } catch (error) {
+      this.invalidateLearningSnapshot();
+      this.storageError = isQuotaError(error) ? '存储空间不足，词卡设置暂未保存。' : '词卡设置暂未保存，请重试。';
+      this.bumpVersion();
+      throw error;
+    }
+  }
   async importFlashcardWords(canonicalWordIds: string[], existingCanonicalWordIds?: ReadonlyMap<string, string>) {
     await this.ensureReady();
     try {
@@ -107,6 +121,19 @@ export class MemoryV2Store {
     } catch (error) {
       this.storageError = isQuotaError(error) ? '存储空间不足，词表尚未完整导入，请重试。' : '词表尚未完整导入，请重试。';
       this.notifyFlashcardChange();
+      throw error;
+    }
+  }
+  async saveFlashcardDesiredRetention(desiredRetention: number) {
+    await this.ensureReady();
+    try {
+      const preferences = await withMemoryWriteLock(() => this.system.saveFlashcardDesiredRetention(this.userId, desiredRetention));
+      this.storageError = null;
+      this.notifyFlashcardChange();
+      return preferences;
+    } catch (error) {
+      this.storageError = '复习间隔设置暂未保存，请重试。';
+      this.bumpVersion();
       throw error;
     }
   }
@@ -447,6 +474,7 @@ export class MemoryV2Store {
       articleId,
       occurrenceId,
       eventType: 'click',
+      lookupOnly: true,
       occurredAt: this.now().toISOString(),
       localDate: this.getLocalDate(),
     });

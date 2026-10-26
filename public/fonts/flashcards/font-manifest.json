@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-24",
+  "conversion": "fontTools 4.61.1 WOFF2; no subsetting, no outline or name edits",
+  "fonts": [
+    {
+      "file": "ComicNeue-Regular.woff2",
+      "version": "Version 2.003",
+      "source": "https://raw.githubusercontent.com/google/fonts/3dd78844021e948ceb633d1dcee3f7885561b5d9/ofl/comicneue/ComicNeue-Regular.ttf",
+      "sourceBytes": 57248,
+      "bytes": 24200,
+      "sha256": "80d2b6631965a41b9b864c36e74c856d9be56533710ec159f7ad2db5433aff0e",
+      "sourceSha256": "a0ee5a37c8b27c4db0700137d928598b1e23b0089e1546a8961909176b779360",
+      "glyphCount": 328,
+      "unicodeCodePoints": 303,
+      "cjkCodePoints": 0,
+      "missingIpaSample": "əɒʃʒθŋʌʊɪɑɜɚɔɛɐˈˌː",
+      "missingChineseSample": "释义例句搭配同反义词认识不认识放弃抛弃离弃他决定放弃这个计划希望被遗弃龘麤䶮𠮷",
+      "completeSourceCmapPreserved": true
+    },
+    {
+      "file": "ComicNeue-Bold.woff2",
+      "version": "Version 2.003",
+      "source": "https://raw.githubusercontent.com/google/fonts/3dd78844021e948ceb633d1dcee3f7885561b5d9/ofl/comicneue/ComicNeue-Bold.ttf",
+      "sourceBytes": 55716,
+      "bytes": 23604,
+      "sha256": "96a2bc9113041f1dfe56f88dce584f73842d66525a28e9b7c96b7683048af8d4",
+      "sourceSha256": "3e7e5fccfd7e0788f317b43312151c1bd5cf058c9697a8d83eac3939050bd61e",
+      "glyphCount": 328,
+      "unicodeCodePoints": 303,
+      "cjkCodePoints": 0,
+      "missingIpaSample": "əɒʃʒθŋʌʊɪɑɜɚɔɛɐˈˌː",
+      "missingChineseSample": "释义例句搭配同反义词认识不认识放弃抛弃离弃他决定放弃这个计划希望被遗弃龘麤䶮𠮷",
+      "completeSourceCmapPreserved": true
+    },
+    {
+      "file": "LXGWWenKai-Regular.woff2",
+      "version": "Version 1.530; October 18, 2026",
+      "source": "https://github.com/lxgw/LxgwWenKai/releases/download/v1.530/LXGWWenKai-Regular.ttf",
+      "sourceBytes": 25928940,
+      "bytes": 8098840,
+      "sha256": "3a647bdac149d98279376f6f105401239e833ba7f6e09e7c2920b0071667cd84",
+      "sourceSha256": "2d73eea94ad808999d90c0000c239a84a33b09d4bc6ab6c5b8bbf1eda8a7fc8b",
+      "glyphCount": 47336,
+      "unicodeCodePoints": 46926,
+      "cjkCodePoints": 30580,
+      "missingIpaSample": "",
+      "missingChineseSample": "",
+      "completeSourceCmapPreserved": true
+    }
+  ]
+}

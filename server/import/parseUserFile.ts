@@ -5,6 +5,7 @@ import { parsePdfDocument } from '../documents/parsePdfDocument';
 import { parseDocxBuffer } from '../documents/parseDocx';
 import { saveArticleImage } from '../magazines/assets';
 import { createHash } from 'node:crypto';
+import { markdownImportHtml } from './parseMarkdown';
 
 import { documentMaxBytes, documentSizeError, EPUB_DOCUMENT_MAX_BYTES } from '../../src/lib/documentLimits';
 /** HTTP body ceiling; the parser enforces each format's own budget. */
@@ -12,7 +13,7 @@ export const USER_IMPORT_MAX_BYTES = EPUB_DOCUMENT_MAX_BYTES;
 /** Keep a whole issue, but stop before one file can fill browser storage. */
 export const USER_IMPORT_MAX_ARTICLES = 80;
 
-export type UserImportFormat = 'epub' | 'pdf' | 'docx' | 'html' | 'text';
+export type UserImportFormat = 'epub' | 'pdf' | 'docx' | 'html' | 'text' | 'markdown';
 
 export interface ImportedUserArticle {
   title: string;
@@ -88,7 +89,7 @@ function decodeUtf8(buffer: Buffer): string {
   if (buffer[0] === 0xfe && buffer[1] === 0xff) return new TextDecoder('utf-16be').decode(buffer.subarray(2));
   const sample = buffer.subarray(0, 8000);
   if (sample.includes(0)) {
-    throw new UserImportError('UNSUPPORTED_FORMAT', '这个文件不是可识别的文本。请使用 DOCX、EPUB、PDF、HTML 或 TXT。');
+    throw new UserImportError('UNSUPPORTED_FORMAT', '这个文件不是可识别的文本。请使用 DOCX、EPUB、PDF、HTML、TXT 或 Markdown（MD）。');
   }
   if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
     return buffer.subarray(3).toString('utf8');
@@ -254,7 +255,7 @@ export async function parseUserImportFile(buffer: Buffer, filename: string, opti
   if (!allowedText.has(extension)) {
     throw new UserImportError('UNSUPPORTED_FORMAT', extension === 'doc'
       ? '旧版 DOC 文件请先在 Word 中另存为 DOCX。'
-      : '支持 Word（DOCX）、EPUB、PDF、HTML 和 TXT。');
+      : '支持 Word（DOCX）、EPUB、PDF、HTML、TXT 和 Markdown（MD）。');
   }
 
   const text = decodeUtf8(buffer);
@@ -262,16 +263,18 @@ export async function parseUserImportFile(buffer: Buffer, filename: string, opti
     throw new UserImportError('EMPTY_FILE', '文件是空的。');
   }
 
-  if (looksLikeHtml(text, extension)) {
-    const chapters = await parseHtmlContentWithMedia(text, titleFromFilename(filename), { minWords: 1, saveImage, signal: options.signal });
+  const isMarkdown = extension === 'md' || extension === 'markdown';
+  if (isMarkdown || looksLikeHtml(text, extension)) {
+    const html = isMarkdown ? markdownImportHtml(text, titleFromFilename(filename)) : text;
+    const chapters = await parseHtmlContentWithMedia(html, titleFromFilename(filename), { minWords: 1, saveImage, signal: options.signal, preserveHeadingCase: isMarkdown });
     const articles = chapters
       .map((chapter) => toArticle(chapter, 1))
       .filter((article): article is ImportedUserArticle => article !== null);
     if (articles.length === 0) {
-      throw new UserImportError('EMPTY_IMPORT', 'HTML 里没有可阅读的正文，导航和版权页已跳过。');
+      throw new UserImportError('EMPTY_IMPORT', `${isMarkdown ? 'Markdown' : 'HTML'} 里没有可阅读的正文，导航和版权页已跳过。`);
     }
     options.signal?.throwIfAborted();
-    return { format: 'html', sourceId, ...selectArticles(articles, offset, limit) };
+    return { format: isMarkdown ? 'markdown' : 'html', sourceId, ...selectArticles(articles, offset, limit) };
   }
 
   const articles = parsePlainText(text, filename);

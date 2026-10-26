@@ -123,7 +123,7 @@ final class NativeFileStore {
     }
     /** Original reading files remain local after the picker handle is released. */
     void retainOriginal(File source, String hash, String extension) throws Exception {
-        if (!hash.matches("[a-f0-9]{64}") || !extension.matches("pdf|epub|docx|html|txt")) throw new IOException("原文件标识无效。");
+        if (!hash.matches("[a-f0-9]{64}") || !extension.matches("pdf|epub|docx|html|txt|md")) throw new IOException("原文件标识无效。");
         publish(source, new File(root, "originals/" + hash + "." + extension));
     }
     static Set<String> references(JSONObject backup) throws JSONException, IOException {

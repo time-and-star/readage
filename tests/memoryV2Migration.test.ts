@@ -381,7 +381,7 @@ describe('Memory V2 localStorage to IndexedDB migration', () => {
     const journal = { version: 1, userId: 'u1', attempts: [{ attemptId: 'a1', questionId: 'q1', wordId: 'run',
       articleId: 'article', outcome: 'recognized', occurredAt: '2026-07-24T12:00:00.000Z',
       localDate: '2026-07-24', timezone: 'UTC', userId: 'u1' }] };
-    const preferences = { version: 1, userId: 'u1', dailyNewWordLimit: 0, importedWordIds: ['run'],
+    const preferences = { version: 1, userId: 'u1', dailyNewWordLimit: 0, autoSpeakCount: 2, importedWordIds: ['run'],
       pausedWordIds: ['walk'], excludedWordIds: ['stop'], aliasBaselines: [{ wordId: 'run', legacyWordIds: ['running'] }] };
     source.setItem(`${MEMORY_PREFIX}:meta:reading-verification:u1`, JSON.stringify(journal));
     source.setItem(`${MEMORY_PREFIX}:meta:flashcard-study-preferences:u1`, JSON.stringify(preferences));

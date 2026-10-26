@@ -131,7 +131,9 @@ test('shared collections keep due boundaries, confirmation eligibility and backw
     const reversed = await store.getLearningSnapshot();
     assert.deepEqual(reversed.dueWords, []);
     assert.deepEqual(reversed.confirmationWords, []);
-    assert.ok(reversed.proficiencies.find(word => word.wordId === 'recall')!.memoryScore > score);
+    assert.equal(reversed.proficiencies.find(word => word.wordId === 'recall')!.memoryScore, score);
+    assert.ok(reversed.proficiencies.find(word => word.wordId === 'recall')!.forgettingRiskPercent!
+      < after.proficiencies.find(word => word.wordId === 'recall')!.forgettingRiskPercent!);
   } finally { task.dispose(); }
 });
 

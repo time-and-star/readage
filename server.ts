@@ -125,6 +125,9 @@ app.use('/api/local-data', localData.router);
 
 /** Large tutor/import payloads are capped before expensive processing. */
 app.use(express.json({ limit: '2mb' }));
+// Bot modules are kept for later development; this product has no provider connection.
+app.use('/api/bot', (_req, res) => res.status(404).json({ ok: false,
+  error: { code: 'FEATURE_NOT_ENABLED', message: '当前版本未接入阅读助手。' } }));
 app.use('/api/library', requireSensitiveApiAccess, createLibraryRouter(libraryNetworkFetch));
 app.use('/api/app-updates', requireSensitiveApiAccess, createAppUpdateRouter(libraryNetworkFetch));
 app.use('/api/app-updates', requireSensitiveApiAccess, createPatchRouter(patchStore));

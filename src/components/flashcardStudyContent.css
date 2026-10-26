@@ -1,0 +1,116 @@
+.flashcard-study-content {
+  display: grid;
+  gap: 30px;
+  min-width: 0;
+  color: #2b2e25;
+  text-align: left;
+  font-family: var(--flashcard-handwriting, "Segoe Print"), var(--flashcard-handwriting-zh, "KaiTi"), cursive;
+  font-size: 24px;
+  line-height: 1.65;
+}
+
+.flashcard-study-section {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: start;
+  gap: 22px;
+  min-width: 0;
+}
+
+.flashcard-study-section__label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 2px 0 0;
+  padding: 5px 13px;
+  border-radius: 28px;
+  background: #e9eedf;
+  color: #58664c;
+  font-family: var(--flashcard-handwriting-zh, "KaiTi"), cursive;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.flashcard-study-section__label svg { width: 15px; height: 15px; flex: 0 0 auto; stroke-width: 1.6; }
+.flashcard-study-section__body { min-width: 0; overflow-wrap: anywhere; }
+.flashcard-study-content p, .flashcard-study-content h4, .flashcard-study-content dt, .flashcard-study-content dd { margin: 0; }
+.flashcard-study-content ol, .flashcard-study-content ul { margin: 0; padding: 0; list-style: none; }
+.flashcard-study-content .flashcard-study-english { font-family: var(--flashcard-handwriting, "Segoe Print"), var(--flashcard-handwriting-zh, "KaiTi"), cursive; }
+.flashcard-study-content .flashcard-study-translation { font-family: var(--flashcard-handwriting-zh, "KaiTi"), var(--flashcard-handwriting, "Segoe Print"), cursive; }
+.flashcard-study-content mark { padding: 0 3px; border-radius: 3px; color: inherit; background: #f9dce6; font-weight: 500; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+
+.flashcard-study-meanings { display: grid; gap: 16px; }
+.flashcard-study-meaning { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.flashcard-study-meaning__meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px; flex: 0 0 auto; color: #70745f; }
+.flashcard-study-meaning__index { font-size: 16px; }
+.flashcard-study-pos { font-size: 19px; font-style: italic; }
+.flashcard-study-meaning__copy { min-width: 0; }
+.flashcard-study-meaning--primary .flashcard-study-translation { font-size: 23px; }
+.flashcard-study-meaning__copy .flashcard-study-english { margin-top: 2px; color: #454c3c; font-size: 18px; }
+.flashcard-study-examples, .flashcard-study-contexts { display: grid; gap: 19px; }
+.flashcard-study-example .flashcard-study-translation { margin-top: 4px; color: #657055; font-size: 18px; }
+.flashcard-study-content .flashcard-study-sense { margin-bottom: 3px; color: #7c856b; font-family: var(--flashcard-handwriting-zh, "KaiTi"), cursive; font-size: 14px; line-height: 1.5; }
+.flashcard-study-collocations { display: grid; gap: 12px; margin: 0; }
+.flashcard-study-collocations > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 1px 15px; }
+.flashcard-study-collocations dd { color: #657055; font-size: 18px; }
+.flashcard-study-relations { display: grid; gap: 18px; }
+.flashcard-study-relations > div { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 5px 12px; }
+.flashcard-study-relations h4 { color: #627052; font-family: var(--flashcard-handwriting-zh, "KaiTi"), cursive; font-size: 20px; font-weight: 500; white-space: nowrap; }
+.flashcard-study-relations h4::after { content: '：'; }
+.flashcard-study-relations ul { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 8px; }
+.flashcard-study-relations ul > li { min-width: 0; max-width: 100%; }
+.flashcard-study-relations li:not(:last-child) .flashcard-study-relation__line::after { content: ','; }
+.flashcard-study-relations .flashcard-study-more { grid-column: 1 / -1; }
+.flashcard-study-relation__line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 14px; }
+.flashcard-study-relation__line .flashcard-study-translation { color: #657055; font-size: 18px; }
+.flashcard-study-content .flashcard-study-relation__note { margin-top: 3px; color: #737d65; font-family: var(--flashcard-handwriting-zh, "KaiTi"), cursive; font-size: 16px; line-height: 1.6; }
+.flashcard-study-content .reading-context-excerpt__text { color: #303729; font-family: var(--flashcard-handwriting, "Segoe Print"), var(--flashcard-handwriting-zh, "KaiTi"), cursive; font-size: 20px; line-height: 1.65; }
+.flashcard-study-content .reading-context-excerpt__label { color: #7c856b; font-family: var(--flashcard-handwriting-zh, "KaiTi"), cursive; }
+.flashcard-study-content .reading-context-excerpt__toggle { color: #667d4e; font-family: var(--flashcard-handwriting-zh, "KaiTi"), cursive; font-size: 15px; }
+.flashcard-study-content .reading-context-excerpt__toggle:focus-visible { outline-color: #97ab81; }
+.flashcard-study-more { margin-top: 7px; }
+.flashcard-study-more > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  width: fit-content;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 6px 0;
+  list-style: none;
+  color: #667d4e;
+  cursor: pointer;
+  font-family: var(--flashcard-handwriting-zh, "KaiTi"), cursive;
+  font-size: 15px;
+  line-height: 1.5;
+  touch-action: manipulation;
+}
+.flashcard-study-more > summary::-webkit-details-marker { display: none; }
+.flashcard-study-more > summary::marker { content: ""; }
+.flashcard-study-more > summary svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.flashcard-study-more[open] > summary svg { transform: rotate(180deg); }
+.flashcard-study-more > summary:focus-visible { outline: 2px solid #97ab81; outline-offset: 3px; border-radius: 5px; }
+.flashcard-study-more__count { color: #7a886a; }
+.flashcard-study-more__body { padding-top: 8px; }
+
+@media (max-width: 520px) {
+  .flashcard-study-content { gap: 25px; font-size: 19px; }
+  .flashcard-study-section { grid-template-columns: 86px minmax(0, 1fr); gap: 13px; }
+  .flashcard-study-section__label { min-height: 34px; padding: 5px 9px; gap: 5px; font-size: 15px; border-radius: 9px; }
+  .flashcard-study-section__label svg { width: 13px; height: 13px; }
+  .flashcard-study-meaning { gap: 7px; }
+  .flashcard-study-meaning__meta { gap: 3px; }
+  .flashcard-study-meaning--primary .flashcard-study-translation { font-size: 21px; }
+}
+
+@media (max-width: 360px) {
+  .flashcard-study-section { grid-template-columns: minmax(0, 1fr); gap: 11px; }
+  .flashcard-study-section__label { justify-self: start; }
+}

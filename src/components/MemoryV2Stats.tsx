@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { useProficiencyStats } from '../lib/memoryV2/hooks';
+import { RECOGNITION_LEVEL_LABELS } from '../lib/wordMemoryDetails';
 
 interface MemoryV2StatsProps {
   className?: string;
@@ -30,19 +31,19 @@ export const MemoryV2Stats: React.FC<MemoryV2StatsProps> = ({ className = '' }) 
   return (
     <div className={`bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-5 ${className}`}>
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-semibold text-[#2C2723]">Memory V2.2 熟练度分布</h3>
+        <h3 className="font-semibold text-[#2C2723]">长期熟练度分布</h3>
         <span className="text-xs text-[#8C8478] bg-[#EFEAE0] px-2 py-1 rounded">
-          实时计算
+          稳定性评分
         </span>
       </div>
 
       {/* 等级分布 */}
       <div className="space-y-3 mb-4">
-        <LevelBar level={4} count={byLevel[4] || 0} total={total} label="L4 长期稳定" color="bg-green-500" />
-        <LevelBar level={3} count={byLevel[3] || 0} total={total} label="L3 多数识别" color="bg-blue-500" />
-        <LevelBar level={2} count={byLevel[2] || 0} total={total} label="L2 正在形成" color="bg-yellow-500" />
-        <LevelBar level={1} count={byLevel[1] || 0} total={total} label="L1 依赖帮助" color="bg-orange-500" />
-        <LevelBar level={0} count={byLevel[0] || 0} total={total} label="L0 无证据" color="bg-gray-400" />
+        <LevelBar level={4} count={byLevel[4] || 0} total={total} label={`L4 ${RECOGNITION_LEVEL_LABELS[4]}`} color="bg-green-500" />
+        <LevelBar level={3} count={byLevel[3] || 0} total={total} label={`L3 ${RECOGNITION_LEVEL_LABELS[3]}`} color="bg-blue-500" />
+        <LevelBar level={2} count={byLevel[2] || 0} total={total} label={`L2 ${RECOGNITION_LEVEL_LABELS[2]}`} color="bg-yellow-500" />
+        <LevelBar level={1} count={byLevel[1] || 0} total={total} label={`L1 ${RECOGNITION_LEVEL_LABELS[1]}`} color="bg-orange-500" />
+        <LevelBar level={0} count={byLevel[0] || 0} total={total} label={`L0 ${RECOGNITION_LEVEL_LABELS[0]}`} color="bg-gray-400" />
       </div>
 
       {/* 汇总信息 */}

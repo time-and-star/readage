@@ -79,7 +79,7 @@ export async function requestNativeDocumentBatch(file: NativePickedFile, offset:
     options.signal?.throwIfAborted();
     const end = offset + (Array.isArray(batch?.articles) ? batch.articles.length : 0);
     let textSize = 0;
-    if (batch?.sourceId !== file.handle || !['epub', 'pdf', 'docx', 'html', 'text'].includes(batch?.format)
+    if (batch?.sourceId !== file.handle || !['epub', 'pdf', 'docx', 'html', 'text', 'markdown'].includes(batch?.format)
       || batch.offset !== offset || !Number.isSafeInteger(batch.totalCount) || batch.totalCount < end
       || !batch.articles?.length || batch.articles.length > limit || batch.nextOffset !== (end < batch.totalCount ? end : null)
       || batch.articles.some((article, index) => {

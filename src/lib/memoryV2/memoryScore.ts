@@ -36,8 +36,19 @@ export function calculateMasteryModifier(stability: number, S_cap: number): numb
   return Math.min(1, modifier);
 }
 
+/** Long-term recognition strength. Time-based risk is projected separately. */
+export function calculateLongTermMemoryScore(
+  memoryState: WordMemoryState,
+  params: MemoryScoreParams = DEFAULT_MS_PARAMS,
+): number {
+  if (!memoryState.lastReview || !Number.isFinite(Date.parse(memoryState.lastReview))
+    || !Number.isFinite(memoryState.stability) || memoryState.stability <= 0
+    || !Number.isFinite(params.S_cap) || params.S_cap <= 0) return 0;
+  return 100 * calculateMasteryModifier(memoryState.stability, params.S_cap);
+}
+
 /**
- * 计算 Memory Score
+ * 旧版随时间变化的 Memory Score，当前熟练度使用长期分数
  *
  * @param memoryState - FSRS 记忆状态
  * @param params - MS 计算参数

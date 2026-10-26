@@ -89,6 +89,7 @@ test('correcting a formal recall reuses its original time and weakens prediction
   assert.deepEqual(counters(failed), counters(good));
   const after = (await system.getWordProficiency('u', 'resilient', later))!;
   assert.ok(after.memoryScore < before.memoryScore);
+  assert.ok(after.forgettingRiskPercent! > before.forgettingRiskPercent!);
   assert.ok(after.confidence! < before.confidence!);
   assert.equal(after.confidence, calculateFsrsForgettingCurve(10, failed.stability) * 100);
   await system.correctFlashcardReview('u', correction, new Date(start.getTime() + 120_000));

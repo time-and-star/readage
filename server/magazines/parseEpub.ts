@@ -16,6 +16,8 @@ export interface ParsedChapter {
 }
 
 export interface EpubParseOptions {
+  /** Markdown headings retain case and list entries become unmarked reading paragraphs. */
+  preserveHeadingCase?: boolean;
   /** User imports can stop parsing when the requesting screen closes. */
   signal?: AbortSignal;
   /** Inject an asset sink when importing into a different document store. */
@@ -39,11 +41,13 @@ function textWordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
-function stripHtml(html: string, imageFormatter?: HtmlToTextOptions['formatters']): string {
+function stripHtml(html: string, imageFormatter?: HtmlToTextOptions['formatters'], preserveHeadingCase = false): string {
   return htmlToText(html, {
     wordwrap: false,
     formatters: imageFormatter,
     selectors: [
+      ...(preserveHeadingCase ? [1, 2, 3, 4, 5, 6].map(level => ({ selector: `h${level}`, options: { uppercase: false } })) : []),
+      ...(preserveHeadingCase ? ['ul', 'ol', 'li'].map(selector => ({ selector, format: 'block', options: { leadingLineBreaks: 2, trailingLineBreaks: 2 } })) : []),
       { selector: 'a', options: { ignoreHref: true } },
       { selector: 'img', format: imageFormatter ? 'articleImage' : 'skip' },
       { selector: 'script', format: 'skip' },
@@ -102,11 +106,11 @@ function extractTitle(html: string, fallback: string): string {
   return fallback;
 }
 
-function parseHtmlDocument(html: string, fallbackTitle: string, minWords = MIN_WORDS, explicitTitle?: string): ParsedChapter | null {
+function parseHtmlDocument(html: string, fallbackTitle: string, minWords = MIN_WORDS, explicitTitle?: string, preserveHeadingCase = false): ParsedChapter | null {
   const title = explicitTitle || extractTitle(html, fallbackTitle);
   if (isSkippableImportTitle(title)) return null;
 
-  const rawParagraphs = paragraphsFromText(stripHtml(DomUtils.getOuterHTML(readingRoot(cleanReadingDocument(html)))));
+  const rawParagraphs = paragraphsFromText(stripHtml(DomUtils.getOuterHTML(readingRoot(cleanReadingDocument(html))), undefined, preserveHeadingCase));
   const paragraphs = cleanArticleParagraphs(rawParagraphs);
   const sourceWordCount = textWordCount(rawParagraphs.join(' '));
   const wordCount = textWordCount(paragraphs.join(' '));
@@ -167,7 +171,7 @@ interface ImageCandidate {
   afterParagraphIndex: number;
 }
 
-function collectImagePositions(html: string, htmlPath: string, paragraphs: string[], inlineImages = false): ImageCandidate[] {
+function collectImagePositions(html: string, htmlPath: string, paragraphs: string[], inlineImages = false, preserveHeadingCase = false): ImageCandidate[] {
   const candidates: ImageCandidate[] = [];
   const markerPrefix = `\uE000IMAGE${randomUUID().replace(/-/g, '')}_`;
   const marker = new RegExp(`${markerPrefix}(\\d+)\uE001`, 'g');
@@ -188,7 +192,7 @@ function collectImagePositions(html: string, htmlPath: string, paragraphs: strin
       // An inline marker preserves the paragraph boundaries of the text-only parser.
       builder.addInline(`${markerPrefix}${index}\uE001`, { noWordTransform: true });
     },
-  });
+  }, preserveHeadingCase);
 
   // Image markers can join two otherwise separate text blocks (for example a drop cap
   // between a chapter label and its first paragraph). Match text offsets rather than
@@ -409,10 +413,10 @@ export async function parseHtmlContentWithMedia(html: string, fallbackTitle: str
   let imageBytes = 0;
   for (const document of splitHtmlDocuments(html)) {
     options.signal?.throwIfAborted();
-    const chapter = parseHtmlDocument(document, extractTitle(html, fallbackTitle), options.minWords);
+    const chapter = parseHtmlDocument(document, extractTitle(html, fallbackTitle), options.minWords, undefined, options.preserveHeadingCase);
     if (!chapter) continue;
     chapter.media = [];
-    for (const image of collectImagePositions(document, '', chapter.paragraphs, true)) {
+    for (const image of collectImagePositions(document, '', chapter.paragraphs, true, options.preserveHeadingCase)) {
       options.signal?.throwIfAborted();
       if (!/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(image.archivePath)) continue;
       const encoded = image.archivePath.slice(image.archivePath.indexOf(',') + 1).replace(/\s+/g, '');

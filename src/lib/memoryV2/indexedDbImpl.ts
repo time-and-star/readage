@@ -15,7 +15,7 @@ import type {
 import type { MemoryStorage } from './storage';
 import { LocalStorageMemoryStorage } from './localStorageImpl';
 import { mergeExposureSnapshot, mergeRawEvents } from './rawEventPersistence';
-import { aggregateArticleEvidence, aggregateDailyEvidence } from './evidenceAggregation';
+import { aggregateArticleEvidence, aggregateDailyEvidence, recallFailureCount, mergeRecallFailureTime } from './evidenceAggregation';
 import { finalizeDailyEvidence, submitFsrsReview } from './fsrsIntegration';
 import { normalizeRmeProfile, projectRmeProfile } from './rmeV4Bridge';
 import { applyReviewOutcome } from '../memoryV4';
@@ -24,6 +24,8 @@ import { getApplicationStorage, isLocalDatabaseActive } from '../localDatabase';
 import { SqliteMemoryStorage } from './sqliteImpl';
 import { getLocalDateInTimeZone, getSystemTimeZone } from './dateUtils';
 import { repairPassiveReadingRecall } from './passiveRecallRepair';
+import { restoreMemoryBeforeReview } from './reviewSnapshot';
+import { isFlashcardSchedulingPolicy } from '../flashcardScheduling';
 
 const DB_NAME = 'english-ai-memory-v2';
 const DB_VERSION = 1;
@@ -584,6 +586,24 @@ function hasStrings(value: unknown, fields: string[]): value is Record<string, u
   return isRecord(value) && fields.every((field) => typeof value[field] === 'string');
 }
 
+function validRecallMetadata(value: Record<string, unknown>): boolean {
+  if (value.modelApplied !== undefined && value.modelApplied !== false) return false;
+  if (value.evidence !== undefined) {
+    const evidence = value.evidence;
+    if (!isRecord(evidence) || !['independent_recall', 'answer_rehearsal'].includes(evidence.kind as string)
+      || (evidence.answerExposedAt !== undefined && (typeof evidence.answerExposedAt !== 'string'
+        || !Number.isFinite(Date.parse(evidence.answerExposedAt))))
+      || (evidence.interveningWord !== undefined && (typeof evidence.interveningWord !== 'string'
+        || !evidence.interveningWord.trim() || evidence.interveningWord.length > 500))) return false;
+  }
+  if (value.readingTask !== undefined) {
+    const task = value.readingTask;
+    if (!isRecord(task) || task.type !== 'context_choice' || task.contextVisible !== true
+      || typeof task.answerExposed !== 'boolean' || !['hard_on_correct', 'practice_only'].includes(task.mapping as string)) return false;
+  }
+  return true;
+}
+
 export function parseMigrationItem(key: string, value: unknown): MigrationItem | null {
   if (key.startsWith(`${LS_PREFIX}:meta:extension-journal-index:`)) {
     if (!Array.isArray(value) || !value.every(word => typeof word === 'string')) throw new Error('Invalid extension journal index');
@@ -599,13 +619,18 @@ export function parseMigrationItem(key: string, value: unknown): MigrationItem |
     if (!hasStrings(value, ['userId']) || value.version !== 1 || !Array.isArray(value.attempts)
       || !value.attempts.every(attempt => hasStrings(attempt,
         ['attemptId', 'questionId', 'wordId', 'articleId', 'userId', 'occurredAt', 'localDate', 'timezone'])
-        && attempt.userId === value.userId)) throw new Error('Invalid reading verification journal');
+        && attempt.userId === value.userId
+        && validRecallMetadata(attempt)
+        && (attempt.scheduling === undefined || isFlashcardSchedulingPolicy(attempt.scheduling)))) throw new Error('Invalid reading verification journal');
     return { kind: 'meta', key: key.slice(`${LS_PREFIX}:meta:`.length), value };
   }
   if (key.startsWith(`${LS_PREFIX}:meta:flashcard-study-preferences:`)) {
     if (!hasStrings(value, ['userId']) || value.version !== 1
       || !Array.isArray(value.importedWordIds) || !value.importedWordIds.every(word => typeof word === 'string')
-      || !(value.dailyNewWordLimit === null || (isMigrationCount(value.dailyNewWordLimit)))) {
+      || !(value.dailyNewWordLimit === null || (isMigrationCount(value.dailyNewWordLimit)))
+      || (value.autoSpeakCount !== undefined && (typeof value.autoSpeakCount !== 'number'
+        || !Number.isSafeInteger(value.autoSpeakCount) || value.autoSpeakCount < 0 || value.autoSpeakCount > 3))
+      || (value.desiredRetention !== undefined && !isFlashcardSchedulingPolicy({ version: 1, desiredRetention: value.desiredRetention }))) {
       throw new Error('Invalid flashcard study preferences');
     }
     return { kind: 'meta', key: key.slice(`${LS_PREFIX}:meta:`.length), value };
@@ -644,6 +669,9 @@ export function parseMigrationItem(key: string, value: unknown): MigrationItem |
   if (key.startsWith(`${LS_PREFIX}:state:`)) {
     if (!hasStrings(value, ['userId', 'wordId', 'nextReview'])) {
       throw new Error('Invalid memory state record');
+    }
+    if (Array.isArray(value.fsrsReviews) && !value.fsrsReviews.every(review => isRecord(review) && validRecallMetadata(review))) {
+      throw new Error('Invalid recall evidence metadata');
     }
     return { kind: 'state', value: value as unknown as WordMemoryState };
   }
@@ -684,6 +712,9 @@ function mergeArticleEvidence(current: ArticleWordEvidence | null, incoming: Art
   return { ...current, ...incoming,
     validExposureCount: Math.max(current.validExposureCount ?? 0, incoming.validExposureCount ?? 0),
     clickedOccurrenceCount: Math.max(current.clickedOccurrenceCount ?? 0, incoming.clickedOccurrenceCount ?? 0),
+    ...(current.recallFailureCount !== undefined || incoming.recallFailureCount !== undefined
+      ? { recallFailureCount: Math.max(recallFailureCount(current), recallFailureCount(incoming)) } : {}),
+    ...mergeRecallFailureTime(current, incoming),
     firstSeenAt: [current.firstSeenAt, incoming.firstSeenAt].filter(Boolean).sort()[0],
     lastSeenAt: latestTime(current.lastSeenAt, incoming.lastSeenAt) ?? incoming.lastSeenAt,
     ...(current.averageRmeQuality !== undefined && incoming.averageRmeQuality !== undefined
@@ -707,7 +738,22 @@ function correctionRevision(value: unknown): number {
   return isRecord(value) && Array.isArray(value.flashcardRevisions) ? value.flashcardRevisions.length : 0;
 }
 
+function assertSameSchedulingPolicy(current: unknown, incoming: unknown, source: string): void {
+  const currentPolicy = (current as any).scheduling;
+  const incomingPolicy = (incoming as any).scheduling;
+  if (Boolean(currentPolicy) !== Boolean(incomingPolicy)
+    || (currentPolicy && incomingPolicy && (currentPolicy.version !== incomingPolicy.version
+      || currentPolicy.desiredRetention !== incomingPolicy.desiredRetention))) {
+    throw new Error(`Conflicting ${source} scheduling policy`);
+  }
+}
+
 function chooseRevision<T extends { rating: number }>(current: T, incoming: T): T {
+  assertSameSchedulingPolicy(current, incoming, 'flashcard');
+  if (!sameJson((current as any).evidence, (incoming as any).evidence)
+    || (current as any).modelApplied !== (incoming as any).modelApplied) {
+    throw new Error('Conflicting flashcard recall evidence');
+  }
   const existingRevision = correctionRevision(current);
   const incomingRevision = correctionRevision(incoming);
   const existingAudit = (current as any).flashcardRevisions ?? [];
@@ -744,6 +790,7 @@ function mergeMemoryStates(current: WordMemoryState | null, incoming: WordMemory
   incoming = repair(incoming);
   if (!current || sameJson(current, incoming)) return current ?? incoming;
   const timestamp = (state: WordMemoryState) => latestTime(state.lastReview, state.lastAssistedAt, state.rme?.lastExposureAt,
+    ...state.fsrsReviews.map(review => review.review),
     ...(state.fsrsReviews ?? []).flatMap(review => (review.flashcardRevisions ?? []).map(revision => revision.correctedAt)));
   const primary = (timestamp(incoming) ?? '') > (timestamp(current) ?? '') ? incoming : current;
   type Review = WordMemoryState['fsrsReviews'][number];
@@ -754,6 +801,7 @@ function mergeMemoryStates(current: WordMemoryState | null, incoming: WordMemory
   for (const review of [...current.fsrsReviews ?? [], ...incoming.fsrsReviews ?? []]) {
     const key = reviewKey(review);
     const prior = reviews.get(key);
+    if (prior && review.source !== 'flashcard') assertSameSchedulingPolicy(prior, review, 'reading');
     reviews.set(key, prior ? (review.source === 'flashcard' ? chooseRevision(prior, review)
       : prior.rating <= review.rating ? prior : review) : review);
   }
@@ -769,17 +817,11 @@ function mergeMemoryStates(current: WordMemoryState | null, incoming: WordMemory
     const origin = [current, incoming].find(state => (state.fsrsReviews ?? [])
       .some(review => reviewKey(review) === reviewKey(first) && review.review === first.review)) ?? primary;
     const originalReviews = origin.fsrsReviews ?? [];
-    const previousReview = first.state === 0 ? null : first.due;
-    const due = previousReview
-      ? new Date(Date.parse(previousReview) + first.scheduledDays * 86_400_000).toISOString() : first.due;
-    merged = { ...primary, stability: first.stability, difficulty: first.difficulty,
-      lastReview: previousReview, nextReview: due, fsrsReviews: [],
-      fsrsCard: { due, stability: first.stability, difficulty: first.difficulty,
-        elapsedDays: first.lastElapsedDays, scheduledDays: first.scheduledDays, learningSteps: first.learningSteps,
-        reps: Math.max(0, origin.fsrsCard.reps - originalReviews.length),
-        lapses: Math.max(0, origin.fsrsCard.lapses - originalReviews.filter(review => review.rating === 1 && review.state !== 0).length),
-        state: first.state, ...(previousReview ? { lastReview: previousReview } : {}) },
-    };
+    const firstIndex = originalReviews.findIndex(review => reviewKey(review) === reviewKey(first) && review.review === first.review);
+    const before = restoreMemoryBeforeReview(origin, firstIndex);
+    merged = { ...primary, stability: before.stability, difficulty: before.difficulty,
+      lastReview: before.lastReview, nextReview: before.nextReview, fsrsReviews: [],
+      fsrsCard: { ...before.fsrsCard } };
     let replay = timeline;
     if (opaqueBaseline) {
       // A fallback branch may have started from an empty browser namespace.
@@ -791,12 +833,12 @@ function mergeMemoryStates(current: WordMemoryState | null, incoming: WordMemory
         fsrsCard: { ...opaqueBaseline.fsrsCard,
           reps: opaqueBaseline.fsrsCard.reps + older.filter(review => review.review < opaqueBaseline.lastReview!).length,
           lapses: opaqueBaseline.fsrsCard.lapses + older.filter(review => review.review < opaqueBaseline.lastReview!
-            && review.rating === 1 && review.state !== 0).length,
+            && review.rating === 1 && review.state === 2).length,
         } };
       replay = timeline.filter(review => review.review > opaqueBaseline.lastReview!);
     }
     for (const review of replay) {
-      merged = submitFsrsReview(merged, review.rating as 1 | 2 | 3 | 4, new Date(review.review));
+      merged = submitFsrsReview(merged, review.rating as 1 | 2 | 3 | 4, new Date(review.review), review.scheduling, review.evidence);
       const index = merged.fsrsReviews.length - 1;
       merged.fsrsReviews[index] = { ...review, ...merged.fsrsReviews[index] };
     }
@@ -834,6 +876,7 @@ function mergeMemoryStates(current: WordMemoryState | null, incoming: WordMemory
         forcedExposure: baseline.forcedExposure, lastReviewGrade: baseline.lastReviewGrade };
       let previousReviewAt = Date.parse(opaqueBaseline?.lastReview ?? '');
       for (const review of timeline) {
+        if (review.modelApplied === false) continue;
         if (opaqueBaseline?.lastReview && review.review <= opaqueBaseline.lastReview) continue;
         const at = Date.parse(review.review);
         const recent = !Number.isFinite(previousReviewAt) || at - previousReviewAt < 86_400_000;
@@ -897,6 +940,42 @@ async function repairMigratedWordRecall(target: LocalStorageMigrationTarget, use
   }
 }
 
+/** Same-instant round reviews retain each source's observed order, including overlapping branches. */
+function orderRoundVerificationBucket(attempts: ReadingVerificationEvidence[],
+  sources: readonly ReadingVerificationEvidence[][], sourceRanks: ReadonlyMap<string, number>): ReadingVerificationEvidence[] {
+  const byId = new Map(attempts.map(attempt => [attempt.attemptId, attempt]));
+  const edges = new Map(attempts.map(attempt => [attempt.attemptId, new Set<string>()]));
+  const indegrees = new Map(attempts.map(attempt => [attempt.attemptId, 0]));
+  for (const source of sources) {
+    let previous: string | undefined;
+    const seen = new Set<string>();
+    for (const attempt of source) {
+      const id = attempt.attemptId;
+      if (!byId.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      if (previous !== undefined && !edges.get(previous)!.has(id)) {
+        edges.get(previous)!.add(id);
+        indegrees.set(id, indegrees.get(id)! + 1);
+      }
+      previous = id;
+    }
+  }
+  const sourceOrder = (left: string, right: string) => sourceRanks.get(left)! - sourceRanks.get(right)!;
+  const ready = [...byId.keys()].filter(id => indegrees.get(id) === 0).sort(sourceOrder);
+  const ordered: ReadingVerificationEvidence[] = [];
+  while (ready.length) {
+    const id = ready.shift()!;
+    ordered.push(byId.get(id)!);
+    for (const next of edges.get(id)!) {
+      const degree = indegrees.get(next)! - 1;
+      indegrees.set(next, degree);
+      if (degree === 0) { ready.push(next); ready.sort(sourceOrder); }
+    }
+  }
+  if (ordered.length !== attempts.length) throw new Error('Conflicting same-time flashcard review order');
+  return ordered;
+}
+
 function mergeVerificationAttempts(current: ReadingVerificationEvidence[], incoming: ReadingVerificationEvidence[]) {
   const attempts = new Map(current.map(attempt => [attempt.attemptId, attempt]));
   for (const attempt of incoming) {
@@ -909,15 +988,44 @@ function mergeVerificationAttempts(current: ReadingVerificationEvidence[], incom
     }
     if (prior.purpose === 'flashcard_review' && attempt.purpose === 'flashcard_review') {
       attempts.set(attempt.attemptId, chooseRevision(prior, attempt));
-    } else if (prior.outcome !== attempt.outcome) {
-      if (![prior.outcome, attempt.outcome].every(outcome => ['recognized', 'guessed'].includes(outcome))) {
-        throw new Error('Conflicting verification result');
+    } else {
+      // A reading recall freezes its scheduler too. Never silently turn an old
+      // attempt into a new-policy attempt, or change retention on restore.
+      assertSameSchedulingPolicy(prior, attempt, 'reading');
+      if (!sameJson(prior.readingTask, attempt.readingTask)) throw new Error('Conflicting reading task evidence');
+      if (prior.outcome !== attempt.outcome) {
+        if (![prior.outcome, attempt.outcome].every(outcome => ['recognized', 'guessed'].includes(outcome))) {
+          throw new Error('Conflicting verification result');
+        }
+        attempts.set(attempt.attemptId, prior.outcome === 'guessed' ? prior : attempt);
       }
-      attempts.set(attempt.attemptId, prior.outcome === 'guessed' ? prior : attempt);
     }
   }
-  return [...attempts.values()].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)
+  const sorted = [...attempts.values()].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)
     || left.attemptId.localeCompare(right.attemptId));
+  const bucketKey = (attempt: ReadingVerificationEvidence) => JSON.stringify([attempt.wordId, attempt.occurredAt]);
+  const roundBuckets = new Map(sorted.filter(attempt => attempt.scheduling && attempt.scheduling.version >= 4)
+    .map(attempt => [bucketKey(attempt), [] as number[]]));
+  if (!roundBuckets.size) return sorted;
+  sorted.forEach((attempt, index) => roundBuckets.get(bucketKey(attempt))?.push(index));
+  const sourceRanks = new Map([...attempts.keys()].map((id, index) => [id, index]));
+  const sourceBuckets = [current, incoming].map(source => {
+    const buckets = new Map<string, ReadingVerificationEvidence[]>();
+    for (const attempt of source) {
+      const key = bucketKey(attempt);
+      if (!roundBuckets.has(key)) continue;
+      const bucket = buckets.get(key) ?? [];
+      bucket.push(attempt);
+      buckets.set(key, bucket);
+    }
+    return buckets;
+  });
+  for (const [key, slots] of roundBuckets) {
+    if (slots.length < 2) continue;
+    const ordered = orderRoundVerificationBucket(slots.map(index => sorted[index]), sourceBuckets.map(source => source.get(key) ?? []), sourceRanks);
+    slots.forEach((slot, index) => { sorted[slot] = ordered[index]; });
+  }
+  return sorted;
 }
 
 async function mergeMetadata(target: LocalStorageMigrationTarget, key: string, incoming: any, preferIncoming: boolean): Promise<unknown> {
@@ -973,9 +1081,13 @@ async function mergeMetadata(target: LocalStorageMigrationTarget, key: string, i
         throw new Error('Conflicting extension event identity');
       }
     }
+    const pendingFailureDates = [...new Set([
+      ...existing.pendingFailureDates ?? [], ...source.pendingFailureDates ?? [],
+    ])].sort();
     return { ...existing, baselineState, baselineDaily: [...daily.values()].sort((a, b) => a.localDate.localeCompare(b.localDate)),
       baselineRaw: mergeRawEvents(existing.baselineRaw, source.baselineRaw),
       events: mergeRawEvents(existing.events, source.events),
+      ...(pendingFailureDates.length ? { pendingFailureDates } : {}),
     } satisfies WordJournal;
   }
   throw new Error('Unsupported memory metadata');
@@ -1048,7 +1160,8 @@ export async function importAndVerifyItem(
       const row = aggregateArticleEvidence(merged.filter(event => event.articleId === articleId))!;
       const prior = await target.getArticleEvidence(sample.userId, sample.wordId, articleId, sample.localDate);
       const completeRaw = !daily?.finalizedAt && (!prior || (row.validExposureCount >= prior.validExposureCount
-        && row.clickedOccurrenceCount >= prior.clickedOccurrenceCount && row.firstSeenAt <= prior.firstSeenAt));
+        && row.clickedOccurrenceCount >= prior.clickedOccurrenceCount
+        && recallFailureCount(row) >= recallFailureCount(prior) && row.firstSeenAt <= prior.firstSeenAt));
       const article = completeRaw ? row : mergeArticleEvidence(prior, row);
       await target.saveArticleEvidence(article);
       const day = aggregateDailyEvidence([article])!;
@@ -1063,7 +1176,7 @@ export async function importAndVerifyItem(
       if (!sameJson(await target.getDailyEvidence(sample.userId, sample.wordId, sample.localDate), aggregate)) {
         throw new Error('Recovered daily evidence verification failed');
       }
-      if (daily?.finalizedAt && aggregate.clickedOccurrenceCount > daily.clickedOccurrenceCount) {
+      if (daily?.finalizedAt && recallFailureCount(aggregate) > recallFailureCount(daily)) {
         const state = await target.getMemoryState(sample.userId, sample.wordId);
         const updated = finalizeDailyEvidence(state, aggregate, sample.userId);
         if (updated) {

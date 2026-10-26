@@ -12,19 +12,23 @@ export const WordMemoryDetailsPanel: React.FC<{ wordId: string; initiallyOpen?: 
       {error ? <p role="alert">{error} <button type="button" onClick={retry}>重试</button></p>
         : loading || !details ? <p role="status">正在读取记忆记录…</p> : <>
           <div className="word-memory-details__heading"><span className="word-memory-details__status">{details.statusLabel}</span>
-            {details.hasRecall && <span>正式回忆 {details.reviewCount} 次</span>}</div>
+            {details.hasRecall && <span>正式回忆 {details.reviewCount} 次</span>}
+          </div>
           {details.hasRecall ? <>
             <dl className="word-memory-details__metrics">
-              <div><dt>识别熟悉度</dt><dd>L{details.level}<small>{Math.round(details.score!)} 分</small></dd><span>{details.levelLabel}</span></div>
-              <div><dt>当前回忆率预测</dt><dd>{Math.round(details.recallPercent!)}<small>%</small></dd><span>随时间变化的估计</span></div>
+              <div><dt>长期熟练度</dt><dd>L{details.level}<small>{Math.round(details.score!)} 分</small></dd><span>{details.levelLabel}</span></div>
+              <div><dt>当前遗忘风险</dt><dd>{Math.round(details.forgettingRiskPercent!)}<small>%</small></dd><span>模型估计</span></div>
             </dl>
             <dl className="word-memory-details__dates">
             <div><dt>上次回忆</dt><dd>{memoryDateLabel(details.lastReviewAt, timezone)}</dd></div>
             <div><dt>下次复习</dt><dd>{details.nextReviewAt ? memoryDateLabel(details.nextReviewAt, timezone)
               : details.status === 'paused' || details.status === 'removed' ? '安排已停止，恢复词卡后继续' : '尚未安排'}</dd></div>
             </dl>
-          </> : <p className="word-memory-details__empty">还没有回忆记录。完成词卡回忆或延迟确认后，会在这里显示熟悉度。</p>}
-          {(details.lastAssistedAt || details.exposureCount > 0) && <p className="word-memory-details__note">{details.exposureCount > 0 && <span>阅读接触 {details.exposureCount} 次</span>}
+          </> : <p className="word-memory-details__empty">还没有正式回忆记录。完成独立词卡回忆或延迟确认后，会在这里显示熟练度。{details.practiceCount > 0 && details.nextReviewAt && <span>练习已记录，下次复习 {memoryDateLabel(details.nextReviewAt, timezone)}。</span>}</p>}
+          {(details.lastAssistedAt || details.exposureCount > 0 || details.reviews.length > 0 || details.practiceCount > 0) && <details className="word-memory-details__audit">
+          <summary>回忆与查词明细</summary>
+          {(details.lastAssistedAt || details.exposureCount > 0 || details.practiceCount > 0) && <p className="word-memory-details__note">{details.exposureCount > 0 && <span>阅读接触 {details.exposureCount} 次</span>}
+            {details.practiceCount > 0 && <span>即时练习 {details.practiceCount} 次</span>}
             {details.lastAssistedAt && <span>上次查词 {memoryDateLabel(details.lastAssistedAt, timezone)}</span>}</p>}
           {details.reviews.length > 0 && <ol className="word-memory-details__history" aria-label="最近正式回忆记录">
             {details.reviews.map((review, index) => <li key={`${review.review}:${index}`}>
@@ -32,7 +36,13 @@ export const WordMemoryDetailsPanel: React.FC<{ wordId: string; initiallyOpen?: 
               <time dateTime={review.review}>{memoryDateLabel(review.review, timezone)}</time>
             </li>)}
           </ol>}
-          <details className="word-memory-details__explanation"><summary>这些数字如何理解</summary><p>熟悉度反映长期识别稳定程度。回忆率预测随时间变化，刚复习后的 100% 是模型起点，并非实测成绩。阅读接触和查词会留下记录；口语和写作能力尚未纳入评分。</p></details>
+          </details>}
+          <details className="word-memory-details__explanation"><summary>这些数字如何理解</summary>
+            <p>长期熟练度根据记忆稳定性计算，与词卡、我的学习共用同一记录。时间经过只改变当前风险，不自动降低等级。</p>
+            <p>普通查词只记录求助，不自动扣分；实际回忆失败会更新稳定性，旧评分按当时的规则保留。</p>
+            {details.hasRecall && <p>预计回忆率 {Math.round(details.recallPercent!)}%，与当前遗忘风险互补。风险来自默认模型，尚未按个人记录拟合；刚复习后的 0% 是模型起点，不保证不会忘记。</p>}
+            <p>分数不是掌握百分比，口语、写作和全部词义尚未纳入评分。</p>
+          </details>
         </>}
     </div>}
   </details>;

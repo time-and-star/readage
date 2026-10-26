@@ -10,6 +10,24 @@ import {
   FsrsGrade,
 } from './types';
 
+/** Assistance is separate from recall. Missing metadata retains historical semantics. */
+export function recallFailureCount(evidence: Pick<ArticleWordEvidence, 'clickedOccurrenceCount' | 'recallFailureCount'>): number {
+  return evidence.recallFailureCount ?? evidence.clickedOccurrenceCount;
+}
+
+/** Missing exact failure times retain the old aggregate's settlement semantics. */
+export function recallFailureTime(evidence: ArticleWordEvidence): string | undefined {
+  return recallFailureCount(evidence) > 0 ? evidence.lastRecallFailureAt ?? evidence.lastSeenAt : undefined;
+}
+
+export function mergeRecallFailureTime(left: ArticleWordEvidence, right: ArticleWordEvidence): Pick<ArticleWordEvidence, 'lastRecallFailureAt'> {
+  if (left.recallFailureCount === undefined && right.recallFailureCount === undefined
+    && left.lastRecallFailureAt === undefined && right.lastRecallFailureAt === undefined) return {};
+  const latest = [recallFailureTime(left), recallFailureTime(right)].filter((time): time is string => Boolean(time))
+    .sort((a, b) => Date.parse(a) - Date.parse(b)).at(-1);
+  return latest ? { lastRecallFailureAt: latest } : {};
+}
+
 /**
  * 聚合单个文章内的词据
  * 同一文章中的重复出现只记录一条文章级词据
@@ -48,6 +66,9 @@ export function aggregateArticleEvidence(
 
   // 统计被点击的 occurrence 数量（去重）
   const clickedOccurrenceCount = clickedOccurrences.size;
+  const hasLookupOnly = sortedEvents.some(event => event.eventType === 'click' && event.lookupOnly === true);
+  const failureEvents = sortedEvents.filter(event => event.eventType === 'click' && !event.lookupOnly);
+  const failures = new Set(failureEvents.map(event => event.occurrenceId)).size;
 
   const first = sortedEvents[0];
 
@@ -58,6 +79,8 @@ export function aggregateArticleEvidence(
     localDate: first.localDate,
     validExposureCount,
     clickedOccurrenceCount,
+    ...(hasLookupOnly ? { recallFailureCount: failures,
+      ...(failureEvents.length ? { lastRecallFailureAt: failureEvents.at(-1)!.occurredAt } : {}) } : {}),
     firstSeenAt: sortedEvents[0].occurredAt,
     lastSeenAt: sortedEvents[sortedEvents.length - 1].occurredAt,
     ...(averageRmeQuality === undefined ? {} : { averageRmeQuality }),
@@ -73,7 +96,7 @@ export function aggregateArticleEvidence(
  * - validExposureCount > 0 且 clickedOccurrenceCount = 0 → Good
  */
 export function getArticleGrade(evidence: ArticleWordEvidence): FsrsGrade | null {
-  if (evidence.clickedOccurrenceCount > 0) {
+  if (recallFailureCount(evidence) > 0) {
     return 'Again';
   }
 
@@ -128,6 +151,8 @@ export function aggregateDailyEvidence(
     articleCount: articleEvidences.length,
     validExposureCount: totalExposures,
     clickedOccurrenceCount: totalClicks,
+    ...(articleEvidences.some(row => row.recallFailureCount !== undefined)
+      ? { recallFailureCount: articleEvidences.reduce((sum, row) => sum + recallFailureCount(row), 0) } : {}),
     pendingGrade,
     ...(qualityWeightedCount > 0
       ? { averageRmeQuality: qualityWeightedTotal / qualityWeightedCount }
@@ -153,7 +178,7 @@ export function calculateDailyGrade(
 
   // A lookup is direct failure evidence even when the surrounding paragraph
   // was not visible long enough to count as a successful passive exposure.
-  const hasClick = articleEvidences.some((e) => e.clickedOccurrenceCount > 0);
+  const hasClick = articleEvidences.some((e) => recallFailureCount(e) > 0);
   if (hasClick) {
     return 'Again';
   }
@@ -224,6 +249,8 @@ export function updateDailyEvidence(
     articleCount: updatedArticleEvidence.length,
     validExposureCount: totalExposures,
     clickedOccurrenceCount: totalClicks,
+    ...(updatedArticleEvidence.some(row => row.recallFailureCount !== undefined)
+      ? { recallFailureCount: updatedArticleEvidence.reduce((sum, row) => sum + recallFailureCount(row), 0) } : {}),
     pendingGrade,
     ...(averageRmeQuality === undefined ? {} : { averageRmeQuality }),
     finalizedAt: null,

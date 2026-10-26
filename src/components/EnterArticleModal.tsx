@@ -5,6 +5,7 @@ import { splitArticleParagraphs } from '../lib/articleImport';
 import { ON_DEMAND_TRANSLATION } from '../lib/localTranslation';
 import { createImportedArticle, withImportedLanguage } from '../lib/articleLanguage';
 import { languageName } from '../lib/dictionaryTrial';
+import { lockDocumentScroll } from '../lib/documentScrollLock';
 import { IS_ANDROID } from '../lib/platform/runtime';
 import { nativeFiles, pickNativeFile, requestNativeDocumentBatch, type NativePickedFile } from '../lib/platform/nativeFiles';
 import { appendPreparedFileBatch, FILE_IMPORT_BATCH_SIZE, FILE_IMPORT_PREPARATION_LIMIT, requestUserFileBatch, type PreparedFileImport } from '../lib/userFileImport';
@@ -78,20 +79,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
 
   useEffect(() => {
     if (!visible) return;
-    const root = document.documentElement;
-    const body = document.body;
-    const rootOverflow = root.style.overflow;
-    const bodyOverflow = body.style.overflow;
-    const bodyPaddingRight = body.style.paddingRight;
-    const scrollbarWidth = window.innerWidth - root.clientWidth;
-    if (scrollbarWidth > 0) body.style.paddingRight = `${(Number.parseFloat(getComputedStyle(body).paddingRight) || 0) + scrollbarWidth}px`;
-    root.style.overflow = 'hidden';
-    body.style.overflow = 'hidden';
-    return () => {
-      root.style.overflow = rootOverflow;
-      body.style.overflow = bodyOverflow;
-      body.style.paddingRight = bodyPaddingRight;
-    };
+    return lockDocumentScroll(document);
   }, [visible]);
 
   useEffect(() => {
@@ -245,8 +233,10 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
     const unit = current.format === 'pdf' ? '页' : '篇';
     const ending = current.startOffset + current.articles.length;
     const continuation = current.nextOffset !== null ? distributionRef.current ? ' 其余内容可在官网资料库继续导入，也可指定章节起点。' : ` 其余内容可重新选择原文件，从第 ${current.nextOffset + 1} ${unit}继续导入。` : '';
+    const legacyNotice = current.format === 'markdown' && history.some(article => article.importBatchId === `file-${current.sourceId}`)
+      ? ' 已按清洗后的目录另存，原文章和学习进度仍保留。' : '';
     submit(current.articles.map(article => withImportedLanguage({ ...article, ...(distributionRef.current ? { distribution: { ...distributionRef.current, totalCount: current.totalCount }, importBatchTitle: distributionRef.current.title } : {}) }, sourceLanguage)),
-      `已导入第 ${current.startOffset + 1}–${ending} ${unit}，正在打开所选内容。${continuation}`);
+      `已导入第 ${current.startOffset + 1}–${ending} ${unit}，正在打开所选内容。${continuation}${legacyNotice}`);
   };
 
   return (
@@ -361,7 +351,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".docx,.epub,.pdf,.html,.htm,.xhtml,.txt,.md,.text,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/epub+zip,application/pdf,text/html,text/plain"
+                accept=".docx,.epub,.pdf,.html,.htm,.xhtml,.txt,.md,.markdown,.text,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/epub+zip,application/pdf,text/html,text/plain,text/markdown,text/x-markdown"
                 aria-label="选择导入文件"
                 className="sr-only"
                 disabled={busy}
@@ -385,8 +375,8 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
                 <span>{isImportingFile ? '正在准备文件…' : selectedFile ? '重新选择文件' : '选择文件'}</span>
               </button>
               <p className="mt-1 text-[11px] text-[#8C8478]">
-                Word（DOCX）、EPUB、PDF、HTML、TXT · EPUB 最大 128MB，其他格式 64MB
-              </p></>}
+                Word（DOCX）、EPUB、PDF、HTML、TXT、Markdown（MD） · EPUB 最大 128MB，其他格式 64MB
+              </p><p className="mt-1 text-[11px] text-[#8C8478]">Markdown 自动清理格式标记并按重复主标题拆篇；支持内嵌图片，外链或相对路径图片仅保留说明，不自动下载。</p></>}
               {!prepared && !remotePrepared && <label className="mt-3 flex items-center gap-2 text-xs text-[#666056]">
                 从第 <input type="number" min="1" step="1" aria-label="导入章节起点" value={startChapter}
                   disabled={busy} onChange={event => { setStartChapter(event.target.value); setStartChapterTouched(true); }}

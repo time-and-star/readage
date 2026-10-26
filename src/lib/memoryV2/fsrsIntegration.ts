@@ -6,20 +6,25 @@
 import {
   createEmptyCard,
   Rating,
+  State,
   type Card,
   type RecordLog,
   type Grade,
 } from 'ts-fsrs';
 import { scheduleFsrsReview } from '../fsrs';
+import { continuousRecallIntervalMs, isFlashcardSchedulingPolicy, type FlashcardSchedulingPolicy } from '../flashcardScheduling';
+import { projectUnratedFlashcardPractice } from '../flashcardPractice';
+import { restoreMemoryBeforeReview } from './reviewSnapshot';
+import { recallFailureCount, recallFailureTime } from './evidenceAggregation';
 import { applyReviewOutcome } from '../memoryV4';
 import type { RmeMemoryProfile } from '../memoryV4/types';
-import { WordMemoryState, DailyWordEvidence, FsrsGrade } from './types';
+import { WordMemoryState, DailyWordEvidence, FsrsGrade, type FlashcardRecallEvidence } from './types';
 import {
   getLocalDateInTimeZone,
   getSystemTimeZone,
   getUtcInstantForLocalDayEnd,
 } from './dateUtils';
-import { applyRmeReview, projectRmeProfile, rmeProfileForState } from './rmeV4Bridge';
+import { applyRmeReview, hasFormalRecallEvidence, projectRmeProfile, rmeProfileForState } from './rmeV4Bridge';
 
 const MIN_PASSIVE_RECALL_DAYS = 2;
 
@@ -45,10 +50,13 @@ export function hasSufficientPassiveRecallEvidence(
 }
 
 function actualDailyReviewTime(evidence: DailyWordEvidence, userTimezone: string): Date | null {
-  if (evidence.articleEvidence.length > 0) {
-    const timestamps = evidence.articleEvidence.map((article) => Date.parse(article.lastSeenAt));
+  const articles = evidence.pendingGrade === 'Again'
+    ? evidence.articleEvidence.filter(article => recallFailureCount(article) > 0) : evidence.articleEvidence;
+  if (articles.length > 0) {
+    const timestamps = articles.map(article => Date.parse(evidence.pendingGrade === 'Again'
+      ? recallFailureTime(article)! : article.lastSeenAt));
     const complete = timestamps.every((timestamp, index) => Number.isFinite(timestamp)
-      && evidence.articleEvidence[index].localDate === evidence.localDate
+      && articles[index].localDate === evidence.localDate
       && getLocalDateInTimeZone(new Date(timestamp), userTimezone) === evidence.localDate);
     if (complete) return new Date(Math.max(...timestamps));
   }
@@ -91,7 +99,7 @@ export function initializeWordMemory(userId: string, wordId: string): WordMemory
       reps: card.reps,
       lapses: card.lapses,
       state: card.state,
-      lastReview: card.last_review?.toISOString(),
+      ...(card.last_review ? { lastReview: card.last_review.toISOString() } : {}),
     },
     fsrsReviews: [],
   };
@@ -108,9 +116,31 @@ export function initializeWordMemory(userId: string, wordId: string): WordMemory
 export function submitFsrsReview(
   memoryState: WordMemoryState,
   grade: FsrsGrade | Grade,
-  reviewTime: Date = new Date()
+  reviewTime: Date = new Date(),
+  scheduling?: FlashcardSchedulingPolicy,
+  evidence?: FlashcardRecallEvidence,
 ): WordMemoryState {
   const rating = typeof grade === 'number' ? grade : gradeToRating(grade);
+  if (![1, 2, 3, 4].includes(rating) || !Number.isFinite(reviewTime.getTime())) throw new TypeError('Invalid review rating or time');
+  if (scheduling && !isFlashcardSchedulingPolicy(scheduling)) throw new TypeError('Invalid review scheduling policy');
+  // Legacy daily finalization stages late evidence before its chronological replay.
+  if (scheduling && memoryState.lastReview && Date.parse(memoryState.lastReview) > reviewTime.getTime()) throw new RangeError('Review time precedes saved memory');
+
+  const isPractice = Boolean(scheduling && scheduling.version >= 6 && evidence?.kind === 'answer_rehearsal');
+  if (isPractice && !hasFormalRecallEvidence(memoryState)) {
+    // An exposed answer supplies practice progress, never an initialized FSRS
+    // model. Reps remains the existing optimistic attempt version; the actual
+    // learning steps and next practice time are projected from these logs.
+    const before = memoryState.fsrsCard;
+    return { ...memoryState, fsrsCard: { ...before, reps: before.reps + 1 },
+      fsrsReviews: [...memoryState.fsrsReviews, {
+        rating, state: before.state, due: before.due, stability: before.stability, difficulty: before.difficulty,
+        elapsedDays: before.elapsedDays, lastElapsedDays: before.elapsedDays, scheduledDays: before.scheduledDays,
+        learningSteps: before.learningSteps, review: reviewTime.toISOString(), beforeCard: { ...before },
+        scheduling: { ...scheduling! }, evidence: { ...evidence! }, modelApplied: false,
+      }] };
+  }
+  const unratedPractice = scheduling && scheduling.version >= 6 ? projectUnratedFlashcardPractice(memoryState) : null;
 
   // 重建 FSRS Card
   const card = createEmptyCard();
@@ -127,11 +157,33 @@ export function submitFsrsReview(
     last_review: memoryState.fsrsCard.lastReview
       ? new Date(memoryState.fsrsCard.lastReview)
       : undefined,
+    ...(memoryState.fsrsCard.confirmationDue ? { confirmation_due: new Date(memoryState.fsrsCard.confirmationDue) } : {}),
   });
 
   // 执行 FSRS 复习
-  const result = scheduleFsrsReview(card, reviewTime, rating);
-  const newCard = result.card;
+  const result = scheduleFsrsReview(card, reviewTime, rating, scheduling, isPractice);
+  // Practice advances the product's learning steps and attempt version, while
+  // the forgetting model retains its last actual recall and memory estimate.
+  let newCard = isPractice ? { ...result.card, stability: card.stability, difficulty: card.difficulty,
+    elapsed_days: card.elapsed_days, lapses: card.lapses, last_review: card.last_review } : result.card;
+  if (unratedPractice && card.state === State.New && rating !== Rating.Again) {
+    const steps = Math.min(3, unratedPractice.steps + (rating >= Rating.Good ? 1 : 0));
+    if (steps === 3) {
+      const confirmation = unratedPractice.confirmationDue
+        ? new Date(unratedPractice.confirmationDue) : new Date(reviewTime.getTime() + 86_400_000);
+      const modelDue = reviewTime.getTime() + Math.max(60_000,
+        continuousRecallIntervalMs(newCard.stability, scheduling!.desiredRetention));
+      const pendingConfirmation = confirmation.getTime() > reviewTime.getTime();
+      const due = new Date(pendingConfirmation ? Math.min(modelDue, confirmation.getTime()) : modelDue);
+      newCard = { ...newCard, state: State.Review, learning_steps: 0, due,
+        scheduled_days: (due.getTime() - reviewTime.getTime()) / 86_400_000,
+        ...(pendingConfirmation ? { confirmation_due: confirmation } : {}) };
+      if (!pendingConfirmation) delete newCard.confirmation_due;
+    } else {
+      newCard = { ...newCard, state: State.Learning, learning_steps: steps,
+        due: new Date(reviewTime), scheduled_days: 0 };
+    }
+  }
   const log = result.log;
 
   // 更新记忆状态
@@ -139,7 +191,7 @@ export function submitFsrsReview(
     ...memoryState,
     stability: newCard.stability,
     difficulty: newCard.difficulty,
-    lastReview: reviewTime.toISOString(),
+    lastReview: isPractice ? memoryState.lastReview : reviewTime.toISOString(),
     nextReview: newCard.due.toISOString(),
     fsrsCard: {
       due: newCard.due.toISOString(),
@@ -151,7 +203,8 @@ export function submitFsrsReview(
       reps: newCard.reps,
       lapses: newCard.lapses,
       state: newCard.state,
-      lastReview: newCard.last_review?.toISOString(),
+      ...(newCard.last_review ? { lastReview: newCard.last_review.toISOString() } : {}),
+      ...(newCard.confirmation_due ? { confirmationDue: newCard.confirmation_due.toISOString() } : {}),
     },
     fsrsReviews: [
       ...memoryState.fsrsReviews,
@@ -166,6 +219,10 @@ export function submitFsrsReview(
         scheduledDays: log.scheduled_days,
         learningSteps: log.learning_steps,
         review: log.review.toISOString(),
+        beforeCard: Object.fromEntries(Object.entries(memoryState.fsrsCard).filter(([, value]) => value !== undefined)) as WordMemoryState['fsrsCard'],
+        ...(scheduling ? { scheduling: { ...scheduling } } : {}),
+        ...(evidence ? { evidence: { ...evidence } } : {}),
+        ...(isPractice ? { modelApplied: false as const } : {}),
       },
     ],
   };
@@ -173,7 +230,7 @@ export function submitFsrsReview(
   return newState;
 }
 
-/** Revise a saved success and replay its tail without granting duplicate recall credit. */
+/** Revise or insert a daily failure and replay chronologically without duplicate recall credit. */
 function reviseHistoricalSuccess(
   state: WordMemoryState,
   index: number,
@@ -181,33 +238,24 @@ function reviseHistoricalSuccess(
   reviewTime: Date,
   userTimezone: string,
   replacement: 'Again' | null,
+  insertedPolicy?: { scheduling?: FlashcardSchedulingPolicy },
 ): WordMemoryState {
   const target = state.fsrsReviews[index];
-  const tail = state.fsrsReviews.slice(index);
-  const prefix = state.fsrsReviews.slice(0, index);
-  const isNew = target.state === 0;
-  const previousReview = isNew ? null : target.due;
-  const previousDue = isNew ? target.due
-    : new Date(Date.parse(target.due) + target.scheduledDays * 24 * 60 * 60 * 1000).toISOString();
-  let current: WordMemoryState = { ...state,
-    stability: target.stability,
-    difficulty: target.difficulty,
-    lastReview: previousReview,
-    nextReview: previousDue,
-    fsrsReviews: prefix,
-    fsrsCard: { due: previousDue, stability: target.stability, difficulty: target.difficulty,
-      elapsedDays: target.lastElapsedDays, scheduledDays: target.scheduledDays, learningSteps: target.learningSteps,
-      reps: Math.max(0, state.fsrsCard.reps - tail.length),
-      lapses: Math.max(0, state.fsrsCard.lapses - tail.filter(review => review.rating === 1 && review.state !== 0).length),
-      state: target.state, ...(previousReview ? { lastReview: previousReview } : {}) },
-  };
-  if (replacement) {
-    current = submitFsrsReview(current, replacement, reviewTime);
-    current.fsrsReviews[current.fsrsReviews.length - 1] = { ...current.fsrsReviews.at(-1)!,
-      ...(target.source ? { source: 'reading_lookup' as const, localDate: evidence.localDate } : {}) };
-  }
-  for (const review of tail.slice(1)) {
-    current = submitFsrsReview(current, review.rating as Grade, new Date(review.review));
+  // A late lookup may fall before a saved word-card recall, or move a daily
+  // decision past one. Replay chronologically instead of temporarily submitting
+  // an out-of-order card, retaining each historical decision's frozen policy.
+  const plans = state.fsrsReviews.filter((_, reviewIndex) => insertedPolicy !== undefined || reviewIndex !== index);
+  if (replacement) plans.splice(insertedPolicy ? plans.length : index, 0, { ...target, rating: Rating.Again, review: reviewTime.toISOString(),
+    scheduling: insertedPolicy ? insertedPolicy.scheduling : target.scheduling,
+    ...(insertedPolicy || target.source ? { source: 'reading_lookup' as const, localDate: evidence.localDate } : {}),
+    verificationAttemptIds: undefined, originalFlashcardRating: undefined, flashcardRevisions: undefined,
+  });
+  plans.sort((left, right) => left.review.localeCompare(right.review));
+  let current = restoreMemoryBeforeReview(state, 0);
+  // An older failure cannot reconstruct the missing pre-migration baseline.
+  if (current.lastReview && plans[0] && Date.parse(plans[0].review) < Date.parse(current.lastReview)) return state;
+  for (const review of plans) {
+    current = submitFsrsReview(current, review.rating as Grade, new Date(review.review), review.scheduling, review.evidence);
     current.fsrsReviews[current.fsrsReviews.length - 1] = { ...current.fsrsReviews.at(-1)!,
       ...(review.source ? { source: review.source } : {}),
       ...(review.localDate ? { localDate: review.localDate } : {}),
@@ -222,6 +270,7 @@ function reviseHistoricalSuccess(
     forcedExposure: false, lastReviewGrade: null };
   let previousReviewedAt: number | null = null;
   for (const review of current.fsrsReviews) {
+    if (review.modelApplied === false) continue;
     const grade = review.rating <= 1 ? 'Again' : 'Good';
     const reviewedAt = new Date(review.review);
     const date = getLocalDateInTimeZone(reviewedAt, userTimezone);
@@ -251,7 +300,8 @@ export function finalizeDailyEvidence(
   memoryState: WordMemoryState | null,
   dailyEvidence: DailyWordEvidence,
   userId: string,
-  userTimezone: string = getSystemTimeZone()
+  userTimezone: string = getSystemTimeZone(),
+  scheduling?: FlashcardSchedulingPolicy,
 ): WordMemoryState | null {
   const { wordId, pendingGrade } = dailyEvidence;
   const actualTime = actualDailyReviewTime(dailyEvidence, userTimezone);
@@ -300,8 +350,14 @@ export function finalizeDailyEvidence(
   const stateWithRme = memoryState.rme
     ? memoryState
     : { ...memoryState, rme: rmeProfileForState(memoryState) };
+  const policy = scheduling ?? stateWithRme.fsrsReviews
+    .filter(review => review.source !== 'reading_lookup' && Date.parse(review.review) <= reviewTime.getTime()).at(-1)?.scheduling;
+  if (stateWithRme.lastReview && Date.parse(stateWithRme.lastReview) > reviewTime.getTime()) {
+    if (!stateWithRme.fsrsReviews.length) return memoryState;
+    return reviseHistoricalSuccess(stateWithRme, 0, dailyEvidence, reviewTime, userTimezone, pendingGrade, { scheduling: policy });
+  }
   const updatedState = applyRmeReview(
-    submitFsrsReview(stateWithRme, pendingGrade, reviewTime),
+    submitFsrsReview(stateWithRme, pendingGrade, reviewTime, policy),
     pendingGrade,
     reviewTime,
     dailyEvidence.averageRmeQuality ?? 1,
@@ -324,7 +380,8 @@ export function batchFinalizeDailyEvidence(
   memoryStates: Map<string, WordMemoryState>,
   dailyEvidences: Map<string, DailyWordEvidence>,
   userId: string,
-  userTimezone: string = getSystemTimeZone()
+  userTimezone: string = getSystemTimeZone(),
+  scheduling?: FlashcardSchedulingPolicy,
 ): Map<string, WordMemoryState> {
   const updatedStates = new Map<string, WordMemoryState>();
 
@@ -334,7 +391,8 @@ export function batchFinalizeDailyEvidence(
       currentState,
       dailyEvidence,
       userId,
-      userTimezone
+      userTimezone,
+      scheduling,
     );
 
     if (updatedState) {

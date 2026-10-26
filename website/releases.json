@@ -2,59 +2,62 @@
   "schemaVersion": 1,
   "releases": {
     "web": {
-      "version": "0.1.9",
+      "version": "0.1.10",
       "build": 0,
-      "publishedAt": "2026-10-20T04:42:15.791Z",
+      "publishedAt": "2026-10-26T15:25:57.374Z",
       "notes": [
-        "修复 Windows 首次安装及新增资源目录时离线资源安装失败。",
-        "书籍下载和章节整理可收起到后台，保留任务进度，不再因误触重新开始。",
-        "固定导入标题栏，优化收起按钮和滚动条；保留全部离线模型、音色、词典与学习数据。"
+        "更新阅读语境、书架分组、书刊介绍与词卡学习统计。",
+        "改进三档词卡复现间隔和回忆证据，统一熟练度、复习安排及备份校验。",
+        "完善 Markdown 等文件导入与 Android 解析对应；保留全部离线模型、音色、词典和学习数据。",
+        "本版未接入实验 Bot。"
       ]
     },
     "windows": {
-      "version": "0.1.9",
+      "version": "0.1.10",
       "build": 0,
-      "publishedAt": "2026-10-20T04:42:15.792Z",
+      "publishedAt": "2026-10-26T15:25:57.375Z",
       "notes": [
-        "修复 Windows 首次安装及新增资源目录时离线资源安装失败。",
-        "书籍下载和章节整理可收起到后台，保留任务进度，不再因误触重新开始。",
-        "固定导入标题栏，优化收起按钮和滚动条；保留全部离线模型、音色、词典与学习数据。"
+        "更新阅读语境、书架分组、书刊介绍与词卡学习统计。",
+        "改进三档词卡复现间隔和回忆证据，统一熟练度、复习安排及备份校验。",
+        "完善 Markdown 等文件导入与 Android 解析对应；保留全部离线模型、音色、词典和学习数据。",
+        "本版未接入实验 Bot。"
       ],
       "installer": {
-        "filename": "ReadAge-0.1.9-windows-x64-setup.exe",
-        "bytes": 1335415446,
-        "sha256": "d750de8ad7d3ade8d7b57857a3b16fd43578b3967e86beecb2a981a3f565a00e",
+        "filename": "ReadAge-0.1.10-windows-x64-setup.exe",
+        "bytes": 1343920251,
+        "sha256": "f843014b73653ac8fdb4b2d3b17c31887158e6347c42ef7ca5ed9f55e0bf0299",
         "deltas": [
           {
-            "baseSha256": "411f0ee5782d6a222840a1f8d307ddf99fa8d3bdcfe7c39600d7192726eb7a5a",
-            "bytes": 135351828,
-            "sha256": "0ceaac4c0ae62a1a24f5563d225e14c52f31ad61b7d1da12a6fa5a3b2e0061cb",
-            "manifestBytes": 5027,
-            "manifestSha256": "efa905cdca30205973a5da131bfc50448e195b2cffbcdddbe17308acb6cb50c0"
+            "baseSha256": "d750de8ad7d3ade8d7b57857a3b16fd43578b3967e86beecb2a981a3f565a00e",
+            "bytes": 147608625,
+            "sha256": "c1d03b05c6b30a10b385bd6f4c2bd9a56b81615ef91afac5e796706052fc9102",
+            "manifestBytes": 3107,
+            "manifestSha256": "44c774e87ec3efd03d864f914d22ec23fa531b2007b55451e3ee92824206f121"
           }
         ]
       }
     },
     "android": {
-      "version": "1.0.11",
-      "build": 12,
-      "publishedAt": "2026-10-20T04:42:15.793Z",
+      "version": "1.0.14",
+      "build": 15,
+      "publishedAt": "2026-10-26T15:25:57.376Z",
       "notes": [
-        "修复 Windows 首次安装及新增资源目录时离线资源安装失败。",
-        "书籍下载和章节整理可收起到后台，保留任务进度，不再因误触重新开始。",
-        "固定导入标题栏，优化收起按钮和滚动条；保留全部离线模型、音色、词典与学习数据。"
+        "更新阅读语境、书架分组、书刊介绍与词卡学习统计。",
+        "改进三档词卡复现间隔和回忆证据，统一熟练度、复习安排及备份校验。",
+        "完善 Markdown 等文件导入与 Android 解析对应；保留全部离线模型、音色、词典和学习数据。",
+        "本版未接入实验 Bot。"
       ],
       "installer": {
-        "filename": "ReadAge-1.0.11-android.apk",
-        "bytes": 1740948318,
-        "sha256": "2686057a00fadd3d71f182e21bad56a0283eca21f2f0017195c8a38e9efe3fbe",
+        "filename": "ReadAge-1.0.14-android.apk",
+        "bytes": 1749382534,
+        "sha256": "d8d2a7d619ebe07d30e21fafdfb53a3ca632ce5336e759ab9ab9141f2f639384",
         "deltas": [
           {
-            "baseSha256": "c735f54a30c8e98fea0bdbe16a54eca543879a698601fa608c5521d20bd72737",
-            "bytes": 3053163,
-            "sha256": "25cde774464682c03b1f97663068a9f7d3cc4f13899dbbd90af68b9c43274f60",
-            "manifestBytes": 1726,
-            "manifestSha256": "321856e6a09b5ef19746bfd897ffc1cf88cffadb6c52542bb095dc7f9b4431e1"
+            "baseSha256": "2686057a00fadd3d71f182e21bad56a0283eca21f2f0017195c8a38e9efe3fbe",
+            "bytes": 16212272,
+            "sha256": "18bf7ac6f962300df08b3bbe1eff2e36a8f64f50e15ba0da786e5f1b5449c75c",
+            "manifestBytes": 1952,
+            "manifestSha256": "06b5bdb09fdf2e224dbc34b5a50bbab75ea0fe9d12a29d6767c3f152f0aa3810"
           }
         ]
       }

@@ -6,6 +6,8 @@ export const OFFICIAL_LIBRARY_ORIGIN = 'https://readage.xyz';
 
 export interface LibraryEntry {
   intent: 'import' | 'updates' | 'local';
+  /** Explicit official-library navigation, independent of the saved custom server. */
+  official?: boolean;
   kind?: 'book' | 'magazine';
   sourceId?: string;
   resourceId?: string;
@@ -33,7 +35,7 @@ function libraryBatchId(item: Pick<LibraryItem, 'sha256' | 'filename'>): string 
   const extension = item.filename.split('.').pop()?.toLowerCase() || '';
   return fileImportBatchId(item.sha256, ['htm', 'xhtml'].includes(extension) ? 'html' : extension);
 }
-export function libraryEditionState(item: LibraryItem, history: readonly Article[]): 'new' | 'revision' | 'partial' | 'saved' {
+export function libraryEditionState(item: LibraryItem, history: readonly Article[], serverUrl?: string): 'new' | 'revision' | 'partial' | 'saved' {
   const currentBatch = libraryBatchId(item);
   const same = history.filter(article => (article.language || 'en').split('-')[0] === item.language
     && (article.importBatchId === currentBatch || article.importBatchId === `${currentBatch}-${item.language}`));
@@ -43,7 +45,8 @@ export function libraryEditionState(item: LibraryItem, history: readonly Article
   }
   return history.some(article => (article.language || 'en').split('-')[0] === item.language
     && (article.importBatchId === `file-${item.sha256}` || article.importBatchId === `file-${item.sha256}-${item.language}`
-      || article.distribution?.resourceId === item.id && article.distribution.version !== item.sha256)) ? 'revision' : 'new';
+      || article.distribution?.resourceId === item.id && article.distribution.version !== item.sha256
+        && (!serverUrl || (() => { try { return libraryOrigin(article.distribution.serverUrl) === libraryOrigin(serverUrl); } catch { return false; } })()))) ? 'revision' : 'new';
 }
 export function selectLibraryItems(items: readonly LibraryItem[], history: readonly Article[], entry: LibraryEntry, availableOnly: boolean) {
   return items.filter(item => (!entry.kind || item.kind === entry.kind) && (!entry.sourceId || item.id.startsWith(`${entry.sourceId}:`))

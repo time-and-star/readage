@@ -1,4 +1,5 @@
 import type { MagazineIssue } from '../types';
+import { normalizeLibraryGrouping, type LibraryGrouping } from './libraryOrganization';
 
 export interface LibraryView {
   tab: 'mine' | 'magazines';
@@ -9,10 +10,11 @@ export interface LibraryView {
   selectedIssue: MagazineIssue | null;
   scrollY: number;
   catalogPages: number;
+  shelfGrouping: LibraryGrouping;
 }
 export const defaultLibraryView: LibraryView = {
   tab: 'magazines', levelFilter: 'All', topicQuery: '', activeImportBatchId: null,
-  activeSourceId: null, selectedIssue: null, scrollY: 0, catalogPages: 1,
+  activeSourceId: null, selectedIssue: null, scrollY: 0, catalogPages: 1, shelfGrouping: 'none',
 };
 export function normalizeLibraryView(value: unknown): LibraryView {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...defaultLibraryView };
@@ -31,5 +33,6 @@ export function normalizeLibraryView(value: unknown): LibraryView {
     selectedIssue: row.tab === 'mine' ? null : selectedIssue,
     scrollY: typeof row.scrollY === 'number' && Number.isFinite(row.scrollY) ? Math.max(0, row.scrollY) : 0,
     catalogPages: Number.isInteger(row.catalogPages) && row.catalogPages! >= 1 && row.catalogPages! <= 100 ? row.catalogPages! : 1,
+    shelfGrouping: normalizeLibraryGrouping(row.shelfGrouping),
   };
 }

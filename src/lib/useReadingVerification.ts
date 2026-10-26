@@ -183,7 +183,9 @@ export function useReadingVerification(articleId: string, excludedContextTexts: 
     });
     await recordVerification({ attemptId: attempt.id, questionId: question.id,
       wordId: question.wordId, articleId, outcome, selectedOptionId, questionSentence: question.sentence,
-      purpose: question.purpose });
+      purpose: question.purpose, readingTask: { type: 'context_choice', contextVisible: true,
+        answerExposed: question.purpose === 'immediate_practice',
+        mapping: question.purpose === 'immediate_practice' ? 'practice_only' : 'hard_on_correct' } });
   }, [question, articleId, readCandidates, recordVerification, store.timezone]);
 
   return { question, available, loading, requestError, onRequest: request, onOutcome, cancelRequest };

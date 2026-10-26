@@ -1,0 +1,27 @@
+/* Offline, OFL-licensed fonts for the reference-style word cards only.
+ * Sources, versions, coverage and licenses: /fonts/flashcards/SOURCES.md.
+ * WenKai is a full face, not a subset derived from demonstration words.
+ */
+@font-face {
+  font-family: 'Flashcard Comic';
+  src: url('/fonts/flashcards/ComicNeue-Regular.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Flashcard Comic';
+  src: url('/fonts/flashcards/ComicNeue-Bold.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Flashcard WenKai';
+  src: url('/fonts/flashcards/LXGWWenKai-Regular.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}

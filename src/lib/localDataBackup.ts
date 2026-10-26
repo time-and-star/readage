@@ -99,7 +99,7 @@ const backupTime = (value: unknown): value is string => typeof value === 'string
   && backupDate(value.slice(0, 10)) && Number.isFinite(Date.parse(value));
 
 /** Validate readable record shapes before any profile or browser storage is replaced. */
-function validateBackupMemoryRow(table: string, row: Record<string, unknown>): void {
+function validateBackupMemoryRow(table: string, row: Record<string, unknown>, newFieldsOnly = false): void {
   const fail = () => { throw new Error(`词汇记忆备份中的 ${table} 记录无效，原有数据已保留。`); };
   const object = (value: unknown) => { if (!backupObject(value)) fail(); return value as Record<string, unknown>; };
   const ids = (value: Record<string, unknown>, fields: string[]) => {
@@ -111,7 +111,51 @@ function validateBackupMemoryRow(table: string, row: Record<string, unknown>): v
   const optionalTime = (value: Record<string, unknown>, field: string) => {
     if (value[field] !== undefined && value[field] !== null && !backupTime(value[field])) fail();
   };
+  const has = (value: Record<string, unknown>, field: string) => Object.prototype.hasOwnProperty.call(value, field);
+  const nonnegativeIntegers = (value: Record<string, unknown>, fields: string[]) => {
+    if (!fields.every(field => Number.isSafeInteger(value[field]) && (value[field] as number) >= 0)) fail();
+  };
+  const card = (raw: unknown, snapshot = false) => {
+    const value = object(raw);
+    if (!backupTime(value.due)) fail();
+    if (has(value, 'confirmationDue') && !backupTime(value.confirmationDue)) fail();
+    numbers(value, ['stability', 'difficulty', 'elapsedDays', 'scheduledDays', 'state']);
+    if (![0, 1, 2, 3].includes(value.state as number)
+      || ['stability', 'difficulty', 'elapsedDays', 'scheduledDays'].some(field => (value[field] as number) < 0)) fail();
+    nonnegativeIntegers(value, ['reps', 'lapses']);
+    if (has(value, 'learningSteps')) nonnegativeIntegers(value, ['learningSteps']);
+    optionalTime(value, 'lastReview');
+    if ((snapshot && has(value, 'lastReview') && !backupTime(value.lastReview))
+      || (value.state === 2 && !backupTime(value.lastReview))) fail();
+  };
+  const recallFailures = (value: Record<string, unknown>) => {
+    if (has(value, 'lastRecallFailureAt') && !backupTime(value.lastRecallFailureAt)) fail();
+    if (!has(value, 'recallFailureCount')) return;
+    nonnegativeIntegers(value, ['recallFailureCount', 'clickedOccurrenceCount']);
+    if ((value.recallFailureCount as number) > (value.clickedOccurrenceCount as number)) fail();
+  };
   const array = (value: unknown) => { if (!Array.isArray(value)) fail(); return value as unknown[]; };
+  const reviewScheduling = (value: Record<string, unknown>) => {
+    if (has(value, 'scheduling')) {
+      const scheduling = object(value.scheduling);
+      const retention = scheduling.desiredRetention;
+      if (![1, 2, 3, 4, 5, 6].includes(scheduling.version as number) || typeof retention !== 'number' || !Number.isFinite(retention)
+        || retention < 0.8 || retention > 0.97 || retention !== Math.round(retention * 100) / 100) fail();
+    }
+    if (has(value, 'evidence')) {
+      const evidence = object(value.evidence);
+      if (evidence.kind !== 'independent_recall' && evidence.kind !== 'answer_rehearsal') fail();
+      if (has(evidence, 'answerExposedAt') && !backupTime(evidence.answerExposedAt)) fail();
+      if (has(evidence, 'interveningWord') && !backupId(evidence.interveningWord)) fail();
+    }
+    if (has(value, 'readingTask')) {
+      const task = object(value.readingTask);
+      if (task.type !== 'context_choice' || task.contextVisible !== true || typeof task.answerExposed !== 'boolean'
+        || (task.mapping !== 'hard_on_correct' && task.mapping !== 'practice_only')) fail();
+    }
+    if (has(value, 'modelApplied') && value.modelApplied !== false) fail();
+    if (has(value, 'beforeCard')) card(value.beforeCard, true);
+  };
   const review = (raw: unknown) => {
     const value = object(raw);
     if (!backupTime(value.review) || !backupTime(value.due)) fail();
@@ -119,11 +163,53 @@ function validateBackupMemoryRow(table: string, row: Record<string, unknown>): v
     if (![1, 2, 3, 4].includes(value.rating as number) || ![0, 1, 2, 3].includes(value.state as number)) fail();
     // Older FSRS exports precede learningSteps and review-source/audit fields.
     if (value.learningSteps !== undefined) numbers(value, ['learningSteps']);
+    reviewScheduling(value);
   };
+  const knownMetadata = (key: unknown, raw: unknown) => {
+    if (typeof key !== 'string' || !backupObject(raw)) return;
+    if (key.startsWith('reading-verification:')) {
+      if (Array.isArray(raw.attempts)) for (const attempt of raw.attempts.filter(backupObject)) {
+        reviewScheduling(attempt);
+      }
+    } else if (key.startsWith('extension-journal:')) {
+      if (has(raw, 'pendingFailureDates') && (!Array.isArray(raw.pendingFailureDates)
+        || !raw.pendingFailureDates.every(backupDate))) fail();
+      if (backupObject(raw.baselineState)) validateBackupMemoryRow('memoryState', { key, state: raw.baselineState }, true);
+      if (Array.isArray(raw.baselineDaily)) for (const evidence of raw.baselineDaily.filter(backupObject)) {
+        validateBackupMemoryRow('dailyEvidence', { key, evidence }, true);
+      }
+      for (const field of ['baselineRaw', 'events']) if (Array.isArray(raw[field])) {
+        validateBackupMemoryRow('rawEvents', { key, events: raw[field] }, true);
+      }
+    }
+  };
+  // Legacy localStorage payloads may predate the current full shape. Validate added fields
+  // when present without requiring an old record to contain today's mandatory fields.
+  if (newFieldsOnly) {
+    if (table === 'meta') {
+      knownMetadata(row.key, row.value);
+    } else if (table === 'rawEvents' && Array.isArray(row.events)) {
+      for (const value of row.events.filter(backupObject)) {
+        if (has(value, 'lookupOnly') && (value.lookupOnly !== true || value.eventType !== 'click')) fail();
+      }
+    } else if (table === 'memoryState' && backupObject(row.state)) {
+      if (backupObject(row.state.fsrsCard) && has(row.state.fsrsCard, 'confirmationDue')
+        && !backupTime(row.state.fsrsCard.confirmationDue)) fail();
+      for (const field of ['fsrsReviews', 'passiveReadingReviews']) {
+        const reviews = row.state[field];
+        if (Array.isArray(reviews)) reviews.filter(backupObject).forEach(reviewScheduling);
+      }
+    } else if (backupObject(row.evidence)) {
+      recallFailures(row.evidence);
+      if (Array.isArray(row.evidence.articleEvidence)) row.evidence.articleEvidence.filter(backupObject).forEach(recallFailures);
+    }
+    return;
+  }
   const article = (raw: unknown) => {
     const value = object(raw);
     ids(value, ['userId', 'wordId', 'articleId']);
     if (!backupDate(value.localDate) || !backupTime(value.firstSeenAt) || !backupTime(value.lastSeenAt)) fail();
+    recallFailures(value);
     return value;
   };
   const key = (value: Record<string, unknown>, fields: string[]) => {
@@ -132,12 +218,14 @@ function validateBackupMemoryRow(table: string, row: Record<string, unknown>): v
   if (table === 'meta') {
     // Generic metadata remains extensible and may legitimately contain JSON null.
     if (!Object.prototype.hasOwnProperty.call(row, 'value') || row.value === undefined) fail();
+    knownMetadata(row.key, row.value);
   } else if (table === 'rawEvents') {
     for (const raw of array(row.events)) {
       const value = object(raw);
       ids(value, ['userId', 'wordId', 'articleId', 'occurrenceId']);
       if (!backupDate(value.localDate) || !backupTime(value.occurredAt)
         || (value.eventType !== 'exposure' && value.eventType !== 'click')) fail();
+      if (has(value, 'lookupOnly') && (value.lookupOnly !== true || value.eventType !== 'click')) fail();
       key(value, ['userId', 'wordId', 'localDate']);
     }
   } else if (table === 'articleEvidence') {
@@ -149,6 +237,7 @@ function validateBackupMemoryRow(table: string, row: Record<string, unknown>): v
     if (!backupDate(value.localDate)) fail();
     key(value, ['userId', 'wordId', 'localDate']);
     optionalTime(value, 'finalizedAt');
+    recallFailures(value);
     for (const raw of array(value.articleEvidence)) {
       const evidence = article(raw);
       if (['userId', 'wordId', 'localDate'].some(field => evidence[field] !== value[field])) fail();
@@ -160,12 +249,7 @@ function validateBackupMemoryRow(table: string, row: Record<string, unknown>): v
     if (!backupTime(value.nextReview)) fail();
     optionalTime(value, 'lastReview'); optionalTime(value, 'lastAssistedAt');
     numbers(value, ['stability', 'difficulty']);
-    const card = object(value.fsrsCard);
-    if (!backupTime(card.due)) fail();
-    numbers(card, ['stability', 'difficulty', 'elapsedDays', 'scheduledDays', 'reps', 'lapses', 'state']);
-    if (![0, 1, 2, 3].includes(card.state as number)) fail();
-    if (card.learningSteps !== undefined) numbers(card, ['learningSteps']);
-    optionalTime(card, 'lastReview');
+    card(value.fsrsCard);
     array(value.fsrsReviews).forEach(review);
     if (value.passiveReadingReviews !== undefined) array(value.passiveReadingReviews).forEach(review);
     if (value.rme !== undefined && value.rme !== null) {
@@ -204,6 +288,18 @@ export function validateLocalDataBackup(raw: unknown): LocalDataBackup {
       throw new Error(`备份中的键 ${key} 不是字符串。`);
     }
     localStorage[key] = value;
+    const legacyTable = key.startsWith(`${APP_STORAGE_PREFIX}:memory:state:`) ? 'memoryState'
+      : key.startsWith(`${APP_STORAGE_PREFIX}:memory:raw:`) ? 'rawEvents'
+      : key.startsWith(`${APP_STORAGE_PREFIX}:memory:article:`) ? 'articleEvidence'
+      : key.startsWith(`${APP_STORAGE_PREFIX}:memory:daily:`) ? 'dailyEvidence'
+      : key.startsWith(`${APP_STORAGE_PREFIX}:memory:meta:`) ? 'meta' : null;
+    if (legacyTable) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(value); } catch { continue; }
+      const memoryKey = legacyTable === 'meta' ? key.slice(`${APP_STORAGE_PREFIX}:memory:meta:`.length) : key;
+      validateBackupMemoryRow(legacyTable, { key: memoryKey,
+        [legacyTable === 'memoryState' ? 'state' : legacyTable === 'rawEvents' ? 'events' : legacyTable === 'meta' ? 'value' : 'evidence']: parsed }, true);
+    }
   }
 
   let indexedDb: LocalDataBackup['indexedDb'] = null;

@@ -1,4 +1,5 @@
 import type { RmeExposureKind, RmeMemoryProfile } from '../memoryV4/types';
+import type { FlashcardSchedulingPolicy } from '../flashcardScheduling';
 
 /**
  * Memory Confidence Model V2.2
@@ -26,6 +27,8 @@ export interface RawWordEvent extends MemoryExposureSignals {
   /** 文章中的具体出现位置 */
   occurrenceId: string;
   eventType: RawEventType;
+  /** New lookups record assistance, without claiming an unsuccessful recall. */
+  lookupOnly?: true;
   occurredAt: string;
   /** 用户时区计算的自然日（YYYY-MM-DD） */
   localDate: string;
@@ -45,6 +48,10 @@ export interface ArticleWordEvidence {
   validExposureCount: number;
   /** 点击的occurrence数 */
   clickedOccurrenceCount: number;
+  /** Missing on old data: all its clicks retain their historical failure meaning. */
+  recallFailureCount?: number;
+  /** Latest failure; assistance later that day must not move its recall time. */
+  lastRecallFailureAt?: string;
   firstSeenAt: string;
   lastSeenAt: string;
   /** Average RME quality of valid exposure events, when V4 metadata exists. */
@@ -64,6 +71,7 @@ export interface DailyWordEvidence {
   validExposureCount: number;
   /** 总点击occurrence数 */
   clickedOccurrenceCount: number;
+  recallFailureCount?: number;
   /** Legacy reading summary; Good here is exposure quality, never a verified FSRS success. */
   pendingGrade: 'Good' | 'Again' | null;
   /** Average quality across valid exposures for this day. */
@@ -76,6 +84,13 @@ export interface DailyWordEvidence {
 export type FsrsGrade = 'Again' | 'Good';
 
 export type VerificationOutcome = 'recognized' | 'incorrect' | 'uncertain' | 'guessed' | 'skipped';
+/** V6 separates a fresh recall from immediate rehearsal of an exposed answer. */
+export interface FlashcardRecallEvidence {
+  kind: 'independent_recall' | 'answer_rehearsal';
+  answerExposedAt?: string;
+  /** A completed task for a different word after this word's answer exposure. */
+  interveningWord?: string;
+}
 export interface ReadingVerificationInput {
   attemptId: string;
   questionId: string;
@@ -85,12 +100,20 @@ export interface ReadingVerificationInput {
   selectedOptionId?: string;
   /** Retained to avoid reusing a generated test sentence on a later pause. */
   questionSentence?: string;
+  /** The reading task is contextual choice evidence, distinct from free recall. */
+  readingTask?: { type: 'context_choice'; contextVisible: true; answerExposed: boolean;
+    mapping: 'hard_on_correct' | 'practice_only' };
   purpose?: 'delayed_verification' | 'immediate_practice';
+  /** Frozen when a formal recall is first saved; absent on legacy journal entries. */
+  scheduling?: FlashcardSchedulingPolicy;
 }
 /** Free recall from a flipped word card, stored in the existing recall journal. */
 export interface FlashcardReviewInput extends Omit<ReadingVerificationInput, 'purpose'> {
   purpose: 'flashcard_review';
   rating: 1 | 2 | 3 | 4;
+  /** V4 submission guard from the displayed card; never part of recall history. */
+  expectedReps?: number;
+  evidence?: FlashcardRecallEvidence;
 }
 /** An explicit correction replaces one saved recall, rather than adding another review. */
 export interface FlashcardReviewCorrectionInput {
@@ -142,6 +165,8 @@ export interface WordMemoryState {
     lapses: number;
     state: number;
     lastReview?: string;
+    /** Product next-day confirmation survives any earlier V6 model reviews. */
+    confirmationDue?: string;
   };
   /** FSRS 历史评审记录 */
   fsrsReviews: Array<{
@@ -155,6 +180,12 @@ export interface WordMemoryState {
     scheduledDays: number;
     learningSteps: number;
     review: string;
+    scheduling?: FlashcardSchedulingPolicy;
+    evidence?: FlashcardRecallEvidence;
+    /** False only for V6 practice; absent historical entries remain formal recalls. */
+    modelApplied?: false;
+    /** Exact pre-review state, including minute due dates and learning progress. */
+    beforeCard?: WordMemoryState['fsrsCard'];
     source?: 'reading_lookup' | 'verification' | 'flashcard';
     localDate?: string;
     verificationAttemptIds?: string[];
@@ -171,7 +202,7 @@ export interface WordMemoryState {
 export interface MemoryScoreParams {
   /** 满级稳定天数 */
   S_cap: number;
-  /** 系统对遗忘的惩罚程度 */
+  /** 旧版当前记忆分的遗忘惩罚；长期熟练度不使用此参数 */
   gamma: number;
 }
 

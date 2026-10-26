@@ -9,6 +9,7 @@ export const FILE_IMPORT_TIMEOUT_MS = 120_000;
 
 /** A changed chapter map must never reuse the learning identities of an older parse. */
 export function fileImportBatchId(sourceId: string, format: string): string {
+  if (format === 'markdown') return `file-${sourceId}-md1`;
   return `file-${sourceId}${['epub', 'html', 'docx'].includes(format) ? '-s2' : ''}`;
 }
 
@@ -71,7 +72,7 @@ export async function requestUserFileBatch(file: File, offset: number, options: 
     if (!response.ok || data?.ok !== true) throw new Error(data?.error?.message || '文件准备失败，请重试。');
     const batch = data as ImportedFileBatch;
     const end = offset + (Array.isArray(batch.articles) ? batch.articles.length : 0);
-    if (!/^[a-f\d]{64}$/.test(batch.sourceId || '') || !['epub', 'pdf', 'docx', 'html', 'text'].includes(batch.format)
+    if (!/^[a-f\d]{64}$/.test(batch.sourceId || '') || !['epub', 'pdf', 'docx', 'html', 'text', 'markdown'].includes(batch.format)
       || batch.offset !== offset || !Number.isSafeInteger(batch.totalCount) || batch.totalCount < end
       || !batch.articles?.length || batch.articles.length > limit
       || batch.nextOffset !== (end < batch.totalCount ? end : null)
