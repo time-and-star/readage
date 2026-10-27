@@ -1,0 +1,93 @@
+name: Supplement actual 0.1.9 baseline for ReadAge 0.1.10
+"on":
+  push:
+    branches:
+      - codex/full-installer-release-0.1.9
+    paths:
+      - .github/workflows/publish-delta-coverage-0.1.10.yml
+permissions: {}
+concurrency:
+  group: readage-delta-coverage-0.1.10
+  cancel-in-progress: false
+jobs:
+  upload:
+    if: github.repository == 'time-and-star/readage' && github.ref == 'refs/heads/codex/full-installer-release-0.1.9' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: time-and-star/readage
+      TARGET_COMMIT: a87fe98d54cabd3f156f73efe71a2c6e7847df9a
+      DRAFT_RELEASE_ID: "424434528"
+    steps:
+      - name: Download, verify and upload supplemental assets to the fixed public release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = time-and-star/readage
+          test "$GITHUB_REF" = refs/heads/codex/full-installer-release-0.1.9
+          test "$GITHUB_EVENT_NAME" = push
+          test "$TARGET_COMMIT" != __FIXED_SOURCE_COMMIT_REQUIRED__
+          test "$DRAFT_RELEASE_ID" != __FIXED_DRAFT_RELEASE_ID_REQUIRED__
+          work=$(mktemp -d -t readage-0.1.10.XXXXXXXX)
+          trap 'rm -rf -- "$work"' EXIT
+          cd "$work"
+          cat > "SHA256SUMS-delta-7ae4ce689c96.txt" <<'READAGE_DELTA_SUMS'
+          14248889b78e54263b6921f4f2d67faf9f7eb94bfe2032e38d2acbd96d0d29d2  ReadAge-0.1.10-windows-x64-setup.exe.from-7ae4ce689c96d9bfc2754ce17b409b50fc54ee8bcc8aaa7d2e30b095dfbb7d72.delta
+          87c06707948411f59025b066529d7e5240fc4fb1ba51d5f64c9dde21a783a0b8  ReadAge-0.1.10-windows-x64-setup.exe.from-7ae4ce689c96d9bfc2754ce17b409b50fc54ee8bcc8aaa7d2e30b095dfbb7d72.delta.json
+          READAGE_DELTA_SUMS
+          check_release() {
+            release=$(gh api "repos/time-and-star/readage/releases/$DRAFT_RELEASE_ID")
+            jq -e --argjson id "$DRAFT_RELEASE_ID" --arg target "$TARGET_COMMIT" \
+              '.id == $id and .draft == false and .tag_name == "v0.1.10" and .target_commitish == $target' \
+              <<< "$release" >/dev/null
+          }
+          verify_asset() {
+            jq -e --arg name "$name" --arg sha "sha256:$sha" --argjson bytes "$bytes" \
+              '[.assets[] | select(.name == $name)] as $items | ($items | length) == 1 and $items[0].state == "uploaded" and $items[0].size == $bytes and $items[0].digest == $sha' \
+              <<< "$release" >/dev/null
+          }
+          check_release
+          while read -r sha bytes name; do
+            check_release
+            count=$(jq -r --arg name "$name" '[.assets[] | select(.name == $name)] | length' <<< "$release")
+            if test "$count" -ne 0; then
+              verify_asset
+              printf 'Already verified: %s\n' "$name"
+              continue
+            fi
+            if test "$name" = "SHA256SUMS-delta-7ae4ce689c96.txt"; then
+              cp -- "$name" "$name.part"
+            else
+              curl --fail --location --max-redirs 3 --proto '=https' --proto-redir '=https' \
+                --retry 5 --retry-all-errors --connect-timeout 30 --max-time 1800 \
+                --speed-time 60 --speed-limit 1024 --header 'Accept-Encoding: identity' \
+                --output "$name.part" "https://readage.xyz/downloads/$name"
+            fi
+            test "$(stat -c '%s' "$name.part")" = "$bytes"
+            printf '%s  %s\n' "$sha" "$name.part" | sha256sum --check
+            check_release
+            uploaded=$(gh api --method POST "https://uploads.github.com/repos/time-and-star/readage/releases/$DRAFT_RELEASE_ID/assets?name=$name" \
+              --header 'Content-Type: application/octet-stream' --input "$name.part")
+            jq -e --arg name "$name" --arg sha "sha256:$sha" --argjson bytes "$bytes" \
+              '.name == $name and .size == $bytes and .state == "uploaded" and .digest == $sha' <<< "$uploaded" >/dev/null
+            check_release
+            verify_asset
+            rm -- "$name.part"
+            printf 'Uploaded and verified: %s\n' "$name"
+          done <<'READAGE_VERIFIED_ASSETS'
+          14248889b78e54263b6921f4f2d67faf9f7eb94bfe2032e38d2acbd96d0d29d2 35370957 ReadAge-0.1.10-windows-x64-setup.exe.from-7ae4ce689c96d9bfc2754ce17b409b50fc54ee8bcc8aaa7d2e30b095dfbb7d72.delta
+          87c06707948411f59025b066529d7e5240fc4fb1ba51d5f64c9dde21a783a0b8 2468 ReadAge-0.1.10-windows-x64-setup.exe.from-7ae4ce689c96d9bfc2754ce17b409b50fc54ee8bcc8aaa7d2e30b095dfbb7d72.delta.json
+          020c50a3924e70e6d2f103de9e348b7982f75c720e909e8473d33747d5a32490 363 SHA256SUMS-delta-7ae4ce689c96.txt
+          READAGE_VERIFIED_ASSETS
+          check_release
+          while read -r sha bytes name; do
+            verify_asset
+          done <<'READAGE_FINAL_ASSETS'
+          14248889b78e54263b6921f4f2d67faf9f7eb94bfe2032e38d2acbd96d0d29d2 35370957 ReadAge-0.1.10-windows-x64-setup.exe.from-7ae4ce689c96d9bfc2754ce17b409b50fc54ee8bcc8aaa7d2e30b095dfbb7d72.delta
+          87c06707948411f59025b066529d7e5240fc4fb1ba51d5f64c9dde21a783a0b8 2468 ReadAge-0.1.10-windows-x64-setup.exe.from-7ae4ce689c96d9bfc2754ce17b409b50fc54ee8bcc8aaa7d2e30b095dfbb7d72.delta.json
+          020c50a3924e70e6d2f103de9e348b7982f75c720e909e8473d33747d5a32490 363 SHA256SUMS-delta-7ae4ce689c96.txt
+          READAGE_FINAL_ASSETS
+          printf 'All supplemental delta assets verified on the fixed draft release.\n'

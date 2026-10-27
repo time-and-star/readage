@@ -33,6 +33,13 @@
             "sha256": "c1d03b05c6b30a10b385bd6f4c2bd9a56b81615ef91afac5e796706052fc9102",
             "manifestBytes": 3107,
             "manifestSha256": "44c774e87ec3efd03d864f914d22ec23fa531b2007b55451e3ee92824206f121"
+          },
+          {
+            "baseSha256": "7ae4ce689c96d9bfc2754ce17b409b50fc54ee8bcc8aaa7d2e30b095dfbb7d72",
+            "bytes": 35370957,
+            "sha256": "14248889b78e54263b6921f4f2d67faf9f7eb94bfe2032e38d2acbd96d0d29d2",
+            "manifestBytes": 2468,
+            "manifestSha256": "87c06707948411f59025b066529d7e5240fc4fb1ba51d5f64c9dde21a783a0b8"
           }
         ]
       }
